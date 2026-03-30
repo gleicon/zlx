@@ -1,0 +1,3 @@
+[submodule "src/mlx.zig"]
+	path = src/mlx.zig
+	url = https://github.com/jaco-bro/MLX.zig.git
