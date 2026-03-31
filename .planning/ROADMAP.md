@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation & Build** - Resolve build blockers so `zig build` succeeds on macOS aarch64
 - [x] **Phase 2: Inference Core** - Load a model and generate tokens one at a time via Metal GPU
-- [ ] **Phase 3: HTTP API & Integration** - Expose completions over HTTP and verify OpenCode works end-to-end
+- [x] **Phase 3: HTTP API & Integration** - Expose completions over HTTP and verify OpenCode works end-to-end
 
 ## Phase Details
 
@@ -52,7 +52,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `GET /v1/models` returns a JSON list containing the loaded model name
   4. OpenCode configured with `baseUrl: "http://127.0.0.1:8080/v1"` receives completions and displays them correctly in the editor
   5. No garbled characters appear in streamed output for code containing non-ASCII content — UTF-8 boundaries are respected
-**Plans**: TBD
+**Plans**: 1 (PLAN.md in .planning/phases/03-http-api/)
 
 ## Progress
 
@@ -63,4 +63,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Foundation & Build | 1/1 | ✅ Complete | 2026-03-31 |
 | 2. Inference Core | 1/1 | ✅ Complete | 2026-03-31 |
-| 3. HTTP API & Integration | 0/? | 🔄 Ready | - |
+| 3. HTTP API & Integration | 1/1 | ✅ Complete | 2026-03-31 |
