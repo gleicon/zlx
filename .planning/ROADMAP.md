@@ -12,8 +12,8 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation & Build** - Resolve build blockers so `zig build` succeeds on macOS aarch64
-- [ ] **Phase 2: Inference Core** - Load a model and generate tokens one at a time via Metal GPU
+- [x] **Phase 1: Foundation & Build** - Resolve build blockers so `zig build` succeeds on macOS aarch64
+- [x] **Phase 2: Inference Core** - Load a model and generate tokens one at a time via Metal GPU
 - [ ] **Phase 3: HTTP API & Integration** - Expose completions over HTTP and verify OpenCode works end-to-end
 
 ## Phase Details
@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. No `b.dependency("mlx").module("mlx")` panic at build time — MLX.zig linked via direct `.a` path
   4. httpz pinned to a tagged release compatible with the installed Zig version, with a valid SHA256 hash in build.zig.zon
   5. All C interop flows through a single `src/c.zig` — no duplicate @cImport type errors
-**Plans**: TBD
+**Plans**: 1 (PLAN.md in .planning/phases/01-foundation-build/)
 
 ### Phase 2: Inference Core
 **Goal**: A CLI harness loads a quantized model from `./models/` and streams tokens to stdout one at a time via Metal GPU
@@ -40,7 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `GenerationState.next()` yields one token per call — observable as incremental stdout output in the CLI harness
   4. Sending two back-to-back generation requests does not corrupt output — mutex serialization is effective
   5. `--model`, `--port`, and `--max-kv-size` flags are accepted and applied
-**Plans**: TBD
+**Plans**: 1 (PLAN.md in .planning/phases/02-inference-core/)
 
 ### Phase 3: HTTP API & Integration
 **Goal**: OpenCode connects to `http://127.0.0.1:8080/v1` and receives correct streaming completions from a locally loaded model
@@ -61,6 +61,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Build | 0/? | Not started | - |
-| 2. Inference Core | 0/? | Not started | - |
-| 3. HTTP API & Integration | 0/? | Not started | - |
+| 1. Foundation & Build | 1/1 | ✅ Complete | 2026-03-31 |
+| 2. Inference Core | 1/1 | ✅ Complete | 2026-03-31 |
+| 3. HTTP API & Integration | 0/? | 🔄 Ready | - |
