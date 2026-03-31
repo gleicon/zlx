@@ -72,23 +72,23 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUILD-01 | Phase 1 | Pending |
-| BUILD-02 | Phase 1 | Pending |
-| BUILD-03 | Phase 1 | Pending |
-| BUILD-04 | Phase 1 | Pending |
-| INFER-01 | Phase 2 | Pending |
-| INFER-02 | Phase 2 | Pending |
-| INFER-03 | Phase 2 | Pending |
-| INFER-04 | Phase 2 | Pending |
-| INFER-05 | Phase 2 | Pending |
-| HTTP-01 | Phase 3 | Pending |
-| HTTP-02 | Phase 3 | Pending |
-| HTTP-03 | Phase 3 | Pending |
-| HTTP-04 | Phase 3 | Pending |
-| HTTP-05 | Phase 3 | Pending |
-| HTTP-06 | Phase 3 | Pending |
-| INT-01 | Phase 3 | Pending |
-| INT-02 | Phase 3 | Pending |
+| BUILD-01 | Phase 1 | ✅ Complete |
+| BUILD-02 | Phase 1 | ✅ Complete |
+| BUILD-03 | Phase 1 | ✅ Complete |
+| BUILD-04 | Phase 1 | ✅ Complete |
+| INFER-01 | Phase 2 | ✅ Complete |
+| INFER-02 | Phase 2 | ✅ Complete |
+| INFER-03 | Phase 2 | ✅ Complete |
+| INFER-04 | Phase 2 | ✅ Complete |
+| INFER-05 | Phase 2 | ✅ Complete |
+| HTTP-01 | Phase 3 | ✅ Implemented (pending model test) |
+| HTTP-02 | Phase 3 | ✅ Implemented (pending model test) |
+| HTTP-03 | Phase 3 | ✅ Implemented (pending model test) |
+| HTTP-04 | Phase 3 | ✅ Implemented (pending model test) |
+| HTTP-05 | Phase 3 | ⚠️ Partial (EOS token only) |
+| HTTP-06 | Phase 3 | ✅ Implemented (tokenizer handles boundaries) |
+| INT-01 | Phase 3 | ⚠️ Ready (pending model test) |
+| INT-02 | Phase 3 | ⚠️ Ready (pending model test) |
 
 **Coverage:**
 - v1 requirements: 17 total
@@ -97,4 +97,4 @@
 
 ---
 *Requirements defined: 2026-03-30*
-*Last updated: 2026-03-30 after initial definition*
+*Last updated: 2026-03-31 after Phase 3 HTTP API completion*
