@@ -7,9 +7,9 @@
 
 ### Build
 
-- [ ] **BUILD-01**: `zig build` completes without errors on macOS aarch64 with Zig 0.13.0
+- [ ] **BUILD-01**: `zig build` completes without errors on macOS aarch64 with latest stable Zig
 - [ ] **BUILD-02**: MLX.zig linkage is correctly integrated (no module-name panic; uses `configureExecutable` C-interop path)
-- [ ] **BUILD-03**: httpz pinned to zig-0.13 branch with correct hash in `build.zig.zon`
+- [ ] **BUILD-03**: httpz pinned to a tagged release compatible with installed Zig version, with correct hash in `build.zig.zon`
 - [ ] **BUILD-04**: Single `@cImport` boundary (`src/c.zig`) for all C interop (mlx-c headers)
 
 ### Inference

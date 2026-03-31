@@ -43,7 +43,7 @@ A single `zig build` binary that lets OpenCode connect to local coding models wi
 
 ## Constraints
 
-- **Tech stack**: Zig 0.13.0+, MLX.zig, httpz — no Python, no Bazel, no CMake in final binary
+- **Tech stack**: Latest stable Zig, MLX.zig, httpz — no Python, no Bazel, no CMake in final binary
 - **Platform**: macOS aarch64 only — Metal GPU required, no cross-platform target
 - **Dependencies**: TurboQuant C++ kernels must be bound (not rewritten) — scope limited to interop, not porting
 - **Distribution**: Personal use only — no installer, no multi-user auth, no TLS required
