@@ -70,8 +70,8 @@ pub fn streamResponse(
     defer state.deinit();
 
     // Track tokens and content
-    var token_buffer = std.ArrayList(u32).init(allocator);
-    defer token_buffer.deinit();
+    var token_buffer = std.ArrayList(u32).empty;
+    defer token_buffer.deinit(allocator);
 
     var total_tokens: u32 = 0;
     const created_timestamp = std.time.timestamp();
@@ -80,7 +80,7 @@ pub fn streamResponse(
     var is_first_chunk = true;
     while (try state.next()) |token| {
         total_tokens += 1;
-        try token_buffer.append(token);
+        try token_buffer.append(allocator, token);
 
         // Decode the token to text
         const token_slice = &[_]u32{token};
@@ -140,10 +140,10 @@ fn buildStreamingChunk(
     is_first: bool,
     finish_reason: ?[]const u8,
 ) ![]const u8 {
-    var json = std.ArrayList(u8).init(allocator);
-    defer json.deinit();
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(allocator);
 
-    const writer = json.writer();
+    const writer = json.writer(allocator);
 
     // Build the chunk structure
     try writer.writeAll("{\"id\":\"");
@@ -184,7 +184,7 @@ fn buildStreamingChunk(
 
     try writer.writeAll("]}]}");
 
-    return json.toOwnedSlice();
+    return json.toOwnedSlice(allocator);
 }
 
 /// Write a string with JSON escaping
@@ -198,7 +198,7 @@ fn writeJsonString(writer: anytype, str: []const u8) !void {
             '\n' => try writer.writeAll("\\n"),
             '\r' => try writer.writeAll("\\r"),
             '\t' => try writer.writeAll("\\t"),
-            0x00...0x1f => try writer.print("\\u{x:0>4}", .{c}),
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x0B, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F => try writer.print("\\u{x:0>4}", .{c}),
             else => try writer.writeByte(c),
         }
     }
@@ -266,14 +266,14 @@ pub fn generateNonStreamingResponse(
     defer state.deinit();
 
     // Collect all tokens
-    var output_tokens = std.ArrayList(u32).init(allocator);
-    defer output_tokens.deinit();
+    var output_tokens = std.ArrayList(u32).empty;
+    defer output_tokens.deinit(allocator);
 
     const prompt_tokens: u32 = @intCast(input_tokens.len);
     var completion_tokens: u32 = 0;
 
     while (try state.next()) |token| {
-        try output_tokens.append(token);
+        try output_tokens.append(allocator, token);
         completion_tokens += 1;
     }
 
@@ -285,10 +285,10 @@ pub fn generateNonStreamingResponse(
     const created_timestamp = std.time.timestamp();
 
     // Build the response JSON
-    var json = std.ArrayList(u8).init(allocator);
-    errdefer json.deinit();
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(allocator);
 
-    const writer = json.writer();
+    const writer = json.writer(allocator);
 
     try writer.writeAll("{\"id\":\"");
     try writeJsonString(writer, completion_id);
@@ -312,5 +312,5 @@ pub fn generateNonStreamingResponse(
         prompt_tokens + completion_tokens,
     });
 
-    return json.toOwnedSlice();
+    return json.toOwnedSlice(allocator);
 }

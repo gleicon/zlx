@@ -31,7 +31,7 @@ pub const InferenceContext = struct {
     generation_mutex: std.Thread.Mutex,
 
     pub fn init(allocator: std.mem.Allocator, model_path: []const u8) !Self {
-        const model_info = try loader.loadModelInfo(allocator, model_path);
+        var model_info = try loader.loadModelInfo(allocator, model_path);
         defer model_info.deinit();
 
         var ctx = Self{

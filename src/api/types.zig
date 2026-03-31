@@ -10,25 +10,6 @@ pub const Role = enum {
     system,
     user,
     assistant,
-
-    pub fn jsonStringify(self: Role, jw: anytype) !void {
-        const str = switch (self) {
-            .system => "system",
-            .user => "user",
-            .assistant => "assistant",
-        };
-        try jw.write(str);
-    }
-
-    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: anytype) !Role {
-        _ = allocator;
-        _ = options;
-        const str = try source.nextString();
-        if (std.mem.eql(u8, str, "system")) return .system;
-        if (std.mem.eql(u8, str, "user")) return .user;
-        if (std.mem.eql(u8, str, "assistant")) return .assistant;
-        return error.InvalidEnumTag;
-    }
 };
 
 /// Chat message structure
@@ -86,28 +67,6 @@ pub const ChatCompletionRequest = struct {
 pub const StopSequence = union(enum) {
     single: []const u8,
     multiple: []const []const u8,
-
-    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: anytype) !StopSequence {
-        _ = options;
-        // Try array first
-        if (source.arrayStart()) |_| {
-            var list = std.ArrayList([]const u8).init(allocator);
-            errdefer list.deinit();
-            while (try source.next()) |_| {
-                try list.append(try source.nextString());
-            }
-            return StopSequence{ .multiple = list.toOwnedSlice() };
-        }
-        // Otherwise treat as string
-        return StopSequence{ .single = try source.nextString() };
-    }
-
-    pub fn jsonStringify(self: StopSequence, jw: anytype) !void {
-        switch (self) {
-            .single => |s| try jw.write(s),
-            .multiple => |arr| try jw.write(arr),
-        }
-    }
 };
 
 /// Choice in chat completion response
@@ -240,33 +199,33 @@ pub fn generateCompletionId(allocator: std.mem.Allocator) ![]const u8 {
 
 /// Build chat prompt from messages array
 pub fn buildPromptFromMessages(allocator: std.mem.Allocator, messages: []const Message) ![]const u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(u8).empty;
+    errdefer result.deinit(allocator);
 
     for (messages) |msg| {
         switch (msg.role) {
             .system => {
-                try result.appendSlice("<|im_start|>system\n");
-                try result.appendSlice(msg.content);
-                try result.appendSlice("<|im_end|>\n");
+                try result.appendSlice(allocator, "<|im_start|>system\n");
+                try result.appendSlice(allocator, msg.content);
+                try result.appendSlice(allocator, "<|im_end|>\n");
             },
             .user => {
-                try result.appendSlice("<|im_start|>user\n");
-                try result.appendSlice(msg.content);
-                try result.appendSlice("<|im_end|>\n");
+                try result.appendSlice(allocator, "<|im_start|>user\n");
+                try result.appendSlice(allocator, msg.content);
+                try result.appendSlice(allocator, "<|im_end|>\n");
             },
             .assistant => {
-                try result.appendSlice("<|im_start|>assistant\n");
-                try result.appendSlice(msg.content);
-                try result.appendSlice("<|im_end|>\n");
+                try result.appendSlice(allocator, "<|im_start|>assistant\n");
+                try result.appendSlice(allocator, msg.content);
+                try result.appendSlice(allocator, "<|im_end|>\n");
             },
         }
     }
 
     // Add final assistant prefix to prompt generation
-    try result.appendSlice("<|im_start|>assistant\n");
+    try result.appendSlice(allocator, "<|im_start|>assistant\n");
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 test "types - prompt building" {

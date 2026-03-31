@@ -25,7 +25,7 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
     setCorsHeaders(res);
 
     // Handle preflight OPTIONS request
-    if (std.mem.eql(u8, req.method, "OPTIONS")) {
+    if (req.method == .OPTIONS) {
         res.status = 204;
         return;
     }
@@ -37,8 +37,8 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
     };
 
     // Get request body
-    const body = req.body() catch |err| {
-        std.log.err("Failed to read request body: {s}", .{@errorName(err)});
+    const body = req.body() orelse {
+        std.log.err("Failed to read request body", .{});
         try sendError(res, 400, "Invalid request body", "invalid_request");
         return;
     };
@@ -86,9 +86,9 @@ fn handleStreamingRequest(req: anytype, res: anytype, request: types.ChatComplet
 
     // Set SSE headers
     res.status = 200;
-    for (streaming.SSE_HEADERS) |header| {
-        res.setHeader(header[0], header[1]);
-    }
+    res.content_type = .EVENTS;
+    res.header("Cache-Control", "no-cache");
+    res.header("Connection", "keep-alive");
 
     // Get response writer
     const writer = res.writer();
@@ -118,7 +118,7 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
 
     // Send response
     res.status = 200;
-    res.setHeader("Content-Type", "application/json");
+    res.content_type = .JSON;
 
     const writer = res.writer();
     try writer.writeAll(response_json);
@@ -130,7 +130,7 @@ pub fn handleListModels(req: anytype, res: anytype) !void {
     setCorsHeaders(res);
 
     // Handle preflight OPTIONS request
-    if (std.mem.eql(u8, req.method, "OPTIONS")) {
+    if (req.method == .OPTIONS) {
         res.status = 204;
         return;
     }
@@ -146,10 +146,10 @@ pub fn handleListModels(req: anytype, res: anytype) !void {
     const model_name = std.fs.path.basename(ctx.model_path);
 
     // Build models response
-    var json = std.ArrayList(u8).init(ctx.allocator);
-    defer json.deinit();
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(ctx.allocator);
 
-    const writer = json.writer();
+    const writer = json.writer(ctx.allocator);
 
     try writer.writeAll("{\"object\":\"list\",\"data\":[");
 
@@ -172,7 +172,7 @@ pub fn handleHealth(req: anytype, res: anytype) !void {
     setCorsHeaders(res);
 
     res.status = 200;
-    res.setHeader("Content-Type", "application/json");
+    res.content_type = .JSON;
 
     const ctx = global_context;
     const status = if (ctx != null) "healthy" else "initializing";
@@ -188,12 +188,11 @@ pub fn handleHealth(req: anytype, res: anytype) !void {
 /// Send JSON error response
 fn sendError(res: anytype, status: u16, message: []const u8, error_type: []const u8) !void {
     res.status = status;
-    res.setHeader("Content-Type", "application/json");
+    res.content_type = .JSON;
     setCorsHeaders(res);
 
     var buf: [1024]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"{s}\"}}}}", .{ message, error_type }) catch |err| {
-        _ = err;
+    const json = std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"{s}\"}}}}", .{ message, error_type }) catch {
         // Fallback if formatting fails
         try res.writer().writeAll("{\"error\":{\"message\":\"Internal error\",\"type\":\"server_error\"}}");
         return;
@@ -205,7 +204,7 @@ fn sendError(res: anytype, status: u16, message: []const u8, error_type: []const
 /// Send JSON response with given body
 fn sendJsonResponse(res: anytype, status: u16, body: []const u8) !void {
     res.status = status;
-    res.setHeader("Content-Type", "application/json");
+    res.content_type = .JSON;
 
     const writer = res.writer();
     try writer.writeAll(body);
@@ -213,9 +212,9 @@ fn sendJsonResponse(res: anytype, status: u16, body: []const u8) !void {
 
 /// Set CORS headers on response
 fn setCorsHeaders(res: anytype) void {
-    for (CORS_HEADERS) |header| {
-        res.setHeader(header[0], header[1]);
-    }
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
 /// Initialize global inference context

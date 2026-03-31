@@ -15,8 +15,8 @@ pub const ModelType = enum {
 /// Model configuration wrapper that handles different model types
 pub const ModelConfig = union(ModelType) {
     qwen: qwen.ModelConfig,
-    // llama: @import("../mlx.zig/src/llama.zig").ModelConfig,
-    // phi: @import("../mlx.zig/src/phi.zig").ModelConfig,
+    llama: void, // TODO: Add llama ModelConfig
+    phi: void, // TODO: Add phi ModelConfig
 };
 
 /// Model loading error types

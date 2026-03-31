@@ -19,22 +19,27 @@ pub const ServerConfig = struct {
 };
 
 /// Global server instance for cleanup
-var g_server: ?*httpz.Server(void) = null;
+var g_server: ?httpz.Server(void) = null;
 
 /// HTTP server state
 pub const Server = struct {
     /// The underlying httpz server
-    http_server: *httpz.Server(void),
+    http_server: httpz.Server(void),
     /// Allocator used by the server
     allocator: std.mem.Allocator,
 
     /// Initialize and start the HTTP server
     pub fn init(allocator: std.mem.Allocator, config: ServerConfig) !Server {
+        // Create httpz server config
+        const httpz_config = httpz.Config{
+            .address = if (std.mem.eql(u8, config.address, "0.0.0.0"))
+                .all(config.port)
+            else
+                .{ .ip = .{ .host = config.address, .port = config.port } },
+        };
+
         // Create httpz server
-        var server = try httpz.Server(void).init(allocator, .{
-            .port = config.port,
-            .address = config.address,
-        }, {});
+        var server = try httpz.Server(void).init(allocator, httpz_config, {});
 
         // Configure router
         var router = try server.router(.{});
@@ -76,11 +81,6 @@ pub const Server = struct {
         self.http_server.stop();
         g_server = null;
     }
-
-    /// Get the underlying httpz server for advanced configuration
-    pub fn getHttpServer(self: *Server) *httpz.Server(void) {
-        return self.http_server;
-    }
 };
 
 /// Wrapper for chat completions handler
@@ -103,9 +103,9 @@ fn handleOptions(req: *httpz.Request, res: *httpz.Response) !void {
     _ = req;
 
     // Set CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     res.status = 204; // No content
 }
@@ -118,11 +118,11 @@ pub fn runServer(allocator: std.mem.Allocator, config: ServerConfig) !void {
     // Set up signal handler for graceful shutdown
     const sigaction = std.posix.Sigaction{
         .handler = .{ .handler = signalHandler },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
-    try std.posix.sigaction(std.posix.SIG.INT, &sigaction, null);
-    try std.posix.sigaction(std.posix.SIG.TERM, &sigaction, null);
+    std.posix.sigaction(std.posix.SIG.INT, &sigaction, null);
+    std.posix.sigaction(std.posix.SIG.TERM, &sigaction, null);
 
     std.log.info("Server running at http://{s}:{d}/v1", .{ config.address, config.port });
     std.log.info("Press Ctrl+C to stop", .{});
@@ -132,10 +132,10 @@ pub fn runServer(allocator: std.mem.Allocator, config: ServerConfig) !void {
 }
 
 /// Signal handler for graceful shutdown
-fn signalHandler(sig: c_int) callconv(.C) void {
+fn signalHandler(sig: c_int) callconv(.c) void {
     _ = sig;
     std.log.info("\nShutdown signal received", .{});
-    if (g_server) |server| {
+    if (g_server) |*server| {
         server.stop();
     }
 }
