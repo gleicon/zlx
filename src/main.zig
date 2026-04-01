@@ -5,6 +5,7 @@
 const std = @import("std");
 const api = @import("api/server.zig");
 const handlers = @import("api/handlers.zig");
+const metrics = @import("api/metrics.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -134,6 +135,16 @@ pub fn main() !void {
     defer handlers.deinitGlobalContext(allocator);
 
     std.log.info("Model loaded successfully!", .{});
+
+    // Initialize metrics tracking
+    metrics.initMetrics(allocator);
+
+    // Start periodic stats logging (every 10 seconds)
+    _ = metrics.startStatsLogging(allocator, 10) catch |err| {
+        std.log.warn("Failed to start stats logging: {s}", .{@errorName(err)});
+    };
+
+    std.log.info("Stats logging enabled - logs every 10 seconds", .{});
 
     // Configure and run the HTTP server
     const server_config = api.ServerConfig{

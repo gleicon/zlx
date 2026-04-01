@@ -1,0 +1,86 @@
+    // Accumulate tokens for UTF-8 safe decoding
+    var pending_tokens = std.ArrayList(u32).empty;
+    defer pending_tokens.deinit(allocator);
+    
+    // Track previously emitted text to calculate delta
+    var prev_text = std.ArrayList(u8).empty;
+    defer prev_text.deinit(allocator);
+
+    var total_tokens: u32 = 0;
+    const created_timestamp = std.time.timestamp();
+
+    // Stream tokens one at a time
+    var is_first_chunk = true;
+    while (try state.next()) |token| {
+        total_tokens += 1;
+        try token_buffer.append(allocator, token);
+        try pending_tokens.append(allocator, token);
+
+        // Decode all accumulated tokens
+        const full_text = try tokenizer_ref.decode(pending_tokens.items);
+        defer allocator.free(full_text);
+        
+        // Calculate what new content to emit
+        // We emit only the delta between current and previous text
+        var content_to_emit: []const u8 = "";
+        
+        if (full_text.len > prev_text.items.len) {
+            // Find the longest valid UTF-8 prefix that we can emit
+            const delta = full_text[prev_text.items.len..];
+            
+            // Check if delta ends with a complete UTF-8 sequence
+            if (isCompleteUtf8Ending(delta)) {
+                content_to_emit = delta;
+                // Update prev_text to include what we just emitted
+                try prev_text.appendSlice(allocator, delta);
+            }
+            // If not a complete UTF-8 ending, we wait for more tokens
+        }
+        
+        if (content_to_emit.len > 0) {
+            // Build the SSE chunk with only the new content
+            const chunk = try buildStreamingChunk(
+                allocator,
+                completion_id,
+                created_timestamp,
+                request.model,
+                content_to_emit,
+                is_first_chunk,
+                null, // Not finished yet
+            );
+            defer allocator.free(chunk);
+
+            // Write SSE format: data: {...}\n\n
+            try writer.writeAll("data: ");
+            try writer.writeAll(chunk);
+            try writer.writeAll("\n\n");
+
+            is_first_chunk = false;
+        }
+    }
+    
+    // Emit any remaining content at the end
+    if (pending_tokens.items.len > 0) {
+        const full_text = try tokenizer_ref.decode(pending_tokens.items);
+        defer allocator.free(full_text);
+        
+        // Calculate final delta
+        if (full_text.len > prev_text.items.len) {
+            const delta = full_text[prev_text.items.len..];
+            
+            const chunk = try buildStreamingChunk(
+                allocator,
+                completion_id,
+                created_timestamp,
+                request.model,
+                delta,
+                is_first_chunk,
+                null,
+            );
+            defer allocator.free(chunk);
+            
+            try writer.writeAll("data: ");
+            try writer.writeAll(chunk);
+            try writer.writeAll("\n\n");
+        }
+    }

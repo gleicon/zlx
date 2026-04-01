@@ -1,0 +1,16 @@
+{
+  "model": "Qwen2.5-Coder-1.5B-4bit",
+  "max_tokens": 100,
+  "top_p": 1,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are opencode, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user."
+    },
+    {
+      "role": "user",
+      "content": "Hello"
+    }
+  ],
+  "stream": false
+}

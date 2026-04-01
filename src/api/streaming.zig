@@ -9,8 +9,47 @@ const inference = @import("../inference/mod.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const generator = @import("../inference/generator.zig");
+const metrics = @import("metrics.zig");
 
-/// SSE headers for streaming response
+/// Check if a string is valid UTF-8
+fn isValidUtf8(str: []const u8) bool {
+    return std.unicode.utf8ValidateSlice(str);
+}
+
+/// Check if a string ends with a complete UTF-8 sequence
+fn isCompleteUtf8Ending(str: []const u8) bool {
+    if (str.len == 0) return true;
+
+    // Walk backwards to count continuation bytes
+    var i = str.len;
+    var continuation_bytes: usize = 0;
+
+    while (i > 0) {
+        i -= 1;
+        const b = str[i];
+        if ((b & 0xC0) == 0x80) {
+            continuation_bytes += 1;
+        } else {
+            break;
+        }
+    }
+
+    if (continuation_bytes == 0) return true;
+
+    const start_byte = str[str.len - continuation_bytes - 1];
+    const masked = start_byte & 0xF0;
+    var expected: usize = 0;
+    if (masked == 0xF0) {
+        expected = 3; // 4 byte sequence
+    } else if (masked == 0xE0) {
+        expected = 2; // 3 byte sequence
+    } else if (masked == 0xC0) {
+        expected = 1; // 2 byte sequence
+    }
+
+    return continuation_bytes == expected;
+}
+
 pub const SSE_HEADERS = .{
     .{ "Content-Type", "text/event-stream" },
     .{ "Cache-Control", "no-cache" },
@@ -31,6 +70,10 @@ pub fn streamResponse(
 ) !void {
     const allocator = ctx.allocator;
 
+    // Start timing
+    const start_time = std.time.milliTimestamp();
+    metrics.startGeneration();
+
     // Generate completion ID
     const completion_id = try types.generateCompletionId(allocator);
     defer allocator.free(completion_id);
@@ -41,73 +84,63 @@ pub fn streamResponse(
 
     // Tokenize the prompt
     const tokenizer_ref = &ctx.tokenizer.?;
-    const input_tokens = try tokenizer_ref.encode(prompt);
-    defer allocator.free(input_tokens);
+    var input_tokens = try tokenizer_ref.encode(prompt);
+    errdefer allocator.free(input_tokens);
+    const prompt_token_count: u32 = @intCast(input_tokens.len);
 
-    // Create generation options
-    const gen_options = generator.GenerationOptions{
-        .max_tokens = request.getMaxTokens(),
-        .temperature = request.getTemperature(),
-        .top_p = request.getTopP(),
-        .stop_on_eos = true,
-    };
+    // Create generation options with context limit
+    const MAX_CONTEXT_LENGTH: usize = 8192;
+    const requested_max = request.getMaxTokens();
+    const max_new_tokens = @min(requested_max, MAX_CONTEXT_LENGTH - 1);
+    const max_input_tokens = MAX_CONTEXT_LENGTH - max_new_tokens;
+
+    // Truncate input if too long (keep from the end)
+    if (input_tokens.len > max_input_tokens) {
+        const start_idx = input_tokens.len - max_input_tokens;
+        const truncated = try allocator.dupe(u32, input_tokens[start_idx..]);
+        allocator.free(input_tokens);
+        input_tokens = truncated;
+        std.log.warn("Streaming input truncated from {d} to {d} tokens", .{ input_tokens.len + max_input_tokens, max_input_tokens });
+    }
 
     // Initialize transformer (we need it for generation)
     var transformer = try qwen.Transformer.init(allocator, ctx.model_path);
     defer transformer.deinit();
 
-    // Get EOS token IDs
-    const eos_token_ids = transformer.eos_token_ids;
+    // Use built-in transformer generate method instead of custom generator
+    const generated_tokens = transformer.generate(input_tokens, max_new_tokens) catch |err| {
+        std.log.err("Generation failed: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer allocator.free(generated_tokens);
 
-    // Initialize generation state
-    var state = try generator.GenerationState.init(
-        allocator,
-        &transformer,
-        input_tokens,
-        eos_token_ids,
-        gen_options,
-    );
-    defer state.deinit();
+    // Decode generated tokens
+    const generated_text = try tokenizer_ref.decode(generated_tokens);
+    defer allocator.free(generated_text);
 
-    // Track tokens and content
-    var token_buffer = std.ArrayList(u32).empty;
-    defer token_buffer.deinit(allocator);
-
-    var total_tokens: u32 = 0;
     const created_timestamp = std.time.timestamp();
 
-    // Stream tokens one at a time
-    var is_first_chunk = true;
-    while (try state.next()) |token| {
-        total_tokens += 1;
-        try token_buffer.append(allocator, token);
+    // Stream the generated text in chunks
+    // Strip special tokens from generated text
+    const cleaned_text = try stripSpecialTokens(allocator, generated_text);
+    defer allocator.free(cleaned_text);
 
-        // Decode the token to text
-        const token_slice = &[_]u32{token};
-        const text = try tokenizer_ref.decode(token_slice);
-        defer allocator.free(text);
-
-        // Build the SSE chunk
+    // Stream the entire cleaned text at once (simpler and more reliable)
+    if (cleaned_text.len > 0) {
         const chunk = try buildStreamingChunk(
             allocator,
             completion_id,
             created_timestamp,
             request.model,
-            text,
-            is_first_chunk,
-            null, // Not finished yet
+            cleaned_text,
+            true,
+            null,
         );
         defer allocator.free(chunk);
 
-        // Write SSE format: data: {...}\n\n
         try writer.writeAll("data: ");
         try writer.writeAll(chunk);
         try writer.writeAll("\n\n");
-
-        // Flush to ensure client receives immediately
-        // Note: httpz writer may need explicit flush - we'll handle this in the caller
-
-        is_first_chunk = false;
     }
 
     // Write final chunk with finish_reason
@@ -128,6 +161,13 @@ pub fn streamResponse(
 
     // Write [DONE] marker as per OpenAI protocol
     try writer.writeAll("data: [DONE]\n\n");
+
+    // Record metrics
+    const end_time = std.time.milliTimestamp();
+    const generation_time_ms = @as(u64, @intCast(end_time - start_time));
+    const completion_token_count: u32 = @intCast(generated_tokens.len);
+    // For streaming, we don't have true TTFT since we wait for all tokens, so use 0
+    metrics.recordRequest(prompt_token_count, completion_token_count, generation_time_ms, 0);
 }
 
 /// Build a streaming chunk JSON string
@@ -174,15 +214,15 @@ fn buildStreamingChunk(
         try writer.writeAll("{}");
     }
 
-    try writer.writeByte('}');
-
+    // Add finish_reason inside the choice object
     if (finish_reason) |reason| {
         try writer.print(",\"finish_reason\":\"{s}\"", .{reason});
     } else {
         try writer.writeAll(",\"finish_reason\":null");
     }
 
-    try writer.writeAll("]}]}");
+    // Close choice object, choices array, and root object
+    try writer.writeAll("}]}");
 
     return json.toOwnedSlice(allocator);
 }
@@ -227,6 +267,11 @@ pub fn generateNonStreamingResponse(
     request: types.ChatCompletionRequest,
     ctx: *inference.InferenceContext,
 ) ![]const u8 {
+    // Start timing
+    const start_time = std.time.milliTimestamp();
+    const generation_start_micro = std.time.microTimestamp();
+    metrics.startGeneration();
+
     // Generate completion ID
     const completion_id = try types.generateCompletionId(allocator);
     defer allocator.free(completion_id);
@@ -237,12 +282,27 @@ pub fn generateNonStreamingResponse(
 
     // Tokenize the prompt
     const tokenizer_ref = &ctx.tokenizer.?;
-    const input_tokens = try tokenizer_ref.encode(prompt);
-    defer allocator.free(input_tokens);
+    var input_tokens = try tokenizer_ref.encode(prompt);
+    errdefer allocator.free(input_tokens);
+    const prompt_tokens: u32 = @intCast(input_tokens.len);
 
-    // Create generation options
+    // Create generation options with context limit
+    const MAX_CONTEXT_LENGTH: usize = 8192;
+    const requested_max = request.getMaxTokens();
+    const max_new_tokens = @min(requested_max, MAX_CONTEXT_LENGTH - 1);
+    const max_input_tokens = MAX_CONTEXT_LENGTH - max_new_tokens;
+
+    // Truncate input if too long (keep from the end)
+    if (input_tokens.len > max_input_tokens) {
+        const start_idx = input_tokens.len - max_input_tokens;
+        const truncated = try allocator.dupe(u32, input_tokens[start_idx..]);
+        allocator.free(input_tokens);
+        input_tokens = truncated;
+        std.log.warn("Non-streaming input truncated from {d} to {d} tokens", .{ input_tokens.len + max_input_tokens, max_input_tokens });
+    }
+
     const gen_options = generator.GenerationOptions{
-        .max_tokens = request.getMaxTokens(),
+        .max_tokens = max_new_tokens,
         .temperature = request.getTemperature(),
         .top_p = request.getTopP(),
         .stop_on_eos = true,
@@ -269,20 +329,38 @@ pub fn generateNonStreamingResponse(
     var output_tokens = std.ArrayList(u32).empty;
     defer output_tokens.deinit(allocator);
 
-    const prompt_tokens: u32 = @intCast(input_tokens.len);
     var completion_tokens: u32 = 0;
+    var first_token = true;
+    var first_token_time_micro: i64 = 0;
 
     while (try state.next()) |token| {
+        if (first_token) {
+            first_token_time_micro = std.time.microTimestamp();
+            first_token = false;
+        }
         try output_tokens.append(allocator, token);
         completion_tokens += 1;
     }
 
     // Decode all tokens at once for efficiency
-    const content = try tokenizer_ref.decode(output_tokens.items);
+    const raw_content = try tokenizer_ref.decode(output_tokens.items);
+    defer allocator.free(raw_content);
+
+    // Strip special tokens from output
+    const content = try stripSpecialTokens(allocator, raw_content);
     defer allocator.free(content);
 
     // Build response
     const created_timestamp = std.time.timestamp();
+
+    // Record metrics
+    const end_time = std.time.milliTimestamp();
+    const generation_time_ms = @as(u64, @intCast(end_time - start_time));
+    const ttft_us = if (first_token_time_micro > generation_start_micro)
+        @as(u64, @intCast(first_token_time_micro - generation_start_micro))
+    else
+        0;
+    metrics.recordRequest(prompt_tokens, completion_tokens, generation_time_ms, ttft_us);
 
     // Build the response JSON
     var json = std.ArrayList(u8).empty;
@@ -313,4 +391,51 @@ pub fn generateNonStreamingResponse(
     });
 
     return json.toOwnedSlice(allocator);
+}
+
+/// Strip special tokens from generated text
+fn stripSpecialTokens(allocator: std.mem.Allocator, text: []const u8) ![]const u8 {
+    // Special tokens to remove
+    const special_tokens = &[_][]const u8{
+        "<|endoftext|>",
+        "<|im_start|>",
+        "<|im_end|>", // This is token 151645
+        "  ", // Legacy - might also appear
+        "<|fim_prefix|>",
+        "<|fim_middle|>",
+        "<|fim_suffix|>",
+        "<|fim_pad|>",
+        "<|repo_name|>",
+        "<|file_sep|>",
+    };
+
+    var result = try allocator.dupe(u8, text);
+    errdefer allocator.free(result);
+
+    // Iteratively remove special tokens
+    var changed = true;
+    while (changed) {
+        changed = false;
+        for (special_tokens) |token| {
+            if (std.mem.indexOf(u8, result, token)) |pos| {
+                // Found token, remove it
+                const new_len = result.len - token.len;
+                var new_result = try allocator.alloc(u8, new_len);
+
+                // Copy before token
+                @memcpy(new_result[0..pos], result[0..pos]);
+                // Copy after token
+                if (pos + token.len < result.len) {
+                    @memcpy(new_result[pos..], result[pos + token.len ..]);
+                }
+
+                allocator.free(result);
+                result = new_result;
+                changed = true;
+                break; // Restart search after modification
+            }
+        }
+    }
+
+    return result;
 }

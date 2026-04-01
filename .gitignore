@@ -1,0 +1,124 @@
+# zig build artifacts
+zig-out/
+.zig-cache/
+
+# Model weights (large binaries - download separately)
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.mlx
+
+# Logs
+*.log
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test artifacts
+test_output/
+*.test
+
+# Python artifacts (for helper scripts)
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# macOS
+*.dSYM/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Profiling data
+*.profdata
+*.profraw
+
+# Coverage
+coverage/
+*.gcov
+*.gcno
+*.gcda
+
+# Documentation build
+docs/_build/
+*.html.pdf
+
+# Environment files (may contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Keys and certificates
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# Dependencies that should be installed, not committed
+node_modules/
+vendor/
+
+# Large media files (if any)
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.wav
+*.flac
+*.ogg
+*.webm
+*.mkv
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bz2
+*.7z
+*.rar
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Core dumps
+core
+core.*
+*.core
+
+# Build system files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+compile_commands.json
+
+# macOS specific
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Windows specific
+Desktop.ini
+$RECYCLE.BIN/

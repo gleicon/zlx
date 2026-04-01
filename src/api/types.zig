@@ -5,17 +5,124 @@
 
 const std = @import("std");
 
+/// JsonFloat is a float type that can be parsed from either JSON integers or floats
+pub const JsonFloat = struct {
+    value: f64,
+
+    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!JsonFloat {
+        _ = allocator;
+        _ = options;
+
+        const token = try source.next();
+        switch (token) {
+            .number => |num_str| {
+                const val = try std.fmt.parseFloat(f64, num_str);
+                return JsonFloat{ .value = val };
+            },
+            .allocated_number => |num_str| {
+                const val = try std.fmt.parseFloat(f64, num_str);
+                return JsonFloat{ .value = val };
+            },
+            else => return error.UnexpectedToken,
+        }
+    }
+};
+
 /// Message role in chat completion
 pub const Role = enum {
     system,
+    developer,
     user,
     assistant,
+    tool,
+};
+
+/// Message content can be a string or an array (for multimodal)
+pub const MessageContent = struct {
+    text: []const u8,
+
+    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!MessageContent {
+        _ = options;
+
+        std.log.info("MessageContent.jsonParse called", .{});
+
+        // Handle potentially large strings that come as partial_string tokens
+        var buffer = std.ArrayList(u8).empty;
+        errdefer buffer.deinit(allocator);
+
+        while (true) {
+            const token = try source.next();
+            std.log.info("MessageContent got token: {s}", .{@tagName(token)});
+
+            switch (token) {
+                .string => |str| {
+                    std.log.info("MessageContent: complete string len={d}", .{str.len});
+                    if (buffer.items.len == 0) {
+                        // Small string, return directly
+                        return MessageContent{ .text = try allocator.dupe(u8, str) };
+                    } else {
+                        // Part of a larger string we were collecting
+                        try buffer.appendSlice(allocator, str);
+                        return MessageContent{ .text = try buffer.toOwnedSlice(allocator) };
+                    }
+                },
+                .allocated_string => |str| {
+                    std.log.info("MessageContent: allocated_string len={d}", .{str.len});
+                    if (buffer.items.len == 0) {
+                        return MessageContent{ .text = try allocator.dupe(u8, str) };
+                    } else {
+                        try buffer.appendSlice(allocator, str);
+                        return MessageContent{ .text = try buffer.toOwnedSlice(allocator) };
+                    }
+                },
+                .partial_string => |str| {
+                    std.log.info("MessageContent: partial_string len={d}, accumulating", .{str.len});
+                    try buffer.appendSlice(allocator, str);
+                    // Continue to collect more parts
+                },
+                .partial_string_escaped_1 => |arr| {
+                    std.log.info("MessageContent: partial_string_escaped_1", .{});
+                    try buffer.appendSlice(allocator, &arr);
+                },
+                .partial_string_escaped_2 => |arr| {
+                    std.log.info("MessageContent: partial_string_escaped_2", .{});
+                    try buffer.appendSlice(allocator, &arr);
+                },
+                .partial_string_escaped_3 => |arr| {
+                    std.log.info("MessageContent: partial_string_escaped_3", .{});
+                    try buffer.appendSlice(allocator, &arr);
+                },
+                .partial_string_escaped_4 => |arr| {
+                    std.log.info("MessageContent: partial_string_escaped_4", .{});
+                    try buffer.appendSlice(allocator, &arr);
+                },
+                .array_begin => {
+                    std.log.info("MessageContent: array_begin - consuming array", .{});
+                    // Empty array or array of content parts - treat as empty string for now
+                    var depth: usize = 1;
+                    while (depth > 0) {
+                        const inner = try source.next();
+                        switch (inner) {
+                            .array_begin => depth += 1,
+                            .array_end => depth -= 1,
+                            else => {},
+                        }
+                    }
+                    return MessageContent{ .text = try allocator.dupe(u8, "") };
+                },
+                else => {
+                    std.log.info("MessageContent: unexpected token {s}", .{@tagName(token)});
+                    return error.UnexpectedToken;
+                },
+            }
+        }
+    }
 };
 
 /// Chat message structure
 pub const Message = struct {
     role: Role,
-    content: []const u8,
+    content: MessageContent,
     // Optional name field (for distinguishing between multiple users)
     name: ?[]const u8 = null,
 };
@@ -31,9 +138,9 @@ pub const ChatCompletionRequest = struct {
     /// Maximum tokens to generate (default: 256)
     max_tokens: ?u32 = null,
     /// Sampling temperature 0.0-2.0 (default: 0.7)
-    temperature: ?f32 = null,
+    temperature: ?JsonFloat = null,
     /// Nucleus sampling parameter 0.0-1.0 (default: 0.9)
-    top_p: ?f32 = null,
+    top_p: ?JsonFloat = null,
     /// Stop sequences to end generation
     stop: ?StopSequence = null,
     /// Number of completions to generate (default: 1)
@@ -43,23 +150,34 @@ pub const ChatCompletionRequest = struct {
     /// Seed for deterministic sampling
     seed: ?i32 = null,
     /// Presence penalty -2.0 to 2.0
-    presence_penalty: ?f32 = null,
+    presence_penalty: ?JsonFloat = null,
     /// Frequency penalty -2.0 to 2.0
-    frequency_penalty: ?f32 = null,
+    frequency_penalty: ?JsonFloat = null,
 
-    /// Get effective max_tokens
+    // Fields that OpenCode sends but we don't use (defined to avoid parse errors)
+    /// Tools for function calling (not implemented, ignored)
+    tools: ?std.json.Value = null,
+    /// Tool choice (not implemented, ignored)
+    tool_choice: ?std.json.Value = null,
+    /// Stream options (not implemented, ignored)
+    stream_options: ?std.json.Value = null,
+    /// Response format (not implemented, ignored)
+    response_format: ?std.json.Value = null,
+
+    /// Get effective max_tokens (capped at 4096 to prevent memory exhaustion)
     pub fn getMaxTokens(self: ChatCompletionRequest) u32 {
-        return self.max_tokens orelse 256;
+        const requested = self.max_tokens orelse 256;
+        return @min(requested, 4096);
     }
 
     /// Get effective temperature
     pub fn getTemperature(self: ChatCompletionRequest) f32 {
-        return self.temperature orelse 0.7;
+        return if (self.temperature) |t| @floatCast(t.value) else 0.7;
     }
 
     /// Get effective top_p
     pub fn getTopP(self: ChatCompletionRequest) f32 {
-        return self.top_p orelse 0.9;
+        return if (self.top_p) |tp| @floatCast(tp.value) else 0.9;
     }
 };
 
@@ -204,20 +322,26 @@ pub fn buildPromptFromMessages(allocator: std.mem.Allocator, messages: []const M
 
     for (messages) |msg| {
         switch (msg.role) {
-            .system => {
+            .system, .developer => {
                 try result.appendSlice(allocator, "<|im_start|>system\n");
-                try result.appendSlice(allocator, msg.content);
-                try result.appendSlice(allocator, "<|im_end|>\n");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "  \n");
             },
             .user => {
                 try result.appendSlice(allocator, "<|im_start|>user\n");
-                try result.appendSlice(allocator, msg.content);
-                try result.appendSlice(allocator, "<|im_end|>\n");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "  \n");
             },
             .assistant => {
                 try result.appendSlice(allocator, "<|im_start|>assistant\n");
-                try result.appendSlice(allocator, msg.content);
-                try result.appendSlice(allocator, "<|im_end|>\n");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "  \n");
+            },
+            .tool => {
+                // Tool messages are treated as system context for the model
+                try result.appendSlice(allocator, "<|im_start|>system\nTool result: ");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "  \n");
             },
         }
     }
@@ -232,8 +356,8 @@ test "types - prompt building" {
     const allocator = std.testing.allocator;
 
     const messages = &[_]Message{
-        .{ .role = .system, .content = "You are a helpful assistant." },
-        .{ .role = .user, .content = "Hello!" },
+        .{ .role = .system, .content = .{ .text = "You are a helpful assistant." } },
+        .{ .role = .user, .content = .{ .text = "Hello!" } },
     };
 
     const prompt = try buildPromptFromMessages(allocator, messages);

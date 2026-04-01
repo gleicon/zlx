@@ -55,7 +55,7 @@ pub const GenerationState = struct {
             const toks_data = try allocator.dupe(u32, initial_tokens);
             defer allocator.free(toks_data);
 
-            break :blk try mlx.arrayNewData(toks_data.ptr, .{ .batch = 1, .seq_len = @as(c_int, @intCast(initial_tokens.len)) }, mlx.UINT32);
+            break :blk try mlx.arrayNewData(toks_data.ptr, .{ 1, @as(c_int, @intCast(initial_tokens.len)) }, mlx.UINT32);
         };
 
         // Allocate KV cache on heap so we can pass a stable pointer
@@ -114,14 +114,77 @@ pub const GenerationState = struct {
         defer mlx.arrayFree(last_logits);
         try mlx.take(&last_logits, self.logits_array, mlx.int(-1), 1, transformer.mlx_config.stream);
 
-        // Argmax to get next token
-        var next_token_arr = mlx.arrayNew();
-        defer mlx.arrayFree(next_token_arr);
-        try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
+        // Apply temperature scaling if temperature != 0
+        var scaled_logits = mlx.arrayNew();
+        defer mlx.arrayFree(scaled_logits);
 
-        // Extract token value
+        if (self.options.temperature > 0 and self.options.temperature != 1.0) {
+            // Divide logits by temperature: logits / temperature
+            const temp_scalar = mlx.float(self.options.temperature);
+            try mlx.divide(&scaled_logits, last_logits, temp_scalar, transformer.mlx_config.stream);
+        } else {
+            // Copy logits
+            try mlx.arraySet(&scaled_logits, last_logits);
+        }
+
+        // Apply softmax to get probabilities
+        var probs = mlx.arrayNew();
+        defer mlx.arrayFree(probs);
+        const axes = &[_]c_int{1}; // Softmax over vocab dimension
+        try mlx.softmax(&probs, scaled_logits, axes, false, transformer.mlx_config.stream);
+
+        // Sample from the distribution
         var next_token: Token = 0;
-        try mlx.item(&next_token, next_token_arr);
+
+        // Evaluate to get actual values for sampling
+        try mlx.arrayEval(probs);
+
+        // Get probability data
+        const probs_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(probs)));
+        const vocab_size = mlx.arrayDim(probs, 1);
+
+        if (self.options.temperature == 0) {
+            // Greedy: pick the highest probability token
+            var max_prob: f32 = 0;
+            var max_idx: u32 = 0;
+            for (0..@intCast(vocab_size)) |i| {
+                const p = probs_data[i];
+                if (p > max_prob) {
+                    max_prob = p;
+                    max_idx = @intCast(i);
+                }
+            }
+            next_token = max_idx;
+        } else {
+            // Sample from the distribution
+            const random_value = std.crypto.random.float(f32);
+            var cumsum: f32 = 0;
+            var last_idx: u32 = 0;
+            for (0..@intCast(vocab_size)) |i| {
+                cumsum += probs_data[i];
+                last_idx = @intCast(i);
+                if (random_value <= cumsum) {
+                    next_token = @intCast(i);
+                    break;
+                }
+            }
+            // Fallback: if we didn't find a token (floating point edge case), use the last index
+            if (next_token == 0 and random_value > cumsum) {
+                next_token = last_idx;
+            }
+        }
+
+        // Debug: Log token generation
+        // std.log.debug("Generated token {d} at position {d}", .{ next_token, self.tokens_generated });
+
+        // OLD: Argmax to get next token
+        // var next_token_arr = mlx.arrayNew();
+        // defer mlx.arrayFree(next_token_arr);
+        // try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
+        //
+        // // Extract token value
+        // var next_token: Token = 0;
+        // try mlx.item(&next_token, next_token_arr);
 
         // Update state
         self.tokens_generated += 1;
@@ -140,7 +203,7 @@ pub const GenerationState = struct {
         // Prepare tokens array for next iteration: [1, 1] with just the new token
         mlx.arrayFree(self.toks_array);
         const single_token = [_]u32{next_token};
-        self.toks_array = try mlx.arrayNewData(&single_token, .{ .batch = 1, .seq_len = 1 }, mlx.UINT32);
+        self.toks_array = try mlx.arrayNewData(&single_token, .{ 1, 1 }, mlx.UINT32);
 
         return next_token;
     }
