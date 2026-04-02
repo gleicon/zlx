@@ -21,6 +21,12 @@ const CORS_HEADERS = &[_]struct { []const u8, []const u8 }{
 
 /// Handle POST /v1/chat/completions
 pub fn handleChatCompletions(req: anytype, res: anytype) !void {
+    // Generate request ID for tracking this request (per D-28)
+    const request_id = types.generateRequestId(std.heap.page_allocator) catch "req-unknown";
+    defer if (request_id.ptr != "req-unknown".ptr) {
+        std.heap.page_allocator.free(request_id);
+    };
+
     // Set CORS headers
     setCorsHeaders(res);
 
@@ -32,14 +38,15 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
 
     // Ensure context is available
     const ctx = global_context orelse {
-        try sendError(res, 500, "Server not initialized", "server_error", null);
+        std.log.err("[{s}] Server not initialized", .{request_id});
+        try sendServerError(res, "Server not initialized", request_id);
         return;
     };
 
     // Get request body
     const body = req.body() orelse {
-        std.log.err("Failed to read request body", .{});
-        try sendError(res, 400, "Invalid request body", "invalid_request", null);
+        std.log.err("[{s}] Failed to read request body", .{request_id});
+        try sendBadRequestError(res, "Invalid request body", null, request_id);
         return;
     };
 
@@ -70,124 +77,27 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
         body,
         .{ .ignore_unknown_fields = true },
     ) catch |err| {
-        std.log.err("Failed to parse request JSON: {s}", .{@errorName(err)});
-        std.log.err("Body length: {d}", .{body.len});
+        std.log.err("[{s}] Failed to parse request JSON: {s}", .{ request_id, @errorName(err) });
+        std.log.err("[{s}] Body length: {d}", .{ request_id, body.len });
 
         // Only log first 1000 chars of body on error to avoid log spam
         const err_log_len = @min(body.len, 1000);
-        std.log.err("Body was: {s}", .{body[0..err_log_len]});
+        std.log.err("[{s}] Body was: {s}", .{ request_id, body[0..err_log_len] });
         if (body.len > 1000) {
-            std.log.err("... (truncated, total length: {d})", .{body.len});
+            std.log.err("[{s}] ... (truncated, total length: {d})", .{ request_id, body.len });
         }
 
-        // Try to identify specific error position
-        if (err == error.SyntaxError or err == error.UnexpectedToken) {
-            // Find position of error by trying to parse with standard parser
-            const dummy_parsed = std.json.parseFromSlice(
-                std.json.Value,
-                ctx.allocator,
-                body,
-                .{ .ignore_unknown_fields = true },
-            ) catch |syntax_err| {
-                std.log.err("Raw JSON syntax error: {s}", .{@errorName(syntax_err)});
-                // Try to find where the error might be
-                if (std.mem.indexOf(u8, body, "\x00") != null) {
-                    std.log.err("ERROR: Body contains null bytes!", .{});
-                }
-                if (std.mem.indexOf(u8, body, "\n") != null) {
-                    std.log.info("Body contains newlines (this is OK)", .{});
-                }
-                // Check for unmatched quotes
-                var quote_count: usize = 0;
-                var in_escape = false;
-                for (body) |c| {
-                    if (c == '"' and !in_escape) {
-                        quote_count += 1;
-                    }
-                    in_escape = (c == '\\' and !in_escape);
-                }
-                if (quote_count % 2 != 0) {
-                    std.log.err("ERROR: Unmatched quotes in JSON! Count: {d}", .{quote_count});
-                }
+        // Provide helpful error message based on error type (per D-25)
+        const error_message = switch (err) {
+            error.SyntaxError => "Invalid JSON syntax in request body",
+            error.UnexpectedToken => "Unexpected token in JSON",
+            error.InvalidNumber => "Invalid number in JSON",
+            error.InvalidCharacters => "Invalid characters in JSON",
+            error.InvalidUtf8 => "Invalid UTF-8 in request body",
+            else => "Invalid JSON in request body",
+        };
 
-                // Show body without newlines for easier debugging
-                var clean_buf = try ctx.allocator.alloc(u8, body.len);
-                defer ctx.allocator.free(clean_buf);
-                for (body, 0..) |c, i| {
-                    clean_buf[i] = if (c == '\n') ' ' else c;
-                }
-                std.log.err("Body (newlines replaced with spaces): {s}", .{clean_buf});
-
-                return; // Return from the error handling
-            };
-            defer dummy_parsed.deinit();
-            std.log.info("Raw JSON is valid, issue is with ChatCompletionRequest struct mapping", .{});
-
-            // Try to identify which field is causing the issue
-            const root = dummy_parsed.value;
-
-            // List all fields in the JSON
-            std.log.info("All fields in request:", .{});
-            var field_iter = root.object.iterator();
-            while (field_iter.next()) |entry| {
-                std.log.info("  Field: {s} = {s}", .{ entry.key_ptr.*, @tagName(entry.value_ptr.*) });
-            }
-
-            // Try to validate each expected field
-            std.log.info("Validating field types...", .{});
-
-            // Check messages array structure
-            if (root.object.get("messages")) |messages_val| {
-                if (messages_val == .array) {
-                    std.log.info("messages is array with {d} items", .{messages_val.array.items.len});
-                    for (messages_val.array.items, 0..) |msg, i| {
-                        if (msg == .object) {
-                            if (msg.object.get("role")) |role_val| {
-                                std.log.info("  Message {d} role type: {s}", .{ i, @tagName(role_val) });
-                                if (role_val == .string) {
-                                    std.log.info("  Message {d} role value: {s}", .{ i, role_val.string });
-                                }
-                            }
-                            if (msg.object.get("content")) |content_val| {
-                                std.log.info("  Message {d} content type: {s}, len: {d}", .{ i, @tagName(content_val), if (content_val == .string) content_val.string.len else 0 });
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (root.object.get("model")) |model_val| {
-                std.log.info("model field type: {s}", .{@typeName(@TypeOf(model_val))});
-            }
-            if (root.object.get("messages")) |messages_val| {
-                std.log.info("messages field is present, type: {s}", .{@typeName(@TypeOf(messages_val))});
-                if (messages_val == .array) {
-                    std.log.info("messages is array with {d} items", .{messages_val.array.items.len});
-                    if (messages_val.array.items.len > 0) {
-                        const first_msg = messages_val.array.items[0];
-                        if (first_msg == .object) {
-                            if (first_msg.object.get("role")) |role_val| {
-                                std.log.info("First message role: {s}", .{if (role_val == .string) role_val.string else "not string"});
-                            }
-                        }
-                    }
-                }
-            }
-            if (root.object.get("max_tokens")) |tokens_val| {
-                std.log.info("max_tokens type: {s}", .{@typeName(@TypeOf(tokens_val))});
-            }
-            if (root.object.get("temperature")) |temp_val| {
-                std.log.info("temperature type: {s}", .{@typeName(@TypeOf(temp_val))});
-            }
-            if (root.object.get("top_p")) |topp_val| {
-                std.log.info("top_p type tag: {s}", .{@tagName(topp_val)});
-            }
-            if (root.object.get("stream")) |stream_val| {
-                std.log.info("stream type: {s}", .{@typeName(@TypeOf(stream_val))});
-            }
-        }
-
-        try sendError(res, 400, "Invalid JSON in request body", "invalid_request", null);
+        try sendBadRequestError(res, error_message, null, request_id);
         return;
     };
     defer parsed.deinit();
@@ -203,22 +113,24 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
             std.mem.indexOf(u8, request.model, loaded_model_name) != null;
 
         if (!model_matches) {
-            try sendError(res, 404, "Model not found", "model_not_found", null);
+            std.log.warn("[{s}] Model not found: requested={s}, loaded={s}", .{ request_id, request.model, loaded_model_name });
+            try sendError(res, 404, "Model not found", "model_not_found", request_id);
             return;
         }
     }
 
-    // Route to streaming or non-streaming handler
+    // Route to streaming or non-streaming handler with request_id
     if (request.stream) {
-        try handleStreamingRequest(req, res, request, ctx);
+        try handleStreamingRequest(req, res, request, ctx, request_id);
     } else {
-        try handleNonStreamingRequest(res, request, ctx);
+        try handleNonStreamingRequest(res, request, ctx, request_id);
     }
 }
 
 /// Handle streaming chat completion request
-fn handleStreamingRequest(req: anytype, res: anytype, request: types.ChatCompletionRequest, ctx: *inference.InferenceContext) !void {
+fn handleStreamingRequest(req: anytype, res: anytype, request: types.ChatCompletionRequest, ctx: *inference.InferenceContext, request_id: []const u8) !void {
     _ = req; // Request already parsed, not used directly
+    std.log.info("[{s}] Starting streaming generation", .{request_id});
 
     // Set SSE headers
     res.status = 200;
@@ -233,21 +145,21 @@ fn handleStreamingRequest(req: anytype, res: anytype, request: types.ChatComplet
     // Note: This is a simplified implementation that writes directly
     // In production, we'd use async/await or proper streaming
     streaming.streamResponse(writer, request, ctx) catch |err| {
-        std.log.err("Streaming error: {s}", .{@errorName(err)});
+        std.log.err("[{s}] Streaming error: {s}", .{ request_id, @errorName(err) });
         try streaming.streamError(writer, "Generation failed", "server_error");
     };
 }
 
 /// Handle non-streaming chat completion request
-fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest, ctx: *inference.InferenceContext) !void {
+fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest, ctx: *inference.InferenceContext, request_id: []const u8) !void {
     // Generate response
     const response_json = streaming.generateNonStreamingResponse(
         ctx.allocator,
         request,
         ctx,
     ) catch |err| {
-        std.log.err("Generation error: {s}", .{@errorName(err)});
-        try sendError(res, 500, "Generation failed", "server_error", null);
+        std.log.err("[{s}] Generation error: {s}", .{ request_id, @errorName(err) });
+        try sendServerError(res, "Generation failed", request_id);
         return;
     };
     defer ctx.allocator.free(response_json);
