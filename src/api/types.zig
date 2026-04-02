@@ -267,12 +267,23 @@ pub const DeltaMessage = struct {
     content: ?[]const u8 = null,
 };
 
-/// Token log probabilities
+/// Token log probabilities — OpenAI compatible format
 pub const LogProbs = struct {
+    /// Tokens generated (strings)
     tokens: []const []const u8,
+    /// Log probability of each generated token
     token_logprobs: []const f32,
-    top_logprobs: ?[]const std.StringHashMap(f32) = null,
+    /// Top-k alternative tokens at each position - array of objects mapping token->logprob
+    top_logprobs: ?[]const []const TopLogprobAlternative = null,
+    /// Character offset for each token in the output
     text_offset: []const u32,
+};
+
+/// Alternative token with logprob — for top_logprobs
+pub const TopLogprobAlternative = struct {
+    token: []const u8,
+    logprob: f32,
+    bytes: ?[]const u8 = null, // Raw bytes if different from token string
 };
 
 /// Token usage statistics
