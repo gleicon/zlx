@@ -32,14 +32,14 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
 
     // Ensure context is available
     const ctx = global_context orelse {
-        try sendError(res, 500, "Server not initialized", "server_error");
+        try sendError(res, 500, "Server not initialized", "server_error", null);
         return;
     };
 
     // Get request body
     const body = req.body() orelse {
         std.log.err("Failed to read request body", .{});
-        try sendError(res, 400, "Invalid request body", "invalid_request");
+        try sendError(res, 400, "Invalid request body", "invalid_request", null);
         return;
     };
 
@@ -187,7 +187,7 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
             }
         }
 
-        try sendError(res, 400, "Invalid JSON in request body", "invalid_request");
+        try sendError(res, 400, "Invalid JSON in request body", "invalid_request", null);
         return;
     };
     defer parsed.deinit();
@@ -203,7 +203,7 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
             std.mem.indexOf(u8, request.model, loaded_model_name) != null;
 
         if (!model_matches) {
-            try sendError(res, 404, "Model not found", "model_not_found");
+            try sendError(res, 404, "Model not found", "model_not_found", null);
             return;
         }
     }
@@ -247,7 +247,7 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         ctx,
     ) catch |err| {
         std.log.err("Generation error: {s}", .{@errorName(err)});
-        try sendError(res, 500, "Generation failed", "server_error");
+        try sendError(res, 500, "Generation failed", "server_error", null);
         return;
     };
     defer ctx.allocator.free(response_json);
@@ -321,20 +321,66 @@ pub fn handleHealth(req: anytype, res: anytype) !void {
     try writer.writeAll(response);
 }
 
-/// Send JSON error response
-fn sendError(res: anytype, status: u16, message: []const u8, error_type: []const u8) !void {
+/// Send JSON error response with request ID
+fn sendError(res: anytype, status: u16, message: []const u8, error_type: []const u8, request_id: ?[]const u8) !void {
     res.status = status;
     res.content_type = .JSON;
     setCorsHeaders(res);
 
-    var buf: [1024]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"{s}\"}}}}", .{ message, error_type }) catch {
-        // Fallback if formatting fails
-        try res.writer().writeAll("{\"error\":{\"message\":\"Internal error\",\"type\":\"server_error\"}}");
-        return;
-    };
+    var buf: [2048]u8 = undefined;
+    const json = if (request_id) |rid|
+        std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"{s}\"}},\"request_id\":\"{s}\"}}", .{ message, error_type, rid }) catch null
+    else
+        std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"{s}\"}}}}", .{ message, error_type }) catch null;
 
-    try res.writer().writeAll(json);
+    if (json) |j| {
+        try res.writer().writeAll(j);
+    } else {
+        try res.writer().writeAll("{\"error\":{\"message\":\"Internal error\",\"type\":\"server_error\"}}");
+    }
+}
+
+/// Send 400 Bad Request error (per D-25)
+fn sendBadRequestError(res: anytype, message: []const u8, param: ?[]const u8, request_id: []const u8) !void {
+    res.status = 400;
+    res.content_type = .JSON;
+    setCorsHeaders(res);
+
+    var buf: [2048]u8 = undefined;
+    const param_field = if (param) |p| std.fmt.bufPrint(&buf, ",\"param\":\"{s}\"", .{p}) catch "" else "";
+    const json = std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"invalid_request_error\"{s}}},\"request_id\":\"{s}\"}}", .{ message, param_field, request_id }) catch null;
+
+    if (json) |j| {
+        try res.writer().writeAll(j);
+    }
+}
+
+/// Send 408 Request Timeout error (per D-26)
+fn sendTimeoutError(res: anytype, message: []const u8, request_id: []const u8) !void {
+    res.status = 408;
+    res.content_type = .JSON;
+    setCorsHeaders(res);
+
+    var buf: [1024]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"timeout_error\"}},\"request_id\":\"{s}\"}}", .{ message, request_id }) catch null;
+
+    if (json) |j| {
+        try res.writer().writeAll(j);
+    }
+}
+
+/// Send 500 Server Error with request ID (per D-27, D-31)
+fn sendServerError(res: anytype, message: []const u8, request_id: []const u8) !void {
+    res.status = 500;
+    res.content_type = .JSON;
+    setCorsHeaders(res);
+
+    var buf: [1024]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{{\"error\":{{\"message\":\"{s}\",\"type\":\"server_error\"}},\"request_id\":\"{s}\"}}", .{ message, request_id }) catch null;
+
+    if (json) |j| {
+        try res.writer().writeAll(j);
+    }
 }
 
 /// Send JSON response with given body

@@ -360,9 +360,10 @@ pub const ModelsResponse = struct {
     data: []const ModelInfo,
 };
 
-/// Error response structure
+/// Error response structure with request_id for debugging
 pub const ErrorResponse = struct {
     @"error": ApiError,
+    request_id: ?[]const u8 = null,
 };
 
 /// API error details
@@ -382,6 +383,14 @@ pub fn generateCompletionId(allocator: std.mem.Allocator) ![]const u8 {
     const timestamp = std.time.milliTimestamp();
     const random = std.crypto.random.int(u32);
     return std.fmt.allocPrint(allocator, "chatcmpl-{x}-{x}", .{ timestamp, random });
+}
+
+/// Generate a unique request ID for debugging (per D-28)
+/// Format: req-{timestamp}-{random}
+pub fn generateRequestId(allocator: std.mem.Allocator) ![]const u8 {
+    const timestamp = std.time.milliTimestamp();
+    const random = std.crypto.random.int(u32);
+    return std.fmt.allocPrint(allocator, "req-{x}-{x}", .{ timestamp, random });
 }
 
 /// Build chat prompt from messages array
