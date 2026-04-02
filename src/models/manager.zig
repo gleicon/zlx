@@ -68,12 +68,17 @@ pub const ModelManager = struct {
 
     /// Get available system memory in MB (macOS-specific)
     pub fn getAvailableMemoryMb() u64 {
-        // Use sysctl to get memory info on macOS
+        // Use sysctlbyname to get memory info on macOS
+        const CTL_HW = 6; // From sys/sysctl.h
+        const HW_MEMSIZE = 24; // From sys/sysctl.h
+
         var memsize: u64 = 0;
         var len: usize = @sizeOf(u64);
 
-        const sysctl_result = std.c.sysctl(
-            &[_]i32{ std.c.CTL_HW, std.c.HW_MEMSIZE },
+        // Use inline assembly or direct syscall for sysctl
+        // For now, use a simpler approach with posix sysctl
+        const result = std.c.sysctl(
+            &[_]c_int{ CTL_HW, HW_MEMSIZE },
             2,
             &memsize,
             &len,
@@ -81,7 +86,7 @@ pub const ModelManager = struct {
             0,
         );
 
-        if (sysctl_result != 0) {
+        if (result != 0) {
             std.log.warn("Failed to get system memory, assuming 8GB", .{});
             return 8192; // Fallback to 8GB
         }
