@@ -174,6 +174,22 @@ pub fn build(b: *std.Build) !void {
     const run_mlx_bridge_test = b.addRunArtifact(mlx_bridge_test);
     test_step.dependOn(&run_mlx_bridge_test.step);
 
+    // Test turboquant_engine (PHASE-07-02)
+    const turboquant_engine_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/compression/turboquant_engine.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    turboquant_engine_test_mod.addImport("turboquant", turboquant_mod);
+
+    const turboquant_engine_test = b.addTest(.{
+        .name = "turboquant_engine_test",
+        .root_module = turboquant_engine_test_mod,
+    });
+
+    const run_turboquant_engine_test = b.addRunArtifact(turboquant_engine_test);
+    test_step.dependOn(&run_turboquant_engine_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
 }
