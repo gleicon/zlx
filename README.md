@@ -252,8 +252,30 @@ sudo powermetrics -s gpu_power -n 1 2>/dev/null | grep "GPU active residency"
 ### Performance Expectations
 - **Qwen 1.5B 4-bit**: ~40-60 tokens/sec on M1 Pro
 - **Qwen 7B 4-bit**: ~15-25 tokens/sec on M1 Pro
+- **With Speculative Decoding**: 1.5-2.8x speedup on compatible models (7B + 1.5B draft)
 - **TTFT**: 500-2000ms depending on prompt length
-- **Memory**: ~2GB for 1.5B model, ~5GB for 7B model
+- **Memory**: ~2GB for 1.5B model, ~5GB for 7B model, +3-4GB with draft model
+
+### Speculative Decoding (NEW)
+
+zlx supports speculative decoding for 1.5-2.8x speedup on compatible models:
+
+```bash
+# Automatic draft model selection (recommended)
+zlx --model Qwen2.5-Coder-7B-4bit
+
+# Manual draft model selection
+zlx --model Qwen2.5-Coder-7B-4bit --draft-model Qwen2.5-Coder-1.5B-4bit
+
+# View speculation metrics
+curl http://localhost:8080/v1/metrics/speculative
+```
+
+Compatible pairs:
+- Qwen 7B + Qwen 1.5B → 2.0-2.8x speedup
+- Qwen 7B + Qwen 0.5B → 1.8-2.5x speedup
+
+See [docs/SPECULATIVE_DECODING.md](docs/SPECULATIVE_DECODING.md) for full documentation.
 
 ## Troubleshooting
 
@@ -298,6 +320,12 @@ Returns available model (currently only the loaded model).
 
 ### GET /v1/health
 Health check endpoint. Returns 200 OK.
+
+### GET /v1/metrics/speculative
+Speculative decoding metrics endpoint. Returns:
+- `acceptance_rate`: Fraction of draft tokens accepted (0.0-1.0)
+- `avg_tokens_per_step`: Average tokens per speculation round
+- `estimated_speedup`: Calculated speedup based on acceptance rate
 
 ## Technical Details
 
