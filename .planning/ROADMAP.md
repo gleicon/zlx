@@ -148,10 +148,12 @@ Plans:
   4. Speculative depth configurable (default 4 tokens ahead)
   5. Metrics show draft acceptance rate and tokens accepted per step
   6. No quality degradation compared to standard generation
-**Plans**: 1 plan (Wave 1: Complete speculative decoding system)
+**Plans**: 3 plans (Wave 1: Config, Wave 2: Downloader, Wave 3: Background Load + WebUI)
 
 Plans:
-- [ ] 08-01-PLAN.md — Speculative decoding: draft selection, verification algorithm, metrics, CLI integration
+- [ ] 09-01-PLAN.md — Configuration file system with priority chain (CLI > Env > Config > Defaults)
+- [ ] 09-02-PLAN.md — Model auto-download from HuggingFace with resume and progress
+- [ ] 09-03-PLAN.md — Background model loading endpoints and Open WebUI CORS integration
 
 ### Phase 9: Model Management
 **Goal**: Convenient model discovery, download, and configuration
@@ -189,7 +191,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 5. Multi-Model Support | 3/3 | ✅ Complete | 2026-04-02 |
 | 6. Prompt Caching | 1/1 | ✅ Complete | 2026-04-02 |
 | 7. TurboQuant Integration | 2/2 | ✅ Complete | 2026-04-02 |
-| 8. Speculative Decoding | 1/1 | 📝 Planned | — |
-| 9. Model Management | 0/1 | Not started | — |
+| 8. Speculative Decoding | 1/1 | ✅ Complete | 2026-04-02 |
+| 9. Model Management | 3/3 | 📝 Planned | — |
 
 **v1.1 Progress:** 6/6 phases planned | Phase 7: ✅ COMPLETE | Phase 8: Ready for execution
