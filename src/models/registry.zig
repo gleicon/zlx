@@ -5,6 +5,138 @@
 
 const std = @import("std");
 
+/// Model architecture types
+pub const ModelArchitecture = enum {
+    qwen,
+    llama,
+    phi,
+    deepseek_v2_moe,
+    deepseek_v1,
+    unknown,
+};
+
+/// Known model metadata for pre-configured models
+pub const KnownModelInfo = struct {
+    id: []const u8,
+    aliases: []const []const u8,
+    architecture: ModelArchitecture,
+    total_params: u64,
+    active_params: ?u64, // For MoE models (sparse)
+    memory_required_gb: f32,
+    max_context: u32,
+    quantization: []const u8,
+    recommended: bool,
+    description: []const u8,
+};
+
+/// Pre-configured known models
+pub const KNOWN_MODELS = &[_]KnownModelInfo{
+    // DeepSeek-Coder-V2-Lite (15.7B total, 2B active MoE)
+    .{
+        .id = "deepseek-coder-v2-lite",
+        .aliases = &.{ "deepseek", "deepseek-v2", "deepseek-coder", "deepseek-coder-v2-lite-instruct" },
+        .architecture = .deepseek_v2_moe,
+        .total_params = 15_700_000_000,
+        .active_params = 2_000_000_000,
+        .memory_required_gb = 2.5,
+        .max_context = 128_000,
+        .quantization = "4bit",
+        .recommended = true,
+        .description = "DeepSeek-Coder-V2-Lite 15.7B MoE (2B active) - Code generation",
+    },
+};
+
+/// Detect architecture from model configuration
+pub fn detectArchitecture(config: *const ConfigInfo) ModelArchitecture {
+    // Check for DeepSeek-V2 MoE indicators
+    // MoE models typically have num_experts or kv_lora_rank fields
+    // We detect this by looking for very large hidden_size relative to attention heads
+    // (DeepSeek uses GQA with compressed KV)
+    const gqa_ratio = @as(f32, @floatFromInt(config.num_attention_heads)) / @as(f32, @floatFromInt(config.hidden_size)) * 4096.0;
+
+    // DeepSeek has 128 attention heads with 4096 hidden = 32:1 ratio
+    // Standard models have lower ratios
+    if (gqa_ratio > 20.0 and config.num_layers >= 20) {
+        return .deepseek_v2_moe;
+    }
+
+    // Fallback: use parameter count as heuristic
+    const params = config.estimateParameterCount();
+
+    if (params < 3_000_000_000) {
+        return .qwen; // Small models often Qwen
+    } else if (params > 10_000_000_000 and params < 20_000_000_000) {
+        // 10-20B range could be DeepSeek or other MoE
+        if (config.num_layers > 25) {
+            return .deepseek_v2_moe; // DeepSeek has 27 layers
+        }
+    }
+
+    return .qwen; // Default
+}
+
+/// Get known model info by ID or alias
+pub fn getKnownModel(id: []const u8) ?KnownModelInfo {
+    for (KNOWN_MODELS) |model| {
+        if (std.mem.eql(u8, model.id, id)) {
+            return model;
+        }
+        for (model.aliases) |alias| {
+            if (std.mem.eql(u8, alias, id)) {
+                return model;
+            }
+        }
+    }
+    return null;
+}
+
+/// Estimate memory for MoE models using active parameters
+pub fn estimateDeepSeekMemory(config: ConfigInfo, _total_params: u64, active_params: u64) u32 {
+    // For DeepSeek MoE: memory is based on active params, not total
+    // Note: total_params is provided for reference but not used in calculation
+    // Formula: embeddings + active_params + compressed_KV + overhead
+
+    const bytes_per_param: u8 = switch (config.quantization_bits) {
+        8 => 1,
+        16 => 2,
+        32 => 4,
+        else => 2, // Default to FP16
+    };
+
+    // Embedding weights (always loaded, not sparse)
+    const embedding_params = @as(u64, config.vocab_size) * @as(u64, config.hidden_size);
+
+    // Active parameter memory (not total!)
+    const active_weights_bytes = active_params * bytes_per_param;
+
+    // Compressed KV cache (MLA reduces this significantly)
+    // DeepSeek uses 512-dim latent per layer (8x compression vs standard)
+    const latent_dim: u32 = 512; // DeepSeek MLA latent dimension
+    const kv_bytes_per_token = 2 * @as(u64, config.num_layers) * @as(u64, latent_dim) * bytes_per_param;
+    const kv_cache_bytes = kv_bytes_per_token * @as(u64, config.max_position_embeddings);
+
+    // Activations overhead (20% buffer)
+    const base_memory = (embedding_params * bytes_per_param) + active_weights_bytes + kv_cache_bytes;
+    const overhead_bytes = base_memory / 5;
+
+    const total_bytes = base_memory + overhead_bytes;
+    const total_mb = @as(u32, @intCast(total_bytes / (1024 * 1024)));
+
+    return total_mb;
+}
+
+/// Get architecture string for API responses
+pub fn architectureToString(arch: ModelArchitecture) []const u8 {
+    return switch (arch) {
+        .qwen => "qwen",
+        .llama => "llama",
+        .phi => "phi",
+        .deepseek_v2_moe => "deepseek_v2_moe",
+        .deepseek_v1 => "deepseek_v1",
+        .unknown => "unknown",
+    };
+}
+
 /// Model status states
 pub const ModelStatus = enum {
     available, // Model files present, not loaded
