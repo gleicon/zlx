@@ -174,7 +174,7 @@ pub const MixtureOfExperts = struct {
     ) !void {
         const batch_size = mlx.arrayDim(hidden_states, 0);
         const seq_len = mlx.arrayDim(hidden_states, 1);
-        const hidden_size: i64 = mlx.arrayDim(hidden_states, 2);
+        _ = mlx.arrayDim(hidden_states, 2); // hidden_size for documentation
 
         // Iterate over batch and sequence dimensions
         var b: i64 = 0;
@@ -259,7 +259,7 @@ pub const MixtureOfExperts = struct {
 
         // Prepare inputs/outputs
         const inputs = &.{ hidden_states, self.gate_weight };
-        var outputs = &.{ indices, weights };
+        const outputs = &.{ indices, weights };
 
         // Apply kernel with grid configuration
         // Grid: one thread per token

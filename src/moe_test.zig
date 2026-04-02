@@ -30,7 +30,7 @@ test "MoE routes tokens to experts" {
     defer mlx.arrayFree(hidden_states);
     _ = mlx.randomNormal(&hidden_states, &.{ batch_size, seq_len, @intCast(config.hidden_size) }, .float32);
 
-    var routing = try moe_instance.route(hidden_states);
+    const routing = try moe_instance.route(hidden_states);
     defer {
         mlx.arrayFree(routing.indices);
         mlx.arrayFree(routing.weights);
@@ -72,7 +72,7 @@ test "MoE uses only top-k experts" {
     defer mlx.arrayFree(hidden_states);
     _ = mlx.randomNormal(&hidden_states, &.{ batch_size, seq_len, @intCast(config.hidden_size) }, .float32);
 
-    var routing = try moe_instance.route(hidden_states);
+    const routing = try moe_instance.route(hidden_states);
     defer {
         mlx.arrayFree(routing.indices);
         mlx.arrayFree(routing.weights);
@@ -207,7 +207,7 @@ test "CPU fallback works without Metal" {
     defer mlx.arrayFree(hidden_states);
     _ = mlx.randomNormal(&hidden_states, &.{ batch_size, seq_len, @intCast(config.hidden_size) }, .float32);
 
-    var routing = try moe_instance.route(hidden_states);
+    const routing = try moe_instance.route(hidden_states);
     defer {
         mlx.arrayFree(routing.indices);
         mlx.arrayFree(routing.weights);
