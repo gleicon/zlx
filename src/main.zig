@@ -6,6 +6,7 @@ const std = @import("std");
 const api = @import("api/server.zig");
 const handlers = @import("api/handlers.zig");
 const metrics = @import("api/metrics.zig");
+const models_mod = @import("models/mod.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -140,11 +141,24 @@ pub fn main() !void {
     };
 
     std.log.info("zlx - Local inference server", .{});
+
+    // Initialize model registry first (scans for available models)
+    try models_mod.initGlobalRegistry(allocator);
+    defer models_mod.deinitGlobalRegistry(allocator);
+
+    // Get model name for status update
+    const model_name = config.model_name orelse model_path;
+
     std.log.info("Loading model from: {s}", .{model_path});
 
     // Initialize inference context (this loads the model and tokenizer)
     try handlers.initGlobalContext(allocator, model_path);
     defer handlers.deinitGlobalContext(allocator);
+
+    // Update registry status to show model is loaded
+    if (models_mod.getGlobalRegistry()) |reg| {
+        reg.updateStatus(model_name, .loaded);
+    }
 
     std.log.info("Model loaded successfully!", .{});
 

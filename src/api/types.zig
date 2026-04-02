@@ -430,6 +430,31 @@ pub fn buildPromptFromMessages(allocator: std.mem.Allocator, messages: []const M
     return result.toOwnedSlice(allocator);
 }
 
+/// Extended model info with zlx-specific metadata for enhanced /v1/models
+pub const ModelWithMetadata = struct {
+    /// Base OpenAI-compatible fields
+    id: []const u8,
+    object: []const u8 = "model",
+    created: i64,
+    owned_by: []const u8 = "local",
+    /// zlx-specific metadata
+    metadata: ModelMetadataInfo,
+};
+
+/// Model metadata info for API responses
+pub const ModelMetadataInfo = struct {
+    /// Current status: "available", "loading", "loaded", "error"
+    status: []const u8,
+    /// Total directory size in bytes
+    size_bytes: u64,
+    /// Estimated memory required in MB
+    memory_required_mb: u32,
+    /// Model architecture: "qwen", "llama", "phi"
+    architecture: []const u8,
+    /// When loaded (unix timestamp), 0 if not loaded
+    loaded_at: i64 = 0,
+};
+
 test "types - prompt building" {
     const allocator = std.testing.allocator;
 

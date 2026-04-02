@@ -232,34 +232,91 @@ pub fn handleListModels(req: anytype, res: anytype) !void {
         return;
     }
 
-    // Get context to know which model is loaded
-    const ctx = global_context orelse {
-        // Return empty list if no context
-        try sendJsonResponse(res, 200, "{\"object\":\"list\",\"data\":[]}");
-        return;
-    };
-
-    // Get the loaded model name
-    const model_name = std.fs.path.basename(ctx.model_path);
+    // Get the global registry
+    const models_mod = @import("../models/mod.zig");
+    const registry = models_mod.getGlobalRegistry();
 
     // Build models response
     var json = std.ArrayList(u8).empty;
-    errdefer json.deinit(ctx.allocator);
+    errdefer json.deinit(std.heap.page_allocator);
 
-    const writer = json.writer(ctx.allocator);
+    const writer = json.writer(std.heap.page_allocator);
 
     try writer.writeAll("{\"object\":\"list\",\"data\":[");
 
-    // Add the loaded model
-    const created = std.time.timestamp();
-    try writer.print("{{\"id\":\"{s}\",\"object\":\"model\",\"created\":{d},\"owned_by\":\"local\"}}", .{
-        model_name,
-        created,
-    });
+    if (registry) |reg| {
+        // Get all models from registry
+        const allocator = std.heap.page_allocator;
+        const models = reg.getAllModels(allocator) catch |err| {
+            std.log.err("Failed to get models from registry: {s}", .{@errorName(err)});
+            try writer.writeAll("]}");
+            try sendJsonResponse(res, 200, json.items);
+            return;
+        };
+        defer allocator.free(models);
+
+        const now = std.time.timestamp();
+
+        for (models, 0..) |model, i| {
+            if (i > 0) try writer.writeAll(",");
+
+            // Determine architecture from model info
+            const architecture = determineArchitecture(&model.config);
+
+            // Determine status string
+            const status_str = switch (model.status) {
+                .available => "available",
+                .loading => "loading",
+                .loaded => "loaded",
+                .failed => "error",
+            };
+
+            // Build model entry with metadata
+            try writer.writeAll("{");
+            try writer.print("\"id\":\"{s}\",", .{model.id});
+            try writer.writeAll("\"object\":\"model\",");
+            try writer.print("\"created\":{d},", .{now});
+            try writer.writeAll("\"owned_by\":\"local\",");
+            try writer.writeAll("\"metadata\":{");
+            try writer.print("\"status\":\"{s}\",", .{status_str});
+            try writer.print("\"size_bytes\":{d},", .{model.size_bytes});
+            try writer.print("\"memory_required_mb\":{d},", .{model.memory_required_mb});
+            try writer.print("\"architecture\":\"{s}\"", .{architecture});
+            if (model.loaded_at) |loaded_at| {
+                try writer.print(",\"loaded_at\":{d}", .{loaded_at});
+            }
+            try writer.writeAll("}");
+            try writer.writeAll("}");
+        }
+    } else {
+        // Fallback: if no registry, just show the currently loaded model
+        if (global_context) |ctx| {
+            const model_name = std.fs.path.basename(ctx.model_path);
+            const now = std.time.timestamp();
+            try writer.print("{{\"id\":\"{s}\",\"object\":\"model\",\"created\":{d},\"owned_by\":\"local\",\"metadata\":{{\"status\":\"loaded\",\"size_bytes\":0,\"memory_required_mb\":0,\"architecture\":\"unknown\"}}}}", .{ model_name, now });
+        }
+    }
 
     try writer.writeAll("]}");
 
     try sendJsonResponse(res, 200, json.items);
+}
+
+/// Determine architecture string from model configuration
+fn determineArchitecture(config: *const @import("../models/registry.zig").ConfigInfo) []const u8 {
+    // Estimate parameters to guess architecture
+    const params = config.estimateParameterCount();
+
+    // Rough parameter-based detection (config would be better but we don't have model type here)
+    if (params < 3_000_000_000) {
+        // Small models often use Qwen architecture
+        return "qwen";
+    } else if (params < 10_000_000_000) {
+        // Medium models could be Qwen, Llama, or Phi
+        return "qwen"; // Default guess
+    } else {
+        return "qwen";
+    }
 }
 
 /// Handle GET /v1/health (health check endpoint)
