@@ -148,7 +148,10 @@ Plans:
   4. Speculative depth configurable (default 4 tokens ahead)
   5. Metrics show draft acceptance rate and tokens accepted per step
   6. No quality degradation compared to standard generation
-**Plans**: TBD
+**Plans**: 1 plan (Wave 1: Complete speculative decoding system)
+
+Plans:
+- [ ] 08-01-PLAN.md — Speculative decoding: draft selection, verification algorithm, metrics, CLI integration
 
 ### Phase 9: Model Management
 **Goal**: Convenient model discovery, download, and configuration
@@ -185,8 +188,8 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 4. API Improvements | 5/5 | ✅ Complete | 2026-04-01 |
 | 5. Multi-Model Support | 3/3 | ✅ Complete | 2026-04-02 |
 | 6. Prompt Caching | 1/1 | ✅ Complete | 2026-04-02 |
-| 7. TurboQuant Integration | 1/2 | 📝 Planned | — |
-| 8. Speculative Decoding | 0/1 | Not started | — |
+| 7. TurboQuant Integration | 2/2 | ✅ Complete | 2026-04-02 |
+| 8. Speculative Decoding | 1/1 | 📝 Planned | — |
 | 9. Model Management | 0/1 | Not started | — |
 
-**v1.1 Progress:** 5/6 phases | Phase 7: 2 plans ready (07-01 complete, 07-02 ready to execute)
+**v1.1 Progress:** 6/6 phases planned | Phase 7: ✅ COMPLETE | Phase 8: Ready for execution
