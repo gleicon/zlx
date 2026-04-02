@@ -9,6 +9,41 @@ const qwen = @import("../mlx.zig/src/qwen.zig");
 /// Token type for generation
 pub const Token = u32;
 
+/// PCG32 deterministic random number generator
+/// Same seed produces same sequence — required for OpenAI API compatibility (API-05)
+pub const Pcg32Rng = struct {
+    state: u64,
+    inc: u64,
+
+    const MULTIPLIER: u64 = 6364136223846793005;
+    const DEFAULT_INC: u64 = 1442695040888963407;
+
+    pub fn init(seed: u32) Pcg32Rng {
+        var rng = Pcg32Rng{
+            .state = 0,
+            .inc = (DEFAULT_INC << 1) | 1,
+        };
+        _ = rng.next(); // Initialize state
+        rng.state = rng.state +% seed;
+        _ = rng.next();
+        return rng;
+    }
+
+    fn next(self: *Pcg32Rng) u32 {
+        const old_state = self.state;
+        self.state = old_state *% MULTIPLIER +% self.inc;
+        const xor_shifted: u32 = @intCast(((old_state >> 18) ^ old_state) >> 27);
+        const rot: u32 = @intCast(old_state >> 59);
+        const rot_u5: u5 = @intCast(rot & 31);
+        return (xor_shifted >> rot_u5) | (xor_shifted << ((~rot_u5 +% 1) & 31));
+    }
+
+    /// Return random float in range [0, 1)
+    pub fn random(self: *Pcg32Rng) f32 {
+        return @as(f32, @floatFromInt(self.next())) / @as(f32, @floatFromInt(@as(u32, @intCast(0xFFFFFFFF))));
+    }
+};
+
 /// Single token logprob entry for top alternatives
 pub const TopLogprob = struct {
     token: u32,
@@ -91,6 +126,9 @@ pub const GenerationState = struct {
     // Generation parameters
     options: GenerationOptions,
 
+    // PCG32 RNG for deterministic sampling (API-05)
+    rng: ?Pcg32Rng = null,
+
     // Logprobs tracking (API-02)
     logprobs_buffer: std.ArrayList(LogprobEntry),
 
@@ -132,7 +170,8 @@ pub const GenerationState = struct {
             .logits_array = mlx.arrayNew(),
             .mask_array = mlx.arrayNew(),
             .options = options,
-            .logprobs_buffer = std.ArrayList(LogprobEntry).init(allocator),
+            .logprobs_buffer = .empty,
+            .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
         };
     }
 
@@ -146,6 +185,12 @@ pub const GenerationState = struct {
         mlx.arrayFree(self.toks_array);
         mlx.arrayFree(self.logits_array);
         mlx.arrayFree(self.mask_array);
+
+        // Free logprobs buffer
+        for (self.logprobs_buffer.items) |*entry| {
+            entry.deinit(self.allocator);
+        }
+        self.logprobs_buffer.deinit(self.allocator);
 
         self.current_tokens.deinit(self.allocator);
     }
@@ -213,8 +258,8 @@ pub const GenerationState = struct {
             }
             next_token = max_idx;
         } else {
-            // Sample from the distribution
-            const random_value = std.crypto.random.float(f32);
+            // Sample from the distribution using seeded RNG if available (API-05)
+            const random_value = if (self.rng) |*rng| rng.random() else std.crypto.random.float(f32);
             var cumsum: f32 = 0;
             var last_idx: u32 = 0;
             for (0..@intCast(vocab_size)) |i| {
@@ -273,6 +318,21 @@ pub const GenerationState = struct {
     /// Check if generation is complete
     pub fn isComplete(self: *Self) bool {
         return self.is_complete;
+    }
+
+    /// Get the stop reason
+    pub fn getStopReason(self: *Self) StopReason {
+        return self.stop_reason;
+    }
+
+    /// Set the stop reason
+    pub fn setStopReason(self: *Self, reason: StopReason) void {
+        self.stop_reason = reason;
+    }
+
+    /// Get captured logprobs (returns a copy of the buffer, caller owns memory of returned slice but not entries)
+    pub fn getLogprobs(self: *Self) []const LogprobEntry {
+        return self.logprobs_buffer.items;
     }
 };
 
