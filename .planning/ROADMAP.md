@@ -100,9 +100,9 @@ Plans:
 **Plans**: 3 plans (Wave 1: Registry, Wave 2: Manager/Hot-swap, Wave 3: Memory/Health/Metrics)
 
 Plans:
-- [ ] 05-01-PLAN.md — Model registry and discovery (UX-05, INFRA-01)
-- [ ] 05-02-PLAN.md — Multi-model manager and hot-swap (PERF-03, PERF-05)
-- [ ] 05-03-PLAN.md — Memory management, health checks, and metrics (PERF-05, INFRA-01, INFRA-02)
+- [x] 05-01-PLAN.md — Model registry and discovery (UX-05, INFRA-01)
+- [x] 05-02-PLAN.md — Multi-model manager and hot-swap (PERF-03, PERF-05)
+- [x] 05-03-PLAN.md — Memory management, health checks, and metrics (PERF-05, INFRA-01, INFRA-02)
 
 ### Phase 6: Prompt Caching
 **Goal**: Repeated prompts achieve sub-second TTFT via persistent KV cache
@@ -115,7 +115,10 @@ Plans:
   4. Cache key includes model hash — different models don't share cache entries
   5. LRU eviction maintains cache under size limit (default 10GB configurable)
   6. Metrics show cache hit rate, size, and evictions in real-time
-**Plans**: TBD
+**Plans**: 1 plan (Wave 1: Complete caching infrastructure)
+
+Plans:
+- [ ] 06-01-PLAN.md — Prompt caching with KV persistence, LRU eviction, and metrics (PERF-02, INFRA-01)
 
 ### Phase 7: TurboQuant Integration
 **Goal**: KV cache compression achieves 4.6x memory reduction via Metal kernels
@@ -168,7 +171,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 - 04-04: Wire sampling parameters into generation pipeline ✅
 - 04-05: Gap closure - tokenizer, stop sequences, logprobs ✅
 
-**Phase 5 Status: 🔄 PLANNED** — Ready to execute with 3 plans
+**Phase 5 Status: ✅ COMPLETE** — All 3 plans complete, ready for Phase 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -176,10 +179,10 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 2. Inference Core | 1/1 | ✅ Complete | 2026-03-31 |
 | 3. HTTP API & Integration | 1/1 | ✅ Complete | 2026-03-31 |
 | 4. API Improvements | 5/5 | ✅ Complete | 2026-04-01 |
-| 5. Multi-Model Support | 0/3 | 🔄 Planned | — |
-| 6. Prompt Caching | 0/1 | Not started | — |
+| 5. Multi-Model Support | 3/3 | ✅ Complete | 2026-04-02 |
+| 6. Prompt Caching | 0/1 | 🔄 Planned | — |
 | 7. TurboQuant Integration | 0/1 | Not started | — |
 | 8. Speculative Decoding | 0/1 | Not started | — |
 | 9. Model Management | 0/1 | Not started | — |
 
-**v1.1 Progress:** 2/6 phases | Phase 5: 0/3 plans planned (ready to execute)
+**v1.1 Progress:** 3/6 phases | Phase 6: 0/1 plans planned (ready to execute)
