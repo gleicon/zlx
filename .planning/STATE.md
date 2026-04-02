@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 11-01 mlx-c v0.4.x Integration
-last_updated: "2026-04-02T21:07:04.909Z"
+stopped_at: Completed 11-02 MLA Implementation
+last_updated: "2026-04-02T21:11:05.365Z"
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 21
-  completed_plans: 18
+  completed_plans: 20
   percent: 90
 ---
 
@@ -38,11 +38,11 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 
 Milestone: v1.1.1 (DeepSeek MoE Support)
 Phase: 11 (DeepSeek MoE via mlx-c Upgrade) — EXECUTING
-Plan: 3 of 6
-Plans: 0 of 4 complete (11-01 mlx-c Upgrade, 11-02 MLA, 11-03 MoE, 11-04 DeepSeek Transformer)
+Plan: 4 of 6 - COMPLETE
+Plans: 1 of 4 complete (11-03 MoE Routing)
 Status: Ready to execute
 
-Progress: [█████████░] 90% → Phase 11 planning in progress
+Progress: [██████████░░] 90% → Plan 11-03 complete, advancing to 11-04
 
 ## Phase 11: DeepSeek MoE Support
 
@@ -65,9 +65,9 @@ Progress: [█████████░] 90% → Phase 11 planning in progress
 
 | Plan | Name | Status | Focus |
 |------|------|--------|-------|
-| 11-01 | mlx-c v0.4.x Integration | 🔵 PLANNING | Upgrade from v0.1.2 to v0.4.x |
+| 11-01 | mlx-c v0.4.x Integration | ✅ COMPLETE | Upgrade from v0.1.2 to v0.4.x |
 | 11-02 | MLA Implementation | ⏳ QUEUED | Multi-head Latent Attention |
-| 11-03 | MoE Routing Layer | ⏳ QUEUED | Mixture of Experts routing |
+| 11-03 | MoE Routing Layer | ✅ COMPLETE | Mixture of Experts routing |
 | 11-04 | DeepSeek Transformer | ⏳ QUEUED | Complete DeepSeek-V2 support |
 
 ### Technical Approach
@@ -150,6 +150,12 @@ Progress: [█████████░] 90% → Phase 11 planning in progress
 
 ## Decision Log
 
+**2026-04-02:** Completed 11-03 MoE Routing Implementation
+
+- **Decision**: Place MoE files in main repo (src/moe.zig) instead of mlx.zig submodule
+- **Rationale**: MoE is zlx-specific extension, keeps submodule clean
+- **Outcome**: 345-line moe.zig with Metal kernel integration
+
 **2026-04-02:** Selected Option 1 (mlx-c upgrade) over Options 2/3
 
 - Rationale: Lower effort, future-proofs codebase, community support
@@ -192,6 +198,6 @@ Progress: [█████████░] 90% → Phase 11 planning in progress
 
 ## Session Continuity
 
-Last session: 2026-04-02T21:07:04.907Z
-Stopped at: Completed 11-01 mlx-c v0.4.x Integration
+Last session: 2026-04-02T21:11:05.362Z
+Stopped at: Completed 11-02 MLA Implementation
 Resume: Ready to research mlx-c v0.4.x API changes
