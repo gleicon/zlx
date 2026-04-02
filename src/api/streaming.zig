@@ -130,6 +130,8 @@ pub fn streamResponse(
         transformer.eos_token_ids,
         gen_options,
         &ctx.tokenizer.?, // Pass tokenizer for stop sequence detection
+        null, // draft_model
+        0, // speculation_depth
     );
     defer state.deinit();
 
@@ -390,6 +392,8 @@ pub fn generateNonStreamingResponse(
         eos_token_ids,
         gen_options,
         &ctx.tokenizer.?, // Pass tokenizer for stop sequence detection
+        null, // draft_model
+        0, // speculation_depth
     );
     defer state.deinit();
 
