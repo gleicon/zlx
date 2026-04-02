@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 04-04-PLAN.md (Sampling Pipeline)
-last_updated: "2026-04-02T01:58:44.392Z"
+stopped_at: Completed 04-05-PLAN.md (Gap Closure - Stop Sequences & Logprobs)
+last_updated: "2026-04-02T02:05:00.000Z"
 progress:
   total_phases: 9
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 6
+  completed_plans: 8
   percent: 33
 ---
 
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** Phase 04 — API Improvements (ALL 3 PLANS COMPLETE)
+**Current focus:** Phase 04 — API Improvements (ALL 5 PLANS COMPLETE)
 
 ## Current Position
 
 Milestone: v1.1 (Production-Ready)
 Phase: 04 (API Improvements) — COMPLETE
-Plan: 3 of 3 — Error Handling and Timeouts COMPLETE
+Plan: 5 of 5 — Gap Closure COMPLETE
 Status: Phase complete — ready for verification
 
 Progress: [███░░░░░░░] 33% → Phase 04 is complete! Next: Phase 05 (Performance & Infrastructure)
@@ -39,7 +39,7 @@ Progress: [███░░░░░░░] 33% → Phase 04 is complete! Next: P
 | 04-02 | Logprobs, sampling parameters | ✅ COMPLETE | API-02, API-03 |
 | 04-03 | Error handling, timeouts | ✅ COMPLETE | INFRA-03, INFRA-04 |
 | 04-04 | Wire sampling parameters | ✅ COMPLETE | API-03 |
-| 04-05 | TBD | ⏳ PENDING | - |
+| 04-05 | Gap closure - tokenizer, stop sequences, logprobs | ✅ COMPLETE | API-01, API-02 |
 
 ## Key Decisions Made
 
@@ -50,26 +50,26 @@ Progress: [███░░░░░░░] 33% → Phase 04 is complete! Next: P
 5. **Sampling Pipeline Order**: logit_bias → penalties → top_k → min_p → temperature → softmax (matches OpenAI semantics)
 6. **CPU-side Logit Modification**: Extract MLX array to CPU slice for sampling parameter application to work around MLX C API limitations
 7. **Zero-overhead Design**: Only allocate/modify when sampling parameters are non-default
+8. **Tokenizer Storage**: Typed pointer (?*mlx_tokenizer.Tokenizer) for proper decode access in generation
+9. **Logprobs Capture**: Capture before sampling modifications for accurate probability reporting
 
 ## Session Continuity
 
-Last session: 2026-04-02T01:58:44.390Z
-Stopped at: Completed 04-04-PLAN.md (Sampling Pipeline)
+Last session: 2026-04-02T02:05:00.000Z
+Stopped at: Completed 04-05-PLAN.md (Gap Closure)
 Resume file: None
 
 ## Next Steps
 
-### Phase 04 Progress
+### Phase 04 COMPLETE
 
-Four plans in Phase 04 (API Improvements) are now complete:
+All five plans in Phase 04 (API Improvements) are now complete:
 
 - ✅ 04-01: Stop sequences, seed, temperature=0
 - ✅ 04-02: Logprobs, sampling parameters
 - ✅ 04-03: Error handling with request IDs and timeouts
 - ✅ 04-04: Wire sampling parameters (top_k, min_p, penalties, logit_bias)
-
-Remaining:
-- ⏳ 04-05: TBD
+- ✅ 04-05: Gap closure - tokenizer integration, working stop sequences, logprobs in responses
 
 ### Next: Phase 05 (Performance & Infrastructure)
 
