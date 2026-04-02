@@ -121,20 +121,21 @@ Plans:
 - [x] 06-01-PLAN.md — Prompt caching with KV persistence, LRU eviction, and metrics (PERF-02, INFRA-01)
 
 ### Phase 7: TurboQuant Integration
-**Goal**: KV cache compression achieves 4.6x memory reduction via Metal kernels
+**Goal**: KV cache compression achieves 5-6x memory reduction via botirk38/turboquant Zig library
 **Depends on**: Phase 6
-**Requirements**: PERF-01
+**Requirements**: PERF-01, PERF-02
 **Success Criteria** (what must be TRUE):
-  1. `--turboquant` flag activates KV cache compression on supported models
-  2. Memory reduction of 4.6x validated on Qwen 7B (verified via metrics)
+  1. `--turboquant` flag activates real KV cache compression (not stub)
+  2. Memory reduction of 5-6x validated on Qwen 7B (verified via metrics)
   3. Speed degradation <5% compared to standard FP16 cache
-  4. Automatic fallback to standard cache if TurboQuant compilation fails
-  5. Layer-adaptive mode: first and last N layers remain FP16 for quality
-  6. Memory usage visible in logs with before/after compression stats
-**Plans**: 1 planned, 1 complete
+  4. Layer-adaptive mode: first and last N layers remain FP16 for quality
+  5. Compression ratio visible in metrics endpoint
+  6. CLI flags `--turboquant-bits` and `--turboquant-adaptive` function correctly
+**Plans**: 2 plans (1 complete, 1 planned)
 
 Plans:
-- [x] 07-01-PLAN.md — TurboQuant feasibility spike: Metal kernel extraction, porting analysis, stub framework with graceful fallback
+- [x] 07-01-PLAN.md — TurboQuant feasibility spike: Metal kernel analysis, stub framework with graceful fallback (decision: INTEGRATE)
+- [ ] 07-02-PLAN.md — TurboQuant library integration: botirk38/turboquant dependency, MLX bridge, real compression engine
 
 ### Phase 8: Speculative Decoding
 **Goal**: Draft model speculation achieves 1.5-2.8x throughput increase
@@ -183,9 +184,9 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 3. HTTP API & Integration | 1/1 | ✅ Complete | 2026-03-31 |
 | 4. API Improvements | 5/5 | ✅ Complete | 2026-04-01 |
 | 5. Multi-Model Support | 3/3 | ✅ Complete | 2026-04-02 |
-| 6. Prompt Caching | 1/1 | Complete   | 2026-04-02 |
-| 7. TurboQuant Integration | 1/1 | 📝 Planned | — |
+| 6. Prompt Caching | 1/1 | ✅ Complete | 2026-04-02 |
+| 7. TurboQuant Integration | 1/2 | 📝 Planned | — |
 | 8. Speculative Decoding | 0/1 | Not started | — |
 | 9. Model Management | 0/1 | Not started | — |
 
-**v1.1 Progress:** 4/6 phases | Phase 7: 1/1 plans planned (ready to execute - decision point)
+**v1.1 Progress:** 5/6 phases | Phase 7: 2 plans ready (07-01 complete, 07-02 ready to execute)
