@@ -388,6 +388,98 @@ fn determineArchitecture(config: *const @import("../models/registry.zig").Config
     }
 }
 
+/// Handle POST /v1/models/switch (explicit model switching endpoint)
+pub fn handleSwitchModel(req: anytype, res: anytype) !void {
+    // Set CORS headers
+    setCorsHeaders(res);
+
+    // Handle preflight OPTIONS request
+    if (req.method == .OPTIONS) {
+        res.status = 204;
+        return;
+    }
+
+    // Get request body
+    const body = req.body() orelse {
+        try sendBadRequestError(res, "Missing request body", null, "req-switch");
+        return;
+    };
+
+    // Parse JSON request
+    const parsed = std.json.parseFromSlice(
+        types.SwitchModelRequest,
+        std.heap.page_allocator,
+        body,
+        .{},
+    ) catch |err| {
+        std.log.err("Failed to parse switch model request: {s}", .{@errorName(err)});
+        try sendBadRequestError(res, "Invalid JSON in request body", null, "req-switch");
+        return;
+    };
+    defer parsed.deinit();
+
+    const request = parsed.value;
+
+    // Get the manager
+    const manager = manager_mod.getGlobalManager();
+    if (manager == null) {
+        try sendError(res, 503, "Model manager not available", "service_unavailable", "req-switch");
+        return;
+    }
+    const m = manager.?;
+
+    // Get current model for the response
+    const previous_model = m.getCurrentModel();
+
+    // Check if model exists
+    if (models_mod.getGlobalRegistry()) |reg| {
+        if (reg.getModel(request.model) == null) {
+            try sendError(res, 404, "Model not found in registry", "model_not_found", "req-switch");
+            return;
+        }
+    }
+
+    // Check memory availability
+    if (!m.canLoadModel(request.model)) {
+        try sendError(res, 503, "Insufficient memory to load model", "insufficient_memory", "req-switch");
+        return;
+    }
+
+    // Perform the switch
+    const switch_start = std.time.milliTimestamp();
+    m.switchModel(request.model) catch |err| {
+        std.log.err("Failed to switch to model '{s}': {s}", .{ request.model, @errorName(err) });
+        const error_msg = switch (err) {
+            error.ModelNotFound => "Model not found",
+            error.InsufficientMemory => "Insufficient memory",
+            error.ModelLoadFailed => "Failed to load model",
+            error.GenerationInProgress => "Generation in progress, please try again later",
+            else => "Model switch failed",
+        };
+        try sendError(res, 500, error_msg, "model_switch_failed", "req-switch");
+        return;
+    };
+    const switch_duration = @as(u64, @intCast(std.time.milliTimestamp() - switch_start));
+
+    // Build success response
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(std.heap.page_allocator);
+    const writer = json.writer(std.heap.page_allocator);
+
+    try writer.writeAll("{");
+    try writer.writeAll("\"status\":\"success\",");
+    try writer.print("\"model\":\"{s}\",", .{request.model});
+    if (previous_model) |prev| {
+        try writer.print("\"previous_model\":\"{s}\",", .{prev});
+    } else {
+        try writer.writeAll("\"previous_model\":null,");
+    }
+    try writer.print("\"duration_ms\":{d}", .{switch_duration});
+    try writer.writeAll("}");
+
+    try sendJsonResponse(res, 200, json.items);
+}
+
 /// Handle GET /v1/health (health check endpoint)
 pub fn handleHealth(req: anytype, res: anytype) !void {
     _ = req;
