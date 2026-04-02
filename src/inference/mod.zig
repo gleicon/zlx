@@ -155,6 +155,8 @@ pub const InferenceContext = struct {
             self.getEosTokenIds(),
             gen_options,
             &self.tokenizer.?, // Pass tokenizer for stop sequence detection
+            null, // draft_model - not yet integrated
+            0, // speculation_depth - disabled for now
         );
         defer state.deinit();
 
@@ -273,6 +275,8 @@ pub fn generateWithLogprobs(
         eos_token_ids,
         adjusted_options,
         tokenizer, // Pass tokenizer for stop sequence detection
+        null, // draft_model
+        0, // speculation_depth
     );
     defer state.deinit();
 
