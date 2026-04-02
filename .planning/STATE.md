@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
+milestone: v1.1
 milestone_name: milestone
-status: ✅ PLANNED — Ready for execution
-stopped_at: Phase 07 Complete — TurboQuant Integration
-last_updated: "2026-04-02T10:47:14.730Z"
+status: 🔄 IN PROGRESS — Phase 09 Model Management
+stopped_at: Phase 09 Checkpoint — 09-01 and 09-02 Complete, awaiting 09-03
+last_updated: "2026-04-02T14:00:00.000Z"
 progress:
   total_phases: 9
-  completed_phases: 5
-  total_plans: 12
-  completed_plans: 14
-  percent: 80
+  completed_phases: 6
+  total_plans: 15
+  completed_plans: 16
+  percent: 88
 ---
 
 # Project State
@@ -20,18 +20,96 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** Phase 08 — Speculative Decoding (Ready for Planning)
+**Current focus:** Phase 09 — Model Management (Configuration, Auto-Download, Background Loading)
 
 ## Current Position
 
 Milestone: v1.1 (Production-Ready)
-Phase: 08 (Speculative Decoding) — ✅ COMPLETE
-Plans: 1 of 1 complete (08-01 comprehensive speculative decoding implementation)
-Status: Phase 8 complete — speculation subsystem deployed
+Phase: 09 (Model Management) — 🔄 IN PROGRESS
+Plans: 2 of 3 complete (09-01 Configuration, 09-02 Auto-Download)
+Status: Phase 9 partial — awaiting checkpoint review for 09-03
 
-Progress: [██████████] 100% → Phase 8 complete, ready for next phase
+Progress: [████████░░] 88% → 09-01, 09-02 complete, 09-03 pending
 
-## Phase 08 Status
+## Phase 09 Status
+
+| Plan | Name | Status | Requirements |
+|------|------|--------|--------------|
+| 09-01 | Configuration File System | ✅ COMPLETE | UX-03 |
+| 09-02 | Model Auto-Download | ✅ COMPLETE | UX-01, UX-05 |
+| 09-03 | Background Loading & Open WebUI | 📝 PLANNED | UX-04, UX-02 |
+
+### Phase 09 Plan 01: Configuration File System ✅
+
+**Summary:** Robust configuration system with priority chain: CLI > Environment > Config File > Defaults
+
+**What Was Built:**
+1. **src/config.zig** — Configuration loader
+   - Config struct with all CLI flags as optional fields
+   - loadConfig() tries ~/.config/zlx/config.json then ./zlx.json
+   - Environment variables (ZLX_MODEL, ZLX_PORT, etc.)
+   - Validation for all settings (port, timeout, cache, turboquant, speculation)
+   - expandPath() for ~ home directory expansion
+
+2. **src/config_test.zig** — TDD tests (7 tests)
+   - Default values, path expansion, validation errors
+
+3. **src/main.zig integration**
+   - parseArgs() loads config file before CLI overrides
+   - --config flag for explicit config file
+   - Enhanced USAGE with environment variables section
+
+**Key Features:**
+- Config locations: ~/.config/zlx/config.json (primary), ./zlx.json (fallback)
+- Priority: CLI flags → Environment → Config → Defaults
+- All settings validated on startup with helpful errors
+
+### Phase 09 Plan 02: Model Auto-Download ✅
+
+**Summary:** Automatic model downloading from HuggingFace with resume support
+
+**What Was Built:**
+1. **src/download/huggingface.zig** — HF API client
+   - HuggingFaceId parser for "org/repo" format
+   - downloadFile() with HTTP Range resume support
+   - getFileList() queries HF API for model files
+   - Filters to relevant files: config.json, tokenizer.json, *.safetensors
+
+2. **src/download/manager.zig** — Download manager
+   - DownloadManager with queue and active download tracking
+   - DownloadTask with progress, status, cancellation
+   - Thread-based background download architecture
+   - Atomic flags for thread-safe cancellation
+   - Integration with ModelRegistry for status updates
+
+3. **src/download/mod.zig** — Public API
+   - downloadModelIfNeeded() — check cache before downloading
+   - downloadModelBlocking() — blocking download with progress
+   - Global manager instance pattern
+
+**Key Features:**
+- Cache location: ~/.cache/zlx/models/{org}/{repo}/
+- HTTP Range requests for resume support
+- Progress tracking (bytes, files, status)
+- Cancel support
+- Thread-safe architecture (ready for true background operation)
+
+### Phase 09 Plan 03: Background Loading & Open WebUI 📝
+
+**Status:** Not yet started — requires checkpoint review
+
+**Planned:**
+- Background model loading during active inference
+- POST /v1/models/load endpoint
+- GET /v1/models/load-status endpoint
+- POST /v1/models/load/cancel endpoint
+- Enhanced CORS for Open WebUI compatibility
+
+**Checkpoint:** Plan 09-03 has a checkpoint:human-verify task requiring manual testing
+
+## Previous Phases
+
+### Phase 08: Speculative Decoding ✅ COMPLETE
 
 | Plan | Name | Status | Requirements |
 |------|------|--------|--------------|
