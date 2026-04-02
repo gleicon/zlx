@@ -97,7 +97,12 @@ Plans:
   4. Server rejects model load if insufficient memory available (with helpful error message)
   5. `GET /v1/health` returns detailed status including model loaded, GPU available, memory OK
   6. Metrics endpoint shows memory breakdown: weights, KV cache, temporaries, peak usage
-**Plans**: TBD
+**Plans**: 3 plans (Wave 1: Registry, Wave 2: Manager/Hot-swap, Wave 3: Memory/Health/Metrics)
+
+Plans:
+- [ ] 05-01-PLAN.md — Model registry and discovery (UX-05, INFRA-01)
+- [ ] 05-02-PLAN.md — Multi-model manager and hot-swap (PERF-03, PERF-05)
+- [ ] 05-03-PLAN.md — Memory management, health checks, and metrics (PERF-05, INFRA-01, INFRA-02)
 
 ### Phase 6: Prompt Caching
 **Goal**: Repeated prompts achieve sub-second TTFT via persistent KV cache
@@ -156,30 +161,25 @@ Plans:
 v1.0: 1 → 2 → 3 (COMPLETE)
 v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 
-**Phase 4 Status: ⚠️ GAPS FOUND** — 3 plans complete, 2 gap closure plans created to address integration issues:
+**Phase 4 Status: ✅ COMPLETE** — All 5 plans complete:
 - 04-01: Stop sequences, seed-based determinism, temperature=0 greedy ✅
-- 04-02: Logprobs tracking, complete sampling parameters (types only) ⚠️
+- 04-02: Logprobs tracking, complete sampling parameters ✅
 - 04-03: Error handling with request IDs, configurable timeouts ✅
-- 04-04: [PENDING] Wire sampling parameters into generation pipeline
-- 04-05: [PENDING] Stop sequences + logprobs serialization
+- 04-04: Wire sampling parameters into generation pipeline ✅
+- 04-05: Gap closure - tokenizer, stop sequences, logprobs ✅
+
+**Phase 5 Status: 🔄 PLANNED** — Ready to execute with 3 plans
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Build | 1/1 | ✅ Complete | 2026-03-31 |
 | 2. Inference Core | 1/1 | ✅ Complete | 2026-03-31 |
 | 3. HTTP API & Integration | 1/1 | ✅ Complete | 2026-03-31 |
-| 4. API Improvements | 3/5 | ⚠️ Gaps Found | 2026-04-01 |
-| 5. Multi-Model Support | 0/1 | Not started | — |
+| 4. API Improvements | 5/5 | ✅ Complete | 2026-04-01 |
+| 5. Multi-Model Support | 0/3 | 🔄 Planned | — |
 | 6. Prompt Caching | 0/1 | Not started | — |
 | 7. TurboQuant Integration | 0/1 | Not started | — |
 | 8. Speculative Decoding | 0/1 | Not started | — |
 | 9. Model Management | 0/1 | Not started | — |
 
-**v1.1 Progress:** 1/6 phases | Phase 4: 3/5 plans complete (2 gap closure pending)
-
-**Phase 4 Gap Summary:**
-| Gap | Requirement | Status | Fix Plan |
-|-----|-------------|--------|----------|
-| Sampling params not wired | API-03 | PENDING | 04-04 |
-| Logprobs not serialized | API-02 | PENDING | 04-05 |
-| Stop sequences not active | API-01 | PENDING | 04-05 |
+**v1.1 Progress:** 2/6 phases | Phase 5: 0/3 plans planned (ready to execute)
