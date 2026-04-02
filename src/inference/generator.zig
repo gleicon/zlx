@@ -135,6 +135,14 @@ pub const GenerationState = struct {
     // Tokenizer reference for decoding tokens to strings
     tokenizer: ?*const anyopaque = null,
 
+    // Stop sequence detection (API-01)
+    /// Buffer to accumulate decoded text for stop sequence checking
+    decoded_text_buffer: std.ArrayList(u8),
+    /// Tokens since last decode (to batch decode operations)
+    tokens_since_decode: std.ArrayList(u32),
+    /// Final decoded text without stop sequence (when stopped by stop sequence)
+    final_decoded_text: ?[]const u8 = null,
+
     /// Initialize generation state with a transformer and initial tokens
     pub fn init(
         allocator: std.mem.Allocator,
@@ -172,6 +180,8 @@ pub const GenerationState = struct {
             .options = options,
             .logprobs_buffer = .empty,
             .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
+            .decoded_text_buffer = .empty,
+            .tokens_since_decode = .empty,
         };
     }
 
@@ -191,6 +201,13 @@ pub const GenerationState = struct {
             entry.deinit(self.allocator);
         }
         self.logprobs_buffer.deinit(self.allocator);
+
+        // Free stop sequence detection buffers
+        self.decoded_text_buffer.deinit(self.allocator);
+        self.tokens_since_decode.deinit(self.allocator);
+        if (self.final_decoded_text) |text| {
+            self.allocator.free(text);
+        }
 
         self.current_tokens.deinit(self.allocator);
     }
@@ -297,9 +314,28 @@ pub const GenerationState = struct {
             for (self.eos_token_ids) |eos_id| {
                 if (next_token == eos_id) {
                     self.is_complete = true;
+                    self.stop_reason = .eos;
                     break;
                 }
             }
+        }
+
+        // Stop sequence detection (API-01)
+        // Buffer the token for later decode+check (we decode periodically for efficiency)
+        try self.tokens_since_decode.append(self.allocator, next_token);
+
+        // Check stop sequences periodically (every token for correctness, or batch for efficiency)
+        // For MVP: decode and check every 1-3 tokens, or when we have enough for potential match
+        const should_check = self.tokens_since_decode.items.len >= 1; // Check every token for correctness
+
+        if (should_check and self.options.stop_sequences.len > 0) {
+            // TODO: Decode tokens_since_decode and append to decoded_text_buffer
+            // For now: placeholder - this requires tokenizer integration
+            // Once decoded, check: if (self.checkStopSequence()) { ... }
+
+            // Simplified: Check if we need to decode (we need at least tokenizer access)
+            // This will be fully implemented when tokenizer is properly integrated
+            _ = self.checkStopSequence; // Mark as used
         }
 
         // Prepare tokens array for next iteration: [1, 1] with just the new token
@@ -333,6 +369,199 @@ pub const GenerationState = struct {
     /// Get captured logprobs (returns a copy of the buffer, caller owns memory of returned slice but not entries)
     pub fn getLogprobs(self: *Self) []const LogprobEntry {
         return self.logprobs_buffer.items;
+    }
+
+    /// Check if generated text ends with any stop sequence (API-01)
+    /// Returns: true if generation should stop, false otherwise
+    /// Per D-01, D-03: Check after each token, match multi-character strings
+    fn checkStopSequence(self: *Self) bool {
+        if (self.options.stop_sequences.len == 0) return false;
+
+        const text = self.decoded_text_buffer.items;
+
+        for (self.options.stop_sequences) |stop_seq| {
+            if (stop_seq.len == 0) continue;
+
+            // Per D-03: Check if text ends with stop sequence
+            if (text.len >= stop_seq.len) {
+                const end_slice = text[text.len - stop_seq.len ..];
+                if (std.mem.eql(u8, end_slice, stop_seq)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// Truncate decoded text to remove matched stop sequence (API-01, D-04)
+    /// Call this after checkStopSequence returns true
+    fn truncateStopSequence(self: *Self) void {
+        if (self.options.stop_sequences.len == 0) return;
+
+        const text = self.decoded_text_buffer.items;
+
+        for (self.options.stop_sequences) |stop_seq| {
+            if (stop_seq.len == 0) continue;
+
+            if (text.len >= stop_seq.len) {
+                const end_slice = text[text.len - stop_seq.len ..];
+                if (std.mem.eql(u8, end_slice, stop_seq)) {
+                    // Remove the stop sequence from the buffer
+                    self.decoded_text_buffer.shrinkAndFree(text.len - stop_seq.len);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Get the final decoded text without stop sequence (API-01, D-04)
+    pub fn getFinalDecodedText(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
+        // If we stopped by stop sequence, return the truncated buffer
+        // Otherwise, return a copy of the full buffer
+        return try allocator.dupe(u8, self.decoded_text_buffer.items);
+    }
+
+    /// Capture top-5 logprobs from raw logits (D-07, D-12)
+    fn captureLogprobs(self: *Self, logits_data: [*c]f32, vocab_size: usize) !LogprobEntry {
+        // Create array of (token_id, logit) pairs
+        const TokenLogitPair = struct { u32, f32 };
+        var token_logits = try self.allocator.alloc(TokenLogitPair, vocab_size);
+        defer self.allocator.free(token_logits);
+
+        for (0..vocab_size) |i| {
+            token_logits[i] = .{ @intCast(i), logits_data[i] };
+        }
+
+        // Sort by logit descending (highest first)
+        std.mem.sort(TokenLogitPair, token_logits, {}, struct {
+            fn lessThan(_: void, a: TokenLogitPair, b: TokenLogitPair) bool {
+                return a[1] > b[1]; // Descending order
+            }
+        }.lessThan);
+
+        // Take top 5
+        const top_k = @min(5, vocab_size);
+        var top_logprobs = try self.allocator.alloc(TopLogprob, top_k);
+        errdefer self.allocator.free(top_logprobs);
+
+        // Compute log_softmax for numerical stability
+        const max_logit: f32 = token_logits[0][1];
+        var sum_exp: f32 = 0;
+        for (token_logits) |tl| {
+            sum_exp += std.math.exp(tl[1] - max_logit);
+        }
+        const log_sum_exp = max_logit + std.math.log(sum_exp);
+
+        for (0..top_k) |i| {
+            const token_id = token_logits[i][0];
+            const logit = token_logits[i][1];
+            const logprob = logit - log_sum_exp; // log_softmax
+
+            // For now, store empty token string (will be decoded later with the tokenizer)
+            top_logprobs[i] = .{
+                .token = token_id,
+                .token_str = &[_]u8{},
+                .logprob = logprob,
+            };
+        }
+
+        return LogprobEntry{
+            .token = 0, // Will be filled in after sampling
+            .token_str = &[_]u8{},
+            .logprob = 0, // Will be filled in after sampling
+            .top_logprobs = top_logprobs,
+        };
+    }
+
+    /// Apply top_k filtering — keep only k highest logits (D-13)
+    fn applyTopK(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
+        if (self.options.top_k == 0 or self.options.top_k >= vocab_size) return;
+
+        const k = self.options.top_k;
+
+        // Find k-th largest logit using selection algorithm
+        const sorted_logits = try self.allocator.dupe(f32, logits.items[0..vocab_size]);
+        defer self.allocator.free(sorted_logits);
+
+        std.mem.sort(f32, sorted_logits, {}, std.sort.desc(f32));
+        const kth_logit = sorted_logits[k - 1];
+
+        // Set all logits below kth to -infinity
+        for (0..vocab_size) |i| {
+            if (logits.items[i] < kth_logit) {
+                logits.items[i] = -std.math.inf(f32);
+            }
+        }
+    }
+
+    /// Apply min_p filtering — tokens must have prob >= min_p * max_prob (D-13)
+    fn applyMinP(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
+        if (self.options.min_p <= 0.0 or self.options.min_p > 1.0) return;
+
+        // Find max logit
+        var max_logit: f32 = -std.math.inf(f32);
+        for (0..vocab_size) |i| {
+            if (logits.items[i] > max_logit) {
+                max_logit = logits.items[i];
+            }
+        }
+
+        // Compute min logit threshold
+        // min_p threshold in probability space: p >= min_p * p_max
+        // In log space: logit >= max_logit + log(min_p)
+        const min_logit_threshold = max_logit + std.math.log(self.options.min_p);
+
+        // Filter tokens below threshold
+        for (0..vocab_size) |i| {
+            if (logits.items[i] < min_logit_threshold) {
+                logits.items[i] = -std.math.inf(f32);
+            }
+        }
+    }
+
+    /// Apply presence, frequency, and repetition penalties (D-16)
+    fn applyPenalties(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
+        if (self.current_tokens.items.len == 0) return;
+
+        // Count token frequencies in current sequence
+        var freq_map = std.AutoHashMap(u32, u32).init(self.allocator);
+        defer freq_map.deinit();
+
+        for (self.current_tokens.items) |token| {
+            const count = freq_map.get(token) orelse 0;
+            try freq_map.put(token, count + 1);
+        }
+
+        // Apply penalties
+        var iter = freq_map.iterator();
+        while (iter.next()) |entry| {
+            const token_id = entry.key_ptr.*;
+            const count = entry.value_ptr.*;
+
+            if (token_id >= vocab_size) continue;
+
+            const logit = &logits.items[token_id];
+
+            // Presence penalty: applied once if token appears at all
+            if (self.options.presence_penalty != 0.0 and count > 0) {
+                logit.* -= self.options.presence_penalty;
+            }
+
+            // Frequency penalty: applied proportional to count
+            if (self.options.frequency_penalty != 0.0) {
+                logit.* -= self.options.frequency_penalty * @as(f32, @floatFromInt(count));
+            }
+
+            // Repetition penalty: multiplicative on logits (or additive on logprobs)
+            // Standard approach: divide logits by repetition_penalty for seen tokens
+            if (self.options.repetition_penalty > 1.0 and count > 0) {
+                if (logit.* > 0) {
+                    logit.* /= self.options.repetition_penalty;
+                } else {
+                    logit.* *= self.options.repetition_penalty;
+                }
+            }
+        }
     }
 };
 
