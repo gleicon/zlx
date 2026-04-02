@@ -15,6 +15,46 @@ pub const ManagerError = error{
     ModelLoadFailed,
     SwitchInProgress,
     GenerationInProgress,
+    LoadInProgress,
+};
+
+/// Load progress status
+pub const LoadStatus = enum {
+    loading,
+    completed,
+    failed,
+    cancelled,
+};
+
+/// Load stage for detailed progress tracking
+pub const LoadStage = enum {
+    downloading,
+    loading_weights,
+    initializing,
+    complete,
+};
+
+/// Progress information for an active model load
+pub const LoadProgress = struct {
+    model_id: []const u8,
+    status: LoadStatus,
+    stage: LoadStage,
+    percent_complete: u8,
+    bytes_loaded: u64,
+    bytes_total: u64,
+    error_message: ?[]const u8,
+    started_at: i64,
+    updated_at: i64,
+};
+
+/// Background load state
+const BackgroundLoadState = struct {
+    thread: ?std.Thread,
+    progress: LoadProgress,
+    cancel_requested: std.atomic.Value(bool),
+    auto_switch: bool,
+    allocator: std.mem.Allocator,
+    manager: *ModelManager,
 };
 
 /// Model manager that handles loading, switching, and memory validation
@@ -27,6 +67,8 @@ pub const ModelManager = struct {
     active_generations: std.atomic.Value(u32),
     switch_mutex: std.Thread.Mutex,
     generation_condition: std.Thread.Condition,
+    background_load: ?*BackgroundLoadState,
+    load_mutex: std.Thread.Mutex,
 
     pub fn init(allocator: std.mem.Allocator, reg: *registry.ModelRegistry) Self {
         return .{
@@ -36,10 +78,15 @@ pub const ModelManager = struct {
             .active_generations = std.atomic.Value(u32).init(0),
             .switch_mutex = .{},
             .generation_condition = .{},
+            .background_load = null,
+            .load_mutex = .{},
         };
     }
 
     pub fn deinit(self: *Self) void {
+        // Cancel any background load
+        _ = self.cancelLoad() catch {};
+
         if (self.current_model_id) |id| {
             self.allocator.free(id);
         }
@@ -210,6 +257,249 @@ pub const ModelManager = struct {
     /// Get count of active generations
     pub fn getActiveGenerationCount(self: *Self) u32 {
         return self.active_generations.load(.acquire);
+    }
+
+    // ============================================================================
+    // Background Loading
+    // ============================================================================
+
+    /// Start loading a model in the background
+    pub fn startBackgroundLoad(self: *Self, model_id: []const u8, auto_switch: bool) !void {
+        self.load_mutex.lock();
+        defer self.load_mutex.unlock();
+
+        // Check if load already in progress
+        if (self.background_load != null) {
+            std.log.warn("Background load already in progress", .{});
+            return ManagerError.LoadInProgress;
+        }
+
+        // Verify model exists
+        if (self.registry.getModel(model_id) == null) {
+            std.log.err("Model '{s}' not found in registry", .{model_id});
+            return ManagerError.ModelNotFound;
+        }
+
+        // Check memory availability
+        if (!self.canLoadModel(model_id)) {
+            const model = self.registry.getModel(model_id).?;
+            const available_mb = getAvailableMemoryMb();
+            std.log.err("Insufficient memory to load '{s}': need {d}MB, have {d}MB", .{
+                model_id, model.memory_required_mb, available_mb,
+            });
+            return ManagerError.InsufficientMemory;
+        }
+
+        // Update registry status
+        self.registry.updateStatus(model_id, .loading);
+
+        // Create background load state
+        const load_state = try self.allocator.create(BackgroundLoadState);
+        errdefer self.allocator.destroy(load_state);
+
+        const now = std.time.timestamp();
+
+        load_state.* = .{
+            .thread = null,
+            .progress = .{
+                .model_id = try self.allocator.dupe(u8, model_id),
+                .status = .loading,
+                .stage = .downloading,
+                .percent_complete = 0,
+                .bytes_loaded = 0,
+                .bytes_total = 0,
+                .error_message = null,
+                .started_at = now,
+                .updated_at = now,
+            },
+            .cancel_requested = std.atomic.Value(bool).init(false),
+            .auto_switch = auto_switch,
+            .allocator = self.allocator,
+            .manager = self,
+        };
+
+        self.background_load = load_state;
+
+        // Spawn load thread
+        load_state.thread = try std.Thread.spawn(.{}, loadWorker, .{load_state});
+
+        std.log.info("Started background load for model: {s} (auto_switch={s})", .{
+            model_id,
+            if (auto_switch) "true" else "false",
+        });
+    }
+
+    /// Get current load progress
+    pub fn getLoadProgress(self: *Self) ?LoadProgress {
+        self.load_mutex.lock();
+        defer self.load_mutex.unlock();
+
+        if (self.background_load) |load| {
+            return load.progress;
+        }
+        return null;
+    }
+
+    /// Cancel an ongoing background load
+    pub fn cancelLoad(self: *Self) !void {
+        self.load_mutex.lock();
+        defer self.load_mutex.unlock();
+
+        if (self.background_load) |load| {
+            // Signal cancellation
+            load.cancel_requested.store(true, .seq_cst);
+
+            // Wait for thread to complete
+            if (load.thread) |thread| {
+                thread.join();
+            }
+
+            // Update progress status
+            load.progress.status = .cancelled;
+
+            // Update registry
+            self.registry.updateStatus(load.progress.model_id, .failed);
+
+            // Clean up
+            self.allocator.free(load.progress.model_id);
+            if (load.progress.error_message) |msg| {
+                self.allocator.free(msg);
+            }
+            self.allocator.destroy(load);
+            self.background_load = null;
+
+            std.log.info("Background load cancelled", .{});
+            return;
+        }
+
+        return error.NoActiveLoad;
+    }
+
+    /// Worker thread for background loading
+    fn loadWorker(load_state: *BackgroundLoadState) void {
+        const manager = load_state.manager;
+        const model_id = load_state.progress.model_id;
+
+        defer {
+            // Thread cleanup - runs even if load fails
+            load_state.thread = null;
+        }
+
+        // Get model info
+        const model = manager.registry.getModel(model_id) orelse {
+            std.log.err("Model disappeared during background load: {s}", .{model_id});
+            updateLoadStatus(load_state, .failed, "Model not found in registry");
+            manager.registry.updateStatus(model_id, .failed);
+            return;
+        };
+
+        // Update stage: downloading (if files not present)
+        updateLoadProgress(load_state, .downloading, 10);
+
+        // Check for cancellation
+        if (load_state.cancel_requested.load(.seq_cst)) {
+            updateLoadStatus(load_state, .cancelled, null);
+            manager.registry.updateStatus(model_id, .failed);
+            return;
+        }
+
+        // Update stage: loading weights
+        updateLoadProgress(load_state, .loading_weights, 30);
+
+        // Wait for active generations (same as switchModel but non-blocking for API)
+        if (manager.active_generations.load(.acquire) > 0) {
+            std.log.info("Background load waiting for {d} active generation(s)...", .{
+                manager.active_generations.load(.acquire),
+            });
+
+            // Poll for completion (don't block the worker thread on mutex)
+            var wait_count: u32 = 0;
+            while (manager.active_generations.load(.acquire) > 0) {
+                std.time.sleep(100 * std.time.ns_per_ms); // 100ms polling
+                wait_count += 1;
+
+                // Check cancellation during wait
+                if (load_state.cancel_requested.load(.seq_cst)) {
+                    updateLoadStatus(load_state, .cancelled, null);
+                    manager.registry.updateStatus(model_id, .failed);
+                    return;
+                }
+
+                // Timeout after ~5 minutes (3000 * 100ms)
+                if (wait_count > 3000) {
+                    std.log.err("Background load timed out waiting for generations", .{});
+                    updateLoadStatus(load_state, .failed, "Timeout waiting for active generations");
+                    manager.registry.updateStatus(model_id, .failed);
+                    return;
+                }
+            }
+        }
+
+        // Update stage: initializing
+        updateLoadProgress(load_state, .initializing, 60);
+
+        // Deinitialize old context if exists
+        if (handlers.global_context != null) {
+            std.log.info("Background load: unloading previous model...", .{});
+            handlers.deinitGlobalContext(manager.allocator);
+        }
+
+        // Initialize new context
+        handlers.initGlobalContext(manager.allocator, model.path) catch |err| {
+            std.log.err("Failed to load model '{s}' in background: {s}", .{
+                model_id,
+                @errorName(err),
+            });
+            updateLoadStatus(load_state, .failed, @errorName(err));
+            manager.registry.updateStatus(model_id, .failed);
+            return;
+        };
+
+        // Update stage: complete
+        updateLoadProgress(load_state, .complete, 100);
+        updateLoadStatus(load_state, .completed, null);
+
+        // Update current model
+        manager.switch_mutex.lock();
+        defer manager.switch_mutex.unlock();
+
+        if (manager.current_model_id) |old_id| {
+            manager.registry.updateStatus(old_id, .available);
+            manager.allocator.free(old_id);
+        }
+
+        manager.current_model_id = manager.allocator.dupe(u8, model_id) catch |err| {
+            std.log.err("Failed to set current model: {s}", .{@errorName(err)});
+            manager.registry.updateStatus(model_id, .failed);
+            return;
+        };
+
+        // Update registry status
+        manager.registry.updateStatus(model_id, .loaded);
+
+        std.log.info("Background load completed for model: {s}", .{model_id});
+
+        // Auto-switch if requested (context is already switched above)
+        if (!load_state.auto_switch) {
+            // Even if not auto-switching, the model is now loaded
+            std.log.info("Model loaded but not switched (auto_switch=false)", .{});
+        }
+    }
+
+    /// Update load progress (thread-safe)
+    fn updateLoadProgress(load_state: *BackgroundLoadState, stage: LoadStage, percent: u8) void {
+        load_state.progress.stage = stage;
+        load_state.progress.percent_complete = percent;
+        load_state.progress.updated_at = std.time.timestamp();
+    }
+
+    /// Update load status and optional error (thread-safe)
+    fn updateLoadStatus(load_state: *BackgroundLoadState, status: LoadStatus, error_msg: ?[]const u8) void {
+        load_state.progress.status = status;
+        if (error_msg) |msg| {
+            load_state.progress.error_message = load_state.allocator.dupe(u8, msg) catch null;
+        }
+        load_state.progress.updated_at = std.time.timestamp();
     }
 };
 
