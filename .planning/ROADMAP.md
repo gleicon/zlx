@@ -71,18 +71,20 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Depends on**: Phase 3
 **Requirements**: API-01, API-02, API-03, API-04, API-05, INFRA-03, INFRA-04
 **Success Criteria** (what must be TRUE):
-  1. ✅ User can specify 1-4 stop sequences per request; generation halts immediately when matched, with `finish_reason: "stop"`
-  2. ✅ Request with `logprobs: true` returns top-5 log probabilities for each generated token
-  3. ✅ All sampling parameters work: `top_k`, `min_p`, `presence_penalty`, `frequency_penalty`, `repetition_penalty`, `logit_bias`, `seed`
-  4. ✅ Same seed with same prompt produces identical output; different seeds produce different outputs
-  5. ✅ API returns proper error codes: 400 for bad JSON, 408 for timeouts, 500 with request ID for generation errors
-  6. ✅ Request timeout (default 60s) cancels generation and returns clean error response
-**Plans:** 3 plans (COMPLETE)
+  1. User can specify 1-4 stop sequences per request; generation halts immediately when matched, with `finish_reason: "stop"`
+  2. Request with `logprobs: true` returns top-5 log probabilities for each generated token
+  3. All sampling parameters work: `top_k`, `min_p`, `presence_penalty`, `frequency_penalty`, `repetition_penalty`, `logit_bias`, `seed`
+  4. Same seed with same prompt produces identical output; different seeds produce different outputs
+  5. API returns proper error codes: 400 for bad JSON, 408 for timeouts, 500 with request ID for generation errors
+  6. Request timeout (default 60s) cancels generation and returns clean error response
+**Plans:** 5 plans (3 complete + 2 gap closure)
 
 Plans:
 - [x] 04-01-PLAN.md — Stop sequences, seed-based determinism, temperature=0 greedy
 - [x] 04-02-PLAN.md — Logprobs tracking, sampling parameters (top_k, min_p, penalties, logit_bias)
 - [x] 04-03-PLAN.md — Error handling with request IDs, request timeouts
+- [ ] 04-04-PLAN.md — Gap closure: Wire sampling parameters into generation pipeline (API-03)
+- [ ] 04-05-PLAN.md — Gap closure: Stop sequences + logprobs serialization (API-01, API-02)
 
 ### Phase 5: Multi-Model Support
 **Goal**: Multiple models can be loaded, switched, and managed without server restart
@@ -154,22 +156,30 @@ Plans:
 v1.0: 1 → 2 → 3 (COMPLETE)
 v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 
-**Phase 4 Status: ✅ COMPLETE**
-All 3 plans successfully implemented:
-- 04-01: Stop sequences, seed-based determinism, temperature=0 greedy
-- 04-02: Logprobs tracking, complete sampling parameters
-- 04-03: Error handling with request IDs, configurable timeouts
+**Phase 4 Status: ⚠️ GAPS FOUND** — 3 plans complete, 2 gap closure plans created to address integration issues:
+- 04-01: Stop sequences, seed-based determinism, temperature=0 greedy ✅
+- 04-02: Logprobs tracking, complete sampling parameters (types only) ⚠️
+- 04-03: Error handling with request IDs, configurable timeouts ✅
+- 04-04: [PENDING] Wire sampling parameters into generation pipeline
+- 04-05: [PENDING] Stop sequences + logprobs serialization
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Build | 1/1 | ✅ Complete | 2026-03-31 |
 | 2. Inference Core | 1/1 | ✅ Complete | 2026-03-31 |
 | 3. HTTP API & Integration | 1/1 | ✅ Complete | 2026-03-31 |
-| 4. API Improvements | 3/3 | ✅ Complete | 2026-04-01 |
+| 4. API Improvements | 3/5 | ⚠️ Gaps Found | 2026-04-01 |
 | 5. Multi-Model Support | 0/1 | Not started | — |
 | 6. Prompt Caching | 0/1 | Not started | — |
 | 7. TurboQuant Integration | 0/1 | Not started | — |
 | 8. Speculative Decoding | 0/1 | Not started | — |
 | 9. Model Management | 0/1 | Not started | — |
 
-**v1.1 Progress:** 1/6 phases | Next: Phase 5 (Multi-Model Support)
+**v1.1 Progress:** 1/6 phases | Phase 4: 3/5 plans complete (2 gap closure pending)
+
+**Phase 4 Gap Summary:**
+| Gap | Requirement | Status | Fix Plan |
+|-----|-------------|--------|----------|
+| Sampling params not wired | API-03 | PENDING | 04-04 |
+| Logprobs not serialized | API-02 | PENDING | 04-05 |
+| Stop sequences not active | API-01 | PENDING | 04-05 |
