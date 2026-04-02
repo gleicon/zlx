@@ -459,8 +459,17 @@ pub fn main() !void {
         manager_mod.deinitGlobalManager(allocator);
     }
 
-    // Get model name for status update
-    const model_name = config.model_name orelse model_path;
+    // Get model name for status update (extract basename from path if needed)
+    const raw_model_name = config.model_name orelse model_path;
+    const model_name = blk: {
+        // If the model name contains path separators, extract just the basename
+        if (std.mem.indexOf(u8, raw_model_name, "/")) |_| {
+            if (std.mem.lastIndexOf(u8, raw_model_name, "/")) |last_slash| {
+                break :blk raw_model_name[last_slash + 1 ..];
+            }
+        }
+        break :blk raw_model_name;
+    };
 
     std.log.info("Loading model from: {s}", .{model_path});
 
