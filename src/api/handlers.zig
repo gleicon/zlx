@@ -480,24 +480,100 @@ pub fn handleSwitchModel(req: anytype, res: anytype) !void {
     try sendJsonResponse(res, 200, json.items);
 }
 
-/// Handle GET /v1/health (health check endpoint)
+/// Handle GET /v1/health (enhanced health check endpoint)
 pub fn handleHealth(req: anytype, res: anytype) !void {
     _ = req;
 
     setCorsHeaders(res);
-
-    res.status = 200;
     res.content_type = .JSON;
 
+    // Get current state
     const ctx = global_context;
-    const status = if (ctx != null) "healthy" else "initializing";
-    const model = if (ctx) |c| std.fs.path.basename(c.model_path) else "none";
+    const current_model = if (ctx) |c| std.fs.path.basename(c.model_path) else null;
 
-    var json_buf: [512]u8 = undefined;
-    const response = try std.fmt.bufPrint(&json_buf, "{{\"status\":\"{s}\",\"model\":\"{s}\"}}", .{ status, model });
+    // Determine health status
+    var status: []const u8 = "unhealthy";
+    var http_status: u16 = 503;
+    var checks_passed: u32 = 0;
+    const total_checks: u32 = 3;
 
-    const writer = res.writer();
-    try writer.writeAll(response);
+    // Check 1: Model loaded
+    const model_loaded = current_model != null;
+    if (model_loaded) checks_passed += 1;
+
+    // Check 2: Memory OK (using memory tracker if available)
+    var memory_ok = true;
+    if (@import("../models/memory.zig").getGlobalTracker()) |tracker| {
+        const budget_status = tracker.checkBudget(0.95); // 95% threshold
+        memory_ok = budget_status != .critical;
+    }
+    if (memory_ok) checks_passed += 1;
+
+    // Check 3: Registry available
+    const registry_available = models_mod.getGlobalRegistry() != null;
+    if (registry_available) checks_passed += 1;
+
+    // Determine overall status
+    if (checks_passed == total_checks) {
+        status = "healthy";
+        http_status = 200;
+    } else if (checks_passed >= 2) {
+        status = "degraded";
+        http_status = 200;
+    }
+
+    res.status = http_status;
+
+    // Get memory info
+    const memory = @import("../models/memory.zig");
+    const gpu_info = memory.getGpuMemoryInfo();
+
+    // Get memory breakdown if available
+    var mem_breakdown: ?memory.ComponentBreakdown = null;
+    if (memory.getGlobalTracker()) |tracker| {
+        mem_breakdown = tracker.getBreakdown();
+    }
+
+    // Build comprehensive response
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(std.heap.page_allocator);
+    const writer = json.writer(std.heap.page_allocator);
+
+    try writer.writeAll("{");
+    try writer.print("\"status\":\"{s}\",", .{status});
+    try writer.writeAll("\"version\":\"0.3.0\",");
+    try writer.print("\"model\":{s},", .{if (current_model) |m| try std.fmt.allocPrint(std.heap.page_allocator, "\"{s}\"", .{m}) else "null"});
+    try writer.print("\"checks\":{d},", .{checks_passed});
+    try writer.print("\"checks_total\":{d},", .{total_checks});
+
+    // GPU info
+    try writer.writeAll("\"gpu\":{");
+    try writer.print("\"available\":{s},", .{if (gpu_info.metal_enabled) "true" else "false"});
+    try writer.print("\"metal_enabled\":{s},", .{if (gpu_info.metal_enabled) "true" else "false"});
+    try writer.print("\"memory_total_mb\":{d},", .{gpu_info.total_mb});
+    try writer.print("\"memory_free_mb\":{d}", .{gpu_info.free_mb});
+    try writer.writeAll("},");
+
+    // Memory breakdown
+    try writer.writeAll("\"memory\":{");
+    if (mem_breakdown) |mb| {
+        try writer.print("\"used_mb\":{d},", .{mb.total_mb});
+        try writer.print("\"peak_mb\":{d},", .{mb.peak_mb});
+        try writer.print("\"available_mb\":{d},", .{gpu_info.free_mb});
+        try writer.writeAll("\"components\":{");
+        try writer.print("\"weights_mb\":{d},", .{mb.weights_mb});
+        try writer.print("\"kv_cache_mb\":{d},", .{mb.kv_cache_mb});
+        try writer.print("\"temporaries_mb\":{d},", .{mb.temporaries_mb});
+        try writer.print("\"overhead_mb\":{d}", .{mb.overhead_mb});
+        try writer.writeAll("}");
+    } else {
+        try writer.writeAll("\"used_mb\":0,\"peak_mb\":0,\"available_mb\":0,\"components\":null");
+    }
+    try writer.writeAll("}");
+
+    try writer.writeAll("}");
+
+    try sendJsonResponse(res, http_status, json.items);
 }
 
 /// Send JSON error response with request ID
