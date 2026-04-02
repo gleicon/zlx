@@ -22,6 +22,8 @@ pub const LoadError = loader.LoadError;
 pub const GenerationState = generator.GenerationState;
 pub const GenerationOptions = generator.GenerationOptions;
 pub const Token = generator.Token;
+pub const LogprobEntry = generator.LogprobEntry;
+pub const StopReason = generator.StopReason;
 
 /// Inference context that holds loaded model and tokenizer
 pub const InferenceContext = struct {
@@ -122,6 +124,87 @@ pub const InferenceContext = struct {
         return &[_]u32{ 151645, 151643 }; //   and <|endoftext|>
     }
 };
+
+/// Generate result including text and optional logprobs
+pub const GenerationResult = struct {
+    text: []const u8,
+    logprobs: ?[]const LogprobEntry = null,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    stop_reason: StopReason,
+};
+
+/// Generate text with logprobs tracking (API-02)
+/// Caller owns the returned text and logprobs memory
+pub fn generateWithLogprobs(
+    allocator: std.mem.Allocator,
+    tokenizer: *Tokenizer,
+    transformer: *qwen.Transformer,
+    prompt: []const u8,
+    options: GenerationOptions,
+) !GenerationResult {
+    // Tokenize input
+    var input_tokens = try tokenizer.encode(prompt);
+    errdefer allocator.free(input_tokens);
+
+    // Calculate max tokens we can generate without exceeding context limit
+    const max_new_tokens = @min(options.max_tokens, MAX_CONTEXT_LENGTH - 1);
+    const max_input_tokens = MAX_CONTEXT_LENGTH - max_new_tokens;
+
+    // Truncate input if too long (keep from the end - most recent context)
+    if (input_tokens.len > max_input_tokens) {
+        const start_idx = input_tokens.len - max_input_tokens;
+        const truncated = try allocator.dupe(u32, input_tokens[start_idx..]);
+        allocator.free(input_tokens);
+        input_tokens = truncated;
+        std.log.warn("Input truncated from {d} to {d} tokens to fit context limit", .{ input_tokens.len + max_input_tokens, max_input_tokens });
+    }
+
+    // Update options with adjusted max_tokens
+    var adjusted_options = options;
+    adjusted_options.max_tokens = max_new_tokens;
+
+    // Get EOS token IDs
+    const eos_token_ids = &[_]u32{ 151645, 151643 };
+
+    // Initialize generation state
+    var state = try generator.GenerationState.init(
+        allocator,
+        transformer,
+        input_tokens,
+        eos_token_ids,
+        adjusted_options,
+    );
+    defer state.deinit();
+
+    // Collect tokens
+    var output_tokens = std.ArrayList(u32).init(allocator);
+    defer output_tokens.deinit();
+
+    var completion_tokens: u32 = 0;
+    while (try state.next()) |token| {
+        try output_tokens.append(token);
+        completion_tokens += 1;
+    }
+
+    // Decode text
+    const text = try tokenizer.decode(output_tokens.items);
+
+    // Get logprobs if enabled
+    const logprobs_entries = if (options.logprobs_enabled)
+        try allocator.dupe(LogprobEntry, state.getLogprobs())
+    else
+        null;
+    // Note: logprobs_entries entries have their own allocated strings that need freeing
+
+    return GenerationResult{
+        .text = text,
+        .logprobs = logprobs_entries,
+        .prompt_tokens = @intCast(input_tokens.len),
+        .completion_tokens = completion_tokens,
+        .stop_reason = state.getStopReason(),
+    };
+}
 
 // Import qwen for transformer access
 const qwen = @import("../mlx.zig/src/qwen.zig");
