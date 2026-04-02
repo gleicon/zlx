@@ -65,6 +65,19 @@ pub fn build(b: *std.Build) !void {
     const run_models_test = b.addRunArtifact(models_test);
     test_step.dependOn(&run_models_test.step);
 
+    // Test memory module
+    const memory_test = b.addTest(.{
+        .name = "memory_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/models/memory.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_memory_test = b.addRunArtifact(memory_test);
+    test_step.dependOn(&run_memory_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
 }
