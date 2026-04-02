@@ -11,6 +11,9 @@ models/
 *.gguf
 *.mlx
 
+# Allow source code in src/models (not model weights)
+!src/models/
+
 # Logs
 *.log
 /tmp/

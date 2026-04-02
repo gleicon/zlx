@@ -35,6 +35,22 @@ pub fn build(b: *std.Build) !void {
     if (b.args) |args| run_cmd.addArgs(args);
     const run_step = b.step("run", "Run zlx inference server");
     run_step.dependOn(&run_cmd.step);
+
+    // Add test step for registry and other modules
+    const test_step = b.step("test", "Run unit tests");
+
+    // Test registry module
+    const registry_test = b.addTest(.{
+        .name = "registry_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/models/registry.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_registry_test = b.addRunArtifact(registry_test);
+    test_step.dependOn(&run_registry_test.step);
 }
 
 // ── Inlined from src/mlx.zig/build.zig ────────────────────────────────────────
