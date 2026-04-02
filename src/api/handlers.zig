@@ -394,7 +394,38 @@ fn buildChatCompletionResponse(
     try writer.writeAll("{\"index\":0,\"message\":{");
     try writer.writeAll("\"role\":\"assistant\",\"content\":\"");
     try writeJsonString(writer, result.text);
-    try writer.writeAll("\"},\"finish_reason\":\"");
+    try writer.writeAll("\"}");
+
+    // Add logprobs if available
+    if (result.logprobs) |entries| {
+        try writer.writeAll(",\"logprobs\":{");
+        try writer.writeAll("\"content\":[");
+
+        for (entries, 0..) |entry, i| {
+            if (i > 0) try writer.writeAll(",");
+            try writer.writeAll("{");
+            // Token string (empty for now - deferred)
+            try writer.writeAll("\"token\":\"\",");
+            // Log probability
+            try writer.print("\"logprob\":{:.6},", .{entry.logprob});
+            // Bytes (null per OpenAI spec)
+            try writer.writeAll("\"bytes\":null,");
+            // Top logprobs array
+            try writer.writeAll("\"top_logprobs\":[");
+            for (entry.top_logprobs, 0..) |top, j| {
+                if (j > 0) try writer.writeAll(",");
+                try writer.writeAll("{");
+                try writer.writeAll("\"token\":\"\","); // Token string deferred
+                try writer.print("\"logprob\":{:.6}", .{top.logprob});
+                try writer.writeAll("}");
+            }
+            try writer.writeAll("]}"); // Close top_logprobs and entry
+        }
+
+        try writer.writeAll("]}"); // Close content array and logprobs object
+    }
+
+    try writer.writeAll(",\"finish_reason\":\"");
     try writer.writeAll(finish_reason);
     try writer.writeAll("\"}");
 
