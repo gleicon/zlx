@@ -82,6 +82,17 @@ Model: Qwen2.5-Coder-1.5B-Instruct-4bit
 - Context length limiting (8K tokens max)
 - Metal GPU backend
 
+**Compression (`src/compression/`)**
+- TurboQuant KV cache compression (5-6x memory reduction)
+- 3-4 bit quantization for KV cache
+- Configurable adaptive layers
+
+**Speculative Decoding (`src/speculation/`)**
+- Draft model management for 1.5-2.8x speedup
+- Automatic draft model selection
+- Speculation depth configuration
+- Metrics collection
+
 ### Data Flow
 
 1. HTTP request arrives at `/v1/chat/completions`
@@ -96,7 +107,7 @@ Model: Qwen2.5-Coder-1.5B-Instruct-4bit
 ## Dependencies
 
 ### Build Dependencies
-- Zig 0.15.2+
+- Zig 0.13.0 (not 0.14+ — MLX.zig targets 0.13.0 specifically)
 - CMake 3.20+ (for mlx-c build)
 - Xcode Command Line Tools (Metal SDK)
 - curl (for downloading mlx-c)
@@ -253,8 +264,31 @@ sudo powermetrics -s gpu_power -n 1 2>/dev/null | grep "GPU active residency"
 - **Qwen 1.5B 4-bit**: ~40-60 tokens/sec on M1 Pro
 - **Qwen 7B 4-bit**: ~15-25 tokens/sec on M1 Pro
 - **With Speculative Decoding**: 1.5-2.8x speedup on compatible models (7B + 1.5B draft)
+- **With TurboQuant**: 5-6x KV cache compression (enables longer context)
 - **TTFT**: 500-2000ms depending on prompt length
 - **Memory**: ~2GB for 1.5B model, ~5GB for 7B model, +3-4GB with draft model
+
+### TurboQuant KV Cache Compression (NEW)
+
+zlx supports TurboQuant for 5-6x KV cache compression, enabling longer context with less memory:
+
+```bash
+# Enable TurboQuant (BETA)
+zlx --model Qwen2.5-Coder-7B-4bit --turboquant
+
+# Configure quantization bits (3 or 4)
+zlx --model Qwen2.5-Coder-7B-4bit --turboquant --turboquant-bits 4
+
+# Configure adaptive layers (keep first/last N layers in FP16)
+zlx --model Qwen2.5-Coder-7B-4bit --turboquant --turboquant-adaptive 4
+```
+
+**Benefits:**
+- 6GB → 1GB KV cache for 7B model at 4096 context
+- ~5.5x compression ratio with minimal speed overhead
+- Enables longer conversations without OOM
+
+See Phase 07 documentation for technical details.
 
 ### Speculative Decoding (NEW)
 
@@ -362,6 +396,13 @@ src/
 │   └── metrics.zig       # Performance tracking
 ├── inference/
 │   └── mod.zig           # MLX inference wrapper
+├── compression/          # KV cache compression
+│   ├── kv_compressor.zig
+│   └── turboquant_engine.zig
+├── speculation/          # Speculative decoding
+│   ├── speculative_generator.zig
+│   ├── draft_selector.zig
+│   └── mod.zig
 └── mlx.zig/              # MLX.zig submodule
     ├── src/
     │   ├── mlx.zig       # C bindings
