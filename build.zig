@@ -269,6 +269,53 @@ pub fn build(b: *std.Build) !void {
     const run_moe_test = b.addRunArtifact(moe_test);
     test_step.dependOn(&run_moe_test.step);
 
+    // Test DeepSeek module (PHASE-11-04)
+    const deepseek_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/deepseek_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Add dependencies for deepseek tests
+    deepseek_test_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    deepseek_test_mod.addImport("mlx.zig/src/mla.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mla.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    deepseek_test_mod.addImport("moe.zig", b.createModule(.{
+        .root_source_file = b.path("src/moe.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    deepseek_test_mod.addImport("deepseek.zig", b.createModule(.{
+        .root_source_file = b.path("src/deepseek.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    deepseek_test_mod.addImport("inference/mod.zig", b.createModule(.{
+        .root_source_file = b.path("src/inference/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    deepseek_test_mod.addImport("inference/loader.zig", b.createModule(.{
+        .root_source_file = b.path("src/inference/loader.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+
+    const deepseek_test = b.addTest(.{
+        .name = "deepseek_test",
+        .root_module = deepseek_test_mod,
+    });
+
+    const run_deepseek_test = b.addRunArtifact(deepseek_test);
+    test_step.dependOn(&run_deepseek_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
     // due to cross-module dependencies
