@@ -6,7 +6,7 @@ const mla = @import("mlx.zig/src/mla.zig");
 const moe = @import("moe.zig");
 const mlx = @import("mlx.zig/src/mlx.zig");
 
-/// Test 1: DeepSeek forward produces correct logits shape
+// Test 1: DeepSeek forward produces correct logits shape
 test "DeepSeek forward produces correct logits shape" {
     const allocator = std.testing.allocator;
 
@@ -54,7 +54,7 @@ test "DeepSeek forward produces correct logits shape" {
     transformer.deinit();
 }
 
-/// Test 2: DeepSeek config matches V2-Lite defaults
+// Test 2: DeepSeek config matches V2-Lite defaults
 test "DeepSeek config matches V2-Lite defaults" {
     const config = deepseek.DeepSeekConfig{};
 
@@ -73,7 +73,7 @@ test "DeepSeek config matches V2-Lite defaults" {
     try std.testing.expectEqual(@as(usize, 512), config.latent_dim);
 }
 
-/// Test 3: DeepSeek layer has MLA and MoE
+// Test 3: DeepSeek layer has MLA and MoE
 test "DeepSeek layer structure" {
     // Test that DeepSeekLayer struct has the expected fields
     const TestLayer = deepseek.DeepSeekLayer;
@@ -93,7 +93,7 @@ test "DeepSeek layer structure" {
     try std.testing.expectEqualStrings("moe", moe_info.field_type);
 }
 
-/// Test 4: DeepSeek compression ratio calculation
+// Test 4: DeepSeek compression ratio calculation
 test "DeepSeek MLA compression ratio" {
     const allocator = std.testing.allocator;
 
@@ -122,7 +122,7 @@ test "DeepSeek MLA compression ratio" {
     try std.testing.expectApproxEqAbs(expected_compression, expected_ratio, 0.01);
 }
 
-/// Test 5: DeepSeek sparse parameter count
+// Test 5: DeepSeek sparse parameter count
 test "DeepSeek sparse parameter count" {
     // DeepSeek-V2-Lite has 15.7B total params but only 2B active per token
     const total_params: u64 = 15_700_000_000;
@@ -143,7 +143,7 @@ test "DeepSeek sparse parameter count" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.09375), routing_ratio, 0.001); // 6/64 = 9.375%
 }
 
-/// Test 6: ModelUnion supports DeepSeek variant
+// Test 6: ModelUnion supports DeepSeek variant
 test "ModelUnion supports DeepSeek variant" {
     const inference = @import("inference/mod.zig");
 
@@ -161,7 +161,7 @@ test "ModelUnion supports DeepSeek variant" {
     try std.testing.expect(has_deepseek);
 }
 
-/// Test 7: DeepSeekWeights structure
+// Test 7: DeepSeekWeights structure
 test "DeepSeekWeights structure" {
     // Verify DeepSeekWeights has required fields
     const TestWeights = deepseek.DeepSeekWeights;
@@ -179,7 +179,7 @@ test "DeepSeekWeights structure" {
     try std.testing.expectEqualStrings("lm_head", lm_head_info.name);
 }
 
-/// Test 8: Memory estimation for DeepSeek model
+// Test 8: Memory estimation for DeepSeek model
 test "DeepSeek memory estimation" {
     const config = deepseek.DeepSeekConfig{};
 
@@ -215,7 +215,7 @@ test "DeepSeek memory estimation" {
     try std.testing.expect(total_weight_memory < 35_000_000_000); // < 35GB
 }
 
-/// Test 9: DeepSeekTransformer init and deinit
+// Test 9: DeepSeekTransformer init and deinit
 test "DeepSeekTransformer lifecycle" {
     const allocator = std.testing.allocator;
 
@@ -261,7 +261,7 @@ test "DeepSeekTransformer lifecycle" {
     transformer.deinit();
 }
 
-/// Test 10: Architecture detection returns correct type
+// Test 10: Architecture detection returns correct type
 test "Loader detects DeepSeek V2 MoE architecture" {
     const loader = @import("inference/loader.zig");
 
