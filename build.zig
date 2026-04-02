@@ -147,6 +147,33 @@ pub fn build(b: *std.Build) !void {
     const run_turboquant_test = b.addRunArtifact(turboquant_test);
     test_step.dependOn(&run_turboquant_test.step);
 
+    // Test mlx_bridge (PHASE-07-02)
+    const mlx_bridge_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx_bridge.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mlx_bridge_test_mod.addImport("mlx.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+
+    const c_mod = b.createModule(.{
+        .root_source_file = b.path("src/c.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mlx_bridge_test_mod.addImport("c.zig", c_mod);
+
+    const mlx_bridge_test = b.addTest(.{
+        .name = "mlx_bridge_test",
+        .root_module = mlx_bridge_test_mod,
+    });
+
+    const run_mlx_bridge_test = b.addRunArtifact(mlx_bridge_test);
+    test_step.dependOn(&run_mlx_bridge_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
 }
