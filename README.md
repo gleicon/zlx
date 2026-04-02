@@ -16,6 +16,17 @@ zig build -Doptimize=ReleaseFast
 
 ### 2. Download a Model
 
+Use model shortcuts (run `zlx --list-models` to see all):
+
+```bash
+# Quick download using model shortcuts
+./zig-out/bin/zlx --download-model qwen2.5-coder-1.5b   # 1.0 GB - Fast coding
+./zig-out/bin/zlx --download-model gpt-oss-20b         # 11.2 GB - OpenAI model
+./zig-out/bin/zlx --download-model deepseek-coder-v2-lite  # 8.8 GB - MoE model (requires Phase 11)
+```
+
+Or manually download MLX models from HuggingFace:
+
 ```bash
 mkdir -p models
 cd models
@@ -30,11 +41,37 @@ cd ..
 
 ### 3. Run
 
+Using model shortcuts:
+
+```bash
+./zig-out/bin/zlx --model qwen2.5-coder-1.5b --port 8081
+./zig-out/bin/zlx --model gpt-oss-20b --port 8081
+```
+
+Or with explicit path:
+
 ```bash
 ./zig-out/bin/zlx --model ./models/Qwen2.5-Coder-1.5B-Instruct-4bit --port 8081
 ```
 
-### 4. Configure OpenCode
+### 4. Configure OpenCode (Auto-Config)
+
+**One-command setup:**
+
+```bash
+# Configure OpenCode to use zlx (writes ~/.config/opencode/config.json)
+./zig-out/bin/zlx --model qwen2.5-coder-1.5b --configure-opencode
+
+# Then just run OpenCode
+opencode
+```
+
+**What it does:**
+- Creates `~/.config/opencode/config.json` with the correct settings
+- Backs up any existing config to `config.json.backup`
+- Sets the model name and zlx server URL automatically
+
+**Or manually configure:**
 
 In OpenCode settings:
 
@@ -43,6 +80,30 @@ Provider: OpenAI Compatible
 API URL: http://127.0.0.1:8081/v1
 API Key: (leave empty)
 Model: Qwen2.5-Coder-1.5B-Instruct-4bit
+```
+
+## Supported Models
+
+### Currently Supported
+
+| Model | Shortcut | Size | Status | Notes |
+|-------|----------|------|--------|-------|
+| **Qwen2.5-Coder-1.5B-Instruct** | `qwen2.5-coder-1.5b` | 1.0 GB | ✅ Ready | Fast coding model (recommended) |
+| **Qwen2.5-Coder-7B-Instruct** | `qwen2.5-coder-7b` | 4.2 GB | ✅ Ready | Powerful coding model |
+| **GPT-OSS-20B** | `gpt-oss-20b` | 11.2 GB | ⚠️ Testing | OpenAI's open model (may need llama transformer) |
+
+### Pending Implementation (Phase 11)
+
+| Model | Shortcut | Size | Status | Blocker |
+|-------|----------|------|--------|---------|
+| **DeepSeek-Coder-V2-Lite** | `deepseek-coder-v2-lite` | 8.8 GB | 🚧 Pending | MoE architecture not yet supported |
+
+DeepSeek-Coder-V2-Lite requires MoE (Mixture of Experts) support which is not yet implemented in MLX.zig. See [BACKLOG.md](.planning/BACKLOG.md) for details.
+
+### View All Models
+
+```bash
+./zig-out/bin/zlx --list-models
 ```
 
 ## Architecture

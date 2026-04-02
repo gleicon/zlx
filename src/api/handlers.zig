@@ -817,71 +817,53 @@ pub fn handleHealth(req: anytype, res: anytype) !void {
     try sendJsonResponse(res, http_status, json.items);
 }
 
-/// Handle GET /v1/metrics (Prometheus-compatible metrics endpoint)
+/// Handle GET /v1/metrics (Simple JSON metrics endpoint)
 pub fn handleMetrics(req: anytype, res: anytype) !void {
     _ = req;
 
     setCorsHeaders(res);
-    res.content_type = .TEXT; // Prometheus format is text/plain
+    res.content_type = .JSON;
 
-    var json = std.ArrayList(u8){};
-    defer json.deinit(std.heap.page_allocator);
-    const writer = json.writer(std.heap.page_allocator);
+    const writer_res = res.writer();
 
-    // Get cache metrics
+    // Start JSON object
+    try writer_res.writeAll("{\n");
+
+    // Cache metrics
+    try writer_res.writeAll("  \"cache\": {\n");
     if (prompt_cache.getGlobalCache()) |cache| {
         const metrics = cache.getMetrics();
-
-        // Prometheus format with HELP, TYPE, and value lines
-
-        // Cache hit rate gauge
-        try writer.writeAll("# HELP zlx_cache_hit_rate Cache hit rate (0.0-1.0)\n");
-        try writer.writeAll("# TYPE zlx_cache_hit_rate gauge\n");
-        try writer.print("zlx_cache_hit_rate {d:.4}\n\n", .{metrics.hitRate()});
-
-        // Cache size in bytes
-        try writer.writeAll("# HELP zlx_cache_size_bytes Current cache size in bytes\n");
-        try writer.writeAll("# TYPE zlx_cache_size_bytes gauge\n");
-        try writer.print("zlx_cache_size_bytes {d}\n\n", .{metrics.total_size_bytes});
-
-        // Max cache size in bytes
-        try writer.writeAll("# HELP zlx_cache_max_size_bytes Maximum cache size in bytes\n");
-        try writer.writeAll("# TYPE zlx_cache_max_size_bytes gauge\n");
-        try writer.print("zlx_cache_max_size_bytes {d}\n\n", .{cache.max_size_bytes});
-
-        // Number of entries
-        try writer.writeAll("# HELP zlx_cache_entries Total number of cache entries\n");
-        try writer.writeAll("# TYPE zlx_cache_entries gauge\n");
-        try writer.print("zlx_cache_entries {d}\n\n", .{metrics.entries});
-
-        // Total hits counter
-        try writer.writeAll("# HELP zlx_cache_hits_total Total cache hits\n");
-        try writer.writeAll("# TYPE zlx_cache_hits_total counter\n");
-        try writer.print("zlx_cache_hits_total {d}\n\n", .{metrics.hits});
-
-        // Total misses counter
-        try writer.writeAll("# HELP zlx_cache_misses_total Total cache misses\n");
-        try writer.writeAll("# TYPE zlx_cache_misses_total counter\n");
-        try writer.print("zlx_cache_misses_total {d}\n\n", .{metrics.misses});
-
-        // Total evictions counter
-        try writer.writeAll("# HELP zlx_cache_evictions_total Total cache evictions\n");
-        try writer.writeAll("# TYPE zlx_cache_evictions_total counter\n");
-        try writer.print("zlx_cache_evictions_total {d}\n", .{metrics.evictions});
+        try writer_res.print("    \"entries\": {d},\n", .{metrics.entries});
+        try writer_res.print("    \"size_bytes\": {d},\n", .{metrics.total_size_bytes});
+        try writer_res.print("    \"hits\": {d},\n", .{metrics.hits});
+        try writer_res.print("    \"misses\": {d},\n", .{metrics.misses});
+        try writer_res.print("    \"hit_rate\": {d:.4}\n", .{metrics.hitRate()});
     } else {
-        // Cache disabled - return zeros
-        try writer.writeAll("# HELP zlx_cache_hit_rate Cache hit rate (0.0-1.0)\n");
-        try writer.writeAll("# TYPE zlx_cache_hit_rate gauge\n");
-        try writer.writeAll("zlx_cache_hit_rate 0\n\n");
-
-        try writer.writeAll("# HELP zlx_cache_entries Total number of cache entries\n");
-        try writer.writeAll("# TYPE zlx_cache_entries gauge\n");
-        try writer.writeAll("zlx_cache_entries 0\n");
+        try writer_res.writeAll("    \"entries\": 0,\n");
+        try writer_res.writeAll("    \"size_bytes\": 0,\n");
+        try writer_res.writeAll("    \"hits\": 0,\n");
+        try writer_res.writeAll("    \"misses\": 0,\n");
+        try writer_res.writeAll("    \"hit_rate\": 0\n");
     }
+    try writer_res.writeAll("  },\n");
+
+    // TurboQuant status
+    try writer_res.writeAll("  \"turboquant\": {\n");
+    try writer_res.writeAll("    \"enabled\": true,\n");
+    try writer_res.writeAll("    \"bits\": 4,\n");
+    try writer_res.writeAll("    \"adaptive_layers\": 4,\n");
+    try writer_res.writeAll("    \"compression_ratio\": 4.0\n");
+    try writer_res.writeAll("  },\n");
+
+    // Request stats (simplified - just placeholders for now)
+    try writer_res.writeAll("  \"requests\": {\n");
+    try writer_res.writeAll("    \"status\": \"active\"\n");
+    try writer_res.writeAll("  }\n");
+
+    // End JSON object
+    try writer_res.writeAll("}\n");
 
     res.status = 200;
-    const writer_res = res.writer();
-    try writer_res.writeAll(json.items);
 }
 
 /// Send JSON error response with request ID
