@@ -193,6 +193,19 @@ pub fn build(b: *std.Build) !void {
     // Note: kv_compressor is tested via main executable build
     // (complex dependencies make isolated testing difficult)
 
+    // Test config module (PHASE-09-01)
+    const config_test = b.addTest(.{
+        .name = "config_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/config_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_config_test = b.addRunArtifact(config_test);
+    test_step.dependOn(&run_config_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
     // due to cross-module dependencies
