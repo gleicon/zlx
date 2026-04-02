@@ -11,6 +11,8 @@ const inference = @import("../inference/mod.zig");
 const models_mod = @import("../models/mod.zig");
 const manager_mod = @import("../models/manager.zig");
 const prompt_cache = @import("../cache/prompt_cache.zig");
+const templates = @import("../chat/templates.zig");
+const model_registry = @import("../models/registry.zig");
 
 /// Global inference context - initialized at server startup
 pub var global_context: ?*inference.InferenceContext = null;
@@ -230,9 +232,17 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         }
     }
 
-    // Build prompt from messages
-    const prompt = try types.buildPromptFromMessages(ctx.allocator, request.messages);
+    // Build prompt from messages using model-specific template
+    const arch = detectModelArchitecture(request.model);
+    const prompt = try templates.formatChatByArchitecture(ctx.allocator, arch, request.messages);
     defer ctx.allocator.free(prompt);
+
+    // Log template selection for debugging
+    std.log.info("[{s}] Using {s} chat template for model: {s}", .{
+        request_id,
+        @tagName(arch),
+        request.model,
+    });
 
     // Create generation options
     const gen_options = inference.GenerationOptions{
@@ -410,6 +420,37 @@ fn determineArchitecture(config: *const @import("../models/registry.zig").Config
     } else {
         return "qwen";
     }
+}
+
+/// Detect model architecture from model name
+fn detectModelArchitecture(model_name: []const u8) templates.ModelArchitecture {
+    // Check for DeepSeek models
+    if (std.mem.indexOf(u8, model_name, "deepseek") != null) {
+        if (std.mem.indexOf(u8, model_name, "v2") != null or
+            std.mem.indexOf(u8, model_name, "coder-v2") != null)
+        {
+            return .deepseek_v2_moe;
+        }
+        return .deepseek_v2_moe; // Default DeepSeek to V2 MoE
+    }
+
+    // Check for Qwen models
+    if (std.mem.indexOf(u8, model_name, "qwen") != null) {
+        return .qwen;
+    }
+
+    // Check for Llama models
+    if (std.mem.indexOf(u8, model_name, "llama") != null) {
+        return .llama;
+    }
+
+    // Check for Phi models
+    if (std.mem.indexOf(u8, model_name, "phi") != null) {
+        return .phi;
+    }
+
+    // Default to Qwen (most common in this codebase)
+    return .qwen;
 }
 
 /// Handle POST /v1/models/load - Start background model load
