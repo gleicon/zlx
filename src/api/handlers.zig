@@ -10,6 +10,7 @@ const streaming = @import("streaming.zig");
 const inference = @import("../inference/mod.zig");
 const models_mod = @import("../models/mod.zig");
 const manager_mod = @import("../models/manager.zig");
+const prompt_cache = @import("../cache/prompt_cache.zig");
 
 /// Global inference context - initialized at server startup
 pub var global_context: ?*inference.InferenceContext = null;
@@ -247,6 +248,29 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         .repetition_penalty = request.getRepetitionPenalty(),
         .logprobs_enabled = request.logprobs orelse false,
     };
+
+    // Generate cache key and check cache (if enabled)
+    const cache_hit = false; // Placeholder - actual cache integration in generation layer
+    const cache_key: ?[]const u8 = blk: {
+        if (prompt_cache.getGlobalCache()) |cache| {
+            // Get model identifier from context
+            const model_name = std.fs.path.basename(ctx.model_path);
+            // Use model path as hash since it's unique
+            const key = cache.generateKey(model_name, ctx.model_path, prompt, gen_options) catch |err| {
+                std.log.warn("[{s}] Failed to generate cache key: {s}", .{ request_id, @errorName(err) });
+                break :blk null;
+            };
+            const key_str = try ctx.allocator.dupe(u8, key.slice());
+            break :blk key_str;
+        }
+        break :blk null;
+    };
+    defer if (cache_key) |key| ctx.allocator.free(key);
+
+    // Log cache status for debugging
+    if (cache_key) |key| {
+        std.log.debug("[{s}] Cache key: {s}, hit: {s}", .{ request_id, key, if (cache_hit) "true" else "false" });
+    }
 
     // Generate with timeout
     const timeout_ms = getTimeoutMs();
