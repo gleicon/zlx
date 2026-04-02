@@ -233,48 +233,42 @@ pub const GenerationState = struct {
         defer mlx.arrayFree(last_logits);
         try mlx.take(&last_logits, self.logits_array, mlx.int(-1), 1, transformer.mlx_config.stream);
 
-        // Apply temperature scaling if temperature != 0
-        var scaled_logits = mlx.arrayNew();
-        defer mlx.arrayFree(scaled_logits);
-
-        if (self.options.temperature > 0 and self.options.temperature != 1.0) {
-            // Divide logits by temperature: logits / temperature
-            const temp_scalar = mlx.float(self.options.temperature);
-            try mlx.divide(&scaled_logits, last_logits, temp_scalar, transformer.mlx_config.stream);
-        } else {
-            // Copy logits
-            try mlx.arraySet(&scaled_logits, last_logits);
-        }
-
-        // Apply softmax to get probabilities
-        var probs = mlx.arrayNew();
-        defer mlx.arrayFree(probs);
-        const axes = &[_]c_int{1}; // Softmax over vocab dimension
-        try mlx.softmax(&probs, scaled_logits, axes, false, transformer.mlx_config.stream);
-
         // Sample from the distribution
         var next_token: Token = 0;
 
-        // Evaluate to get actual values for sampling
-        try mlx.arrayEval(probs);
-
-        // Get probability data
-        const probs_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(probs)));
-        const vocab_size = mlx.arrayDim(probs, 1);
-
         if (self.options.temperature == 0) {
-            // Greedy: pick the highest probability token
-            var max_prob: f32 = 0;
-            var max_idx: u32 = 0;
-            for (0..@intCast(vocab_size)) |i| {
-                const p = probs_data[i];
-                if (p > max_prob) {
-                    max_prob = p;
-                    max_idx = @intCast(i);
-                }
-            }
-            next_token = max_idx;
+            // D-18: Greedy selection — argmax on raw logits (before temperature/softmax)
+            var next_token_arr = mlx.arrayNew();
+            defer mlx.arrayFree(next_token_arr);
+            try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
+            try mlx.item(&next_token, next_token_arr);
         } else {
+            // Apply temperature scaling
+            var scaled_logits = mlx.arrayNew();
+            defer mlx.arrayFree(scaled_logits);
+
+            if (self.options.temperature != 1.0) {
+                // Divide logits by temperature: logits / temperature
+                const temp_scalar = mlx.float(self.options.temperature);
+                try mlx.divide(&scaled_logits, last_logits, temp_scalar, transformer.mlx_config.stream);
+            } else {
+                // Copy logits
+                try mlx.arraySet(&scaled_logits, last_logits);
+            }
+
+            // Apply softmax to get probabilities
+            var probs = mlx.arrayNew();
+            defer mlx.arrayFree(probs);
+            const axes = &[_]c_int{1}; // Softmax over vocab dimension
+            try mlx.softmax(&probs, scaled_logits, axes, false, transformer.mlx_config.stream);
+
+            // Evaluate to get actual values for sampling
+            try mlx.arrayEval(probs);
+
+            // Get probability data
+            const probs_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(probs)));
+            const vocab_size = mlx.arrayDim(probs, 1);
+
             // Sample from the distribution using seeded RNG if available (API-05)
             const random_value = if (self.rng) |*rng| rng.random() else std.crypto.random.float(f32);
             var cumsum: f32 = 0;
