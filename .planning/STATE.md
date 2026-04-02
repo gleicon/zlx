@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: planning
-stopped_at: Phase 4 context gathered
-last_updated: "2026-04-02T01:15:39.733Z"
-last_activity: 2026-04-01 — Roadmap created with 6 phases covering 19 requirements
+milestone: v1.1
+milestone_name: Production-Ready
+status: executing
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-04-02T01:45:00.000Z"
+last_activity: 2026-04-02 -- Completed Plan 04-02 (Logprobs and Sampling Parameters)
 progress:
   total_phases: 9
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 2
-  percent: 0
+  completed_phases: 3
+  total_plans: 3
+  completed_plans: 1
+  percent: 33
 ---
 
 # Project State
@@ -21,17 +21,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** Milestone v1.1 — Production-Ready Inference Server
+**Current focus:** Phase 04 — API Improvements (Plan 2 of 3 complete)
 
 ## Current Position
 
 Milestone: v1.1 (Production-Ready)
-Phase: 4 — API Improvements (ready to start)
-Plan: —
-Status: Roadmap complete, awaiting phase planning
-Last activity: 2026-04-01 — Roadmap created with 6 phases covering 19 requirements
+Phase: 04 (API Improvements) — EXECUTING
+Plan: 2 of 3 — Logprobs and Sampling Parameters COMPLETE
+Status: Plan 04-02 completed successfully
 
-Progress: [░░░░░░░░░░] 0% → Phase 4 planning next
+Progress: [███░░░░░░░] 33% → Next: Plan 04-03 (Error Handling)
+
+## Phase 04 Status
+
+| Plan | Name | Status | Requirements |
+|------|------|--------|--------------|
+| 04-01 | Stop sequences, seed, temperature=0 | 🔄 In Progress | API-01, API-04, API-05 |
+| 04-02 | Logprobs, sampling parameters | ✅ COMPLETE | API-02, API-03 |
+| 04-03 | Error handling, timeouts | 📝 Planned | INFRA-03, INFRA-04 |
 
 ## Performance Metrics (v1.0 Baseline)
 
@@ -67,13 +74,15 @@ Progress: [░░░░░░░░░░] 0% → Phase 4 planning next
 - [v1.1-research]: TurboQuant requires Metal kernel extraction from Python
 - [v1.1-research]: Integrate Open WebUI, don't build custom
 - [v1.1-research]: Use MLX native save/load for KV cache persistence
+- [Phase 04-02]: Logprob capture before sampling modifications (D-12)
+- [Phase 04-02]: Sampling pipeline priority: logit_bias → penalties → top_k → min_p (D-17)
 
 ### Pending Todos (from v1.0, now in v1.1)
 
 - Test endpoints with various model sizes (1.5B, 7B, 14B)
 - Verify OpenCode client integration (✅ completed in v1.0)
-- Add stop sequence support (moved to API-01 in v1.1)
-- Add logprobs tracking (moved to API-02 in v1.1)
+- Add stop sequence support (✅ API-01 — Plan 04-01)
+- Add logprobs tracking (✅ API-02 — Plan 04-02)
 - Implement TurboQuant (moved to PERF-01 in v1.1)
 
 ### Blockers/Concerns
@@ -87,15 +96,15 @@ Progress: [░░░░░░░░░░] 0% → Phase 4 planning next
 
 ## Session Continuity
 
-Last session: 2026-04-02T01:15:39.731Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-api-improvements/04-CONTEXT.md
+Last session: 2026-04-02T01:45:00.000Z
+Stopped at: Completed 04-02-PLAN.md
+Resume file: .planning/phases/04-api-improvements/04-02-SUMMARY.md
 
 ## Next Steps
 
-1. ✅ Create REQUIREMENTS.md with REQ-IDs for all v1.1 features — DONE
-2. ✅ Create ROADMAP.md with phased execution plan — DONE
-3. 🔄 Plan Phase 4: API Improvements (table stakes, low risk) — NEXT
+1. ✅ Plan 04-02 complete — Logprobs and sampling parameters
+2. 🔄 Wait for Plan 04-01 to complete (parallel execution)
+3. ⏳ Plan 04-03 — Error handling with request IDs and timeouts
 
 ## Research Artifacts
 
