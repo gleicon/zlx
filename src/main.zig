@@ -12,13 +12,22 @@ const memory = @import("models/memory.zig");
 const prompt_cache = @import("cache/prompt_cache.zig");
 const compression = @import("compression/mod.zig");
 const speculation = @import("speculation/mod.zig");
+const config_mod = @import("config.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
     "\n" ++
     "zlx - Local inference server for OpenAI-compatible API\n" ++
     "\n" ++
+    "Configuration:\n" ++
+    "  Settings are loaded from (in order of priority):\n" ++
+    "    1. CLI flags (highest priority)\n" ++
+    "    2. Environment variables (ZLX_*)\n" ++
+    "    3. Config file: ~/.config/zlx/config.json or ./zlx.json\n" ++
+    "    4. Built-in defaults\n" ++
+    "\n" ++
     "Options:\n" ++
+    "  --config <PATH>         Load configuration from file\n" ++
     "  --model <NAME>          Model name or path (required)\n" ++
     "  --port <PORT>           Server port (default: 8080)\n" ++
     "  --host <HOST>           Bind address (default: 127.0.0.1)\n" ++
@@ -33,6 +42,15 @@ const USAGE =
     "  --speculation-depth N   Tokens to speculate ahead: 1-8 (default: 4)\n" ++
     "  --no-speculation        Disable speculative decoding\n" ++
     "  --help                  Show this help message\n" ++
+    "\n" ++
+    "Environment Variables:\n" ++
+    "  ZLX_MODEL               Model name (overrides config file)\n" ++
+    "  ZLX_PORT                Server port\n" ++
+    "  ZLX_HOST                Bind address\n" ++
+    "  ZLX_TIMEOUT             Request timeout\n" ++
+    "  ZLX_CACHE_SIZE          Cache size in GB\n" ++
+    "  ZLX_TURBOQUANT          Enable TurboQuant (true/1)\n" ++
+    "  ZLX_CORS_ORIGINS        CORS allowed origins (default: *)\n" ++
     "\n" ++
     "Examples:\n" ++
     "  zlx --model qwen2.5-coder-1.5b\n" ++
@@ -72,23 +90,72 @@ fn printUsage() void {
 }
 
 fn parseArgs(allocator: std.mem.Allocator) !Config {
-    var config = Config{};
+    // First, check for --config flag before loading any config
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
 
     // Skip program name
     _ = args.next();
 
+    var explicit_config_path: ?[]const u8 = null;
+
+    // First pass: look for --config flag
+    var args_copy = try std.process.argsWithAllocator(allocator);
+    defer args_copy.deinit();
+    _ = args_copy.next(); // Skip program name
+
+    while (args_copy.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--config")) {
+            explicit_config_path = args_copy.next() orelse {
+                std.log.err("Expected value after --config", .{});
+                return error.MissingArgument;
+            };
+            break;
+        }
+    }
+
+    // Load config from file (either explicit path or default locations)
+    var config = Config{};
+    var config_source: []const u8 = "defaults";
+
+    if (explicit_config_path) |path| {
+        // Load from explicit path
+        const file_config = config_mod.loadConfigFromPath(allocator, path) catch |err| {
+            std.log.err("Failed to load config from {s}: {s}", .{ path, @errorName(err) });
+            return err;
+        };
+        config = convertFileConfig(file_config);
+        config_source = try allocator.dupe(u8, path);
+    } else {
+        // Try loading from default locations
+        const file_config = config_mod.loadConfig(allocator) catch |err| blk: {
+            if (err == config_mod.ConfigError.InvalidConfigFile) {
+                std.log.err("Config file has errors. Please fix and try again.", .{});
+                return err;
+            }
+            // Other errors just mean no config file found, use defaults
+            break :blk config_mod.Config{};
+        };
+        config = convertFileConfig(file_config);
+        if (file_config.config_file) |path| {
+            config_source = try allocator.dupe(u8, path);
+        }
+    }
+
+    // Second pass: Apply CLI overrides (highest priority)
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--help")) {
             printUsage();
             std.process.exit(0);
+        } else if (std.mem.eql(u8, arg, "--config")) {
+            // Already handled in first pass, just skip the value
+            _ = args.next();
         } else if (std.mem.eql(u8, arg, "--model")) {
             const value = args.next() orelse {
                 std.log.err("Expected value after --model", .{});
                 return error.MissingArgument;
             };
-            config.model_name = value;
+            config.model_name = try allocator.dupe(u8, value);
         } else if (std.mem.eql(u8, arg, "--port")) {
             const value = args.next() orelse {
                 std.log.err("Expected value after --port", .{});
@@ -142,7 +209,6 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
             }
         } else if (std.mem.eql(u8, arg, "--turboquant")) {
             config.turboquant_enabled = true;
-            std.log.info("TurboQuant KV cache compression enabled", .{});
         } else if (std.mem.eql(u8, arg, "--turboquant-bits")) {
             const value = args.next() orelse {
                 std.log.err("Expected value after --turboquant-bits", .{});
@@ -170,7 +236,6 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
                 return error.MissingArgument;
             };
             config.draft_model = try allocator.dupe(u8, value);
-            std.log.info("Draft model specified: {s}", .{value});
         } else if (std.mem.eql(u8, arg, "--speculation-depth")) {
             const value = args.next() orelse {
                 std.log.err("Expected value after --speculation-depth", .{});
@@ -181,10 +246,8 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
                 std.log.err("Speculation depth must be 1-8, got {d}", .{config.speculation_depth});
                 return error.InvalidSpeculationDepth;
             }
-            std.log.info("Speculation depth set to {d}", .{config.speculation_depth});
         } else if (std.mem.eql(u8, arg, "--no-speculation")) {
             config.no_speculation = true;
-            std.log.info("Speculative decoding disabled", .{});
         }
     }
 
@@ -200,7 +263,49 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
         }
     }
 
+    // Log configuration source
+    std.log.info("Configuration loaded from: {s}", .{config_source});
+    if (config.port != 8080) {
+        std.log.info("Port overridden to {d}", .{config.port});
+    }
+    if (config.turboquant_enabled) {
+        std.log.info("TurboQuant KV cache compression enabled ({d} bits, adaptive: {d})", .{
+            config.turboquant_bits,
+            config.turboquant_adaptive,
+        });
+    }
+    if (config.draft_model) |draft| {
+        std.log.info("Speculative decoding enabled with draft model: {s} (depth: {d})", .{
+            draft,
+            config.speculation_depth,
+        });
+    } else if (!config.no_speculation) {
+        std.log.info("Speculative decoding enabled (auto-select draft model, depth: {d})", .{
+            config.speculation_depth,
+        });
+    }
+
     return config;
+}
+
+/// Convert from config_mod.Config to main.Config
+fn convertFileConfig(file_config: config_mod.Config) Config {
+    return .{
+        .model_name = if (file_config.model) |m| m else null,
+        .model_path = null, // Will be built from model_name
+        .port = file_config.port,
+        .host = file_config.host,
+        .timeout_seconds = file_config.timeout_seconds,
+        .cache_dir = file_config.cache_dir,
+        .cache_size_gb = file_config.cache_size_gb,
+        .cache_enabled = file_config.cache_enabled,
+        .turboquant_enabled = file_config.turboquant_enabled,
+        .turboquant_bits = file_config.turboquant_bits,
+        .turboquant_adaptive = file_config.turboquant_adaptive,
+        .draft_model = file_config.draft_model,
+        .speculation_depth = file_config.speculation_depth,
+        .no_speculation = file_config.no_speculation,
+    };
 }
 
 fn expandHomeDir(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
