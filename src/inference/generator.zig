@@ -247,6 +247,17 @@ pub const GenerationState = struct {
         // Sample from the distribution
         var next_token: Token = 0;
 
+        // Capture logprobs if enabled (before any sampling modifications)
+        var logprob_entry: ?LogprobEntry = null;
+        if (self.options.logprobs_enabled) {
+            // Get raw logits data for captureLogprobs
+            try mlx.arrayEval(last_logits);
+            const logits_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(last_logits)));
+            const vocab_size = @as(usize, @intCast(mlx.arrayDim(last_logits, 1)));
+
+            logprob_entry = try self.captureLogprobs(logits_data, vocab_size);
+        }
+
         if (self.options.temperature == 0) {
             // D-18: Greedy selection — argmax on raw logits (before temperature/softmax)
             var next_token_arr = mlx.arrayNew();
@@ -468,6 +479,29 @@ pub const GenerationState = struct {
                     break;
                 }
             }
+        }
+
+        // Update and store logprob entry if enabled
+        if (logprob_entry) |entry| {
+            var updated_entry = entry;
+            updated_entry.token = next_token;
+            // Find the logprob for the selected token from top_logprobs
+            for (entry.top_logprobs) |top| {
+                if (top.token == next_token) {
+                    updated_entry.logprob = top.logprob;
+                    break;
+                }
+            }
+            // Try to decode token string if tokenizer available
+            if (self.tokenizer) |tok| {
+                const single_tok = [_]u32{next_token};
+                if (tok.decode(&single_tok)) |token_str| {
+                    updated_entry.token_str = token_str;
+                } else |_| {
+                    updated_entry.token_str = &[_]u8{};
+                }
+            }
+            try self.logprobs_buffer.append(self.allocator, updated_entry);
         }
 
         // Stop sequence detection (API-01)
