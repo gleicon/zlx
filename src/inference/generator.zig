@@ -9,12 +9,61 @@ const qwen = @import("../mlx.zig/src/qwen.zig");
 /// Token type for generation
 pub const Token = u32;
 
+/// Single token logprob entry for top alternatives
+pub const TopLogprob = struct {
+    token: u32,
+    token_str: []const u8,
+    logprob: f32,
+};
+
+/// Logprob data for a single position
+pub const LogprobEntry = struct {
+    token: u32,
+    token_str: []const u8,
+    logprob: f32,
+    top_logprobs: []const TopLogprob,
+
+    pub fn deinit(self: *LogprobEntry, allocator: std.mem.Allocator) void {
+        allocator.free(self.token_str);
+        for (self.top_logprobs) |tl| {
+            allocator.free(tl.token_str);
+        }
+        allocator.free(self.top_logprobs);
+    }
+};
+
+/// Stop reason for generation
+pub const StopReason = enum {
+    eos,
+    length,
+    stop,
+    timeout,
+};
+
 /// Generation options
 pub const GenerationOptions = struct {
     max_tokens: usize = 256,
     temperature: f32 = 0.7,
     top_p: f32 = 0.9,
     stop_on_eos: bool = true,
+    /// Optional seed for deterministic sampling (API-05)
+    seed: ?u32 = null,
+    /// Stop sequences to halt generation (API-01)
+    stop_sequences: []const []const u8 = &[_][]const u8{},
+    /// Repetition penalty, 1.0 = disabled (API-03)
+    repetition_penalty: f32 = 1.0,
+    /// Presence penalty, -2.0 to 2.0 (API-03)
+    presence_penalty: f32 = 0.0,
+    /// Frequency penalty, -2.0 to 2.0 (API-03)
+    frequency_penalty: f32 = 0.0,
+    /// Top-k filtering, 0 = disabled (API-03)
+    top_k: u32 = 0,
+    /// Minimum probability for nucleus sampling (API-03)
+    min_p: f32 = 0.0,
+    /// Enable logprobs tracking (API-02)
+    logprobs_enabled: bool = false,
+    /// Logit bias mapping (token_id -> bias value)
+    logit_bias: std.AutoHashMap(u32, f32) = undefined,
 };
 
 /// State machine for token generation
@@ -32,6 +81,7 @@ pub const GenerationState = struct {
     current_tokens: std.ArrayList(u32),
     is_complete: bool = false,
     eos_token_ids: []const u32,
+    stop_reason: StopReason = .eos,
 
     // MLX arrays (managed)
     toks_array: mlx.Array,
@@ -40,6 +90,12 @@ pub const GenerationState = struct {
 
     // Generation parameters
     options: GenerationOptions,
+
+    // Logprobs tracking (API-02)
+    logprobs_buffer: std.ArrayList(LogprobEntry),
+
+    // Tokenizer reference for decoding tokens to strings
+    tokenizer: ?*const anyopaque = null,
 
     /// Initialize generation state with a transformer and initial tokens
     pub fn init(
@@ -76,6 +132,7 @@ pub const GenerationState = struct {
             .logits_array = mlx.arrayNew(),
             .mask_array = mlx.arrayNew(),
             .options = options,
+            .logprobs_buffer = std.ArrayList(LogprobEntry).init(allocator),
         };
     }
 

@@ -153,6 +153,14 @@ pub const ChatCompletionRequest = struct {
     presence_penalty: ?JsonFloat = null,
     /// Frequency penalty -2.0 to 2.0
     frequency_penalty: ?JsonFloat = null,
+    /// Top-k sampling (0 = disabled, API-03)
+    top_k: ?u32 = null,
+    /// Min-p sampling parameter (API-03)
+    min_p: ?JsonFloat = null,
+    /// Repetition penalty (API-03)
+    repetition_penalty: ?JsonFloat = null,
+    /// Logit bias map (API-03)
+    logit_bias: ?std.json.Value = null,
 
     // Fields that OpenCode sends but we don't use (defined to avoid parse errors)
     /// Tools for function calling (not implemented, ignored)
@@ -178,6 +186,46 @@ pub const ChatCompletionRequest = struct {
     /// Get effective top_p
     pub fn getTopP(self: ChatCompletionRequest) f32 {
         return if (self.top_p) |tp| @floatCast(tp.value) else 0.9;
+    }
+
+    /// Get effective top_k (0 = disabled)
+    pub fn getTopK(self: ChatCompletionRequest) u32 {
+        return self.top_k orelse 0;
+    }
+
+    /// Get effective min_p
+    pub fn getMinP(self: ChatCompletionRequest) f32 {
+        return if (self.min_p) |mp| @floatCast(mp.value) else 0.0;
+    }
+
+    /// Get effective repetition_penalty (1.0 = disabled)
+    pub fn getRepetitionPenalty(self: ChatCompletionRequest) f32 {
+        return if (self.repetition_penalty) |rp| @floatCast(rp.value) else 1.0;
+    }
+
+    /// Parse logit_bias from JSON value into hashmap
+    /// Caller owns the returned hashmap
+    pub fn getLogitBias(self: ChatCompletionRequest, allocator: std.mem.Allocator) !std.AutoHashMap(u32, f32) {
+        var map = std.AutoHashMap(u32, f32).init(allocator);
+        errdefer map.deinit();
+
+        if (self.logit_bias) |bias_value| {
+            if (bias_value == .object) {
+                var it = bias_value.object.iterator();
+                while (it.next()) |entry| {
+                    const token_id = try std.fmt.parseInt(u32, entry.key_ptr.*, 10);
+                    const bias_val: f32 = switch (entry.value_ptr.*) {
+                        .number => |num_str| try std.fmt.parseFloat(f32, num_str),
+                        .integer => |int_val| @floatFromInt(int_val),
+                        .float => |float_val| @floatCast(float_val),
+                        else => 0.0,
+                    };
+                    try map.put(token_id, bias_val);
+                }
+            }
+        }
+
+        return map;
     }
 };
 
