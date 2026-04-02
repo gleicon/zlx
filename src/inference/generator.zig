@@ -5,6 +5,7 @@
 const std = @import("std");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
+const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
 
 /// Token type for generation
 pub const Token = u32;
@@ -133,7 +134,7 @@ pub const GenerationState = struct {
     logprobs_buffer: std.ArrayList(LogprobEntry),
 
     // Tokenizer reference for decoding tokens to strings
-    tokenizer: ?*const anyopaque = null,
+    tokenizer: ?*mlx_tokenizer.Tokenizer = null,
 
     // Stop sequence detection (API-01)
     /// Buffer to accumulate decoded text for stop sequence checking
@@ -150,6 +151,7 @@ pub const GenerationState = struct {
         initial_tokens: []const u32,
         eos_token_ids: []const u32,
         options: GenerationOptions,
+        tokenizer: ?*mlx_tokenizer.Tokenizer,
     ) !Self {
         // Initialize MLX arrays
         const toks_array = blk: {
@@ -182,6 +184,7 @@ pub const GenerationState = struct {
             .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
             .decoded_text_buffer = .empty,
             .tokens_since_decode = .empty,
+            .tokenizer = tokenizer,
         };
     }
 
@@ -210,6 +213,14 @@ pub const GenerationState = struct {
         }
 
         self.current_tokens.deinit(self.allocator);
+    }
+
+    /// Decode tokens to text using the tokenizer
+    fn decodeTokens(self: *Self, tokens: []const u32) ![]const u8 {
+        if (self.tokenizer) |tok| {
+            return try tok.decode(tokens);
+        }
+        return &[_]u8{}; // Return empty if no tokenizer
     }
 
     /// Generate the next token. Returns null when generation is complete.
@@ -460,26 +471,33 @@ pub const GenerationState = struct {
         }
 
         // Stop sequence detection (API-01)
-        // Buffer the token for later decode+check (we decode periodically for efficiency)
+        // Accumulate tokens for potential decode+check
         try self.tokens_since_decode.append(self.allocator, next_token);
 
-        // Check stop sequences periodically (every token for correctness, or batch for efficiency)
-        // For MVP: decode and check every 1-3 tokens, or when we have enough for potential match
-        const should_check = self.tokens_since_decode.items.len >= 1; // Check every token for correctness
+        // Decode and check stop sequences if any are configured
+        if (self.options.stop_sequences.len > 0 and self.tokenizer != null) {
+            // Decode accumulated tokens to text
+            const decoded_chunk = try self.decodeTokens(self.tokens_since_decode.items);
+            defer self.allocator.free(decoded_chunk);
 
-        if (should_check and self.options.stop_sequences.len > 0) {
-            // TODO: Decode tokens_since_decode and append to decoded_text_buffer
-            // This requires tokenizer integration to decode tokens to text
-            // Once decoded and appended to decoded_text_buffer, call:
-            // if (self.checkStopSequence()) {
-            //     self.is_complete = true;
-            //     self.stop_reason = .stop;
-            //     self.truncateStopSequence();
-            //     return null;
-            // }
+            // Append to decoded text buffer
+            try self.decoded_text_buffer.appendSlice(self.allocator, decoded_chunk);
 
-            // Placeholder: suppress unused field warning
-            _ = self.tokens_since_decode.items.len;
+            // Clear tokens since they've been decoded
+            self.tokens_since_decode.clearRetainingCapacity();
+
+            // Check if decoded text ends with any stop sequence
+            if (self.checkStopSequence()) {
+                // Match found — halt generation
+                self.is_complete = true;
+                self.stop_reason = .stop;
+                self.truncateStopSequence();
+
+                // Log for debugging
+                std.log.debug("Stop sequence matched, halting generation", .{});
+
+                return null;
+            }
         }
 
         // Prepare tokens array for next iteration: [1, 1] with just the new token
@@ -551,7 +569,7 @@ pub const GenerationState = struct {
                 const end_slice = text[text.len - stop_seq.len ..];
                 if (std.mem.eql(u8, end_slice, stop_seq)) {
                     // Remove the stop sequence from the buffer
-                    self.decoded_text_buffer.shrinkAndFree(text.len - stop_seq.len);
+                    self.decoded_text_buffer.shrinkAndFree(self.allocator, text.len - stop_seq.len);
                     return;
                 }
             }
@@ -716,8 +734,9 @@ pub fn generateAll(
     initial_tokens: []const u32,
     eos_token_ids: []const u32,
     options: GenerationOptions,
+    tokenizer: ?*mlx_tokenizer.Tokenizer,
 ) ![]const u32 {
-    var state = try GenerationState.init(allocator, transformer, initial_tokens, eos_token_ids, options);
+    var state = try GenerationState.init(allocator, transformer, initial_tokens, eos_token_ids, options, tokenizer);
     defer state.deinit();
 
     var result = std.ArrayList(u32).init(allocator);
@@ -752,7 +771,7 @@ test "GenerationState basic test" {
         .stop_on_eos = true,
     };
 
-    var state = try GenerationState.init(allocator, &transformer, &initial_tokens, transformer.eos_token_ids, options);
+    var state = try GenerationState.init(allocator, &transformer, &initial_tokens, transformer.eos_token_ids, options, null);
     defer state.deinit();
 
     // Generate a few tokens

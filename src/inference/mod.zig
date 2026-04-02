@@ -97,6 +97,7 @@ pub const InferenceContext = struct {
             input_tokens,
             self.getEosTokenIds(),
             adjusted_options,
+            &self.tokenizer.?, // Pass tokenizer for stop sequence detection
         );
         defer self.allocator.free(output_tokens);
         defer self.allocator.free(input_tokens);
@@ -153,6 +154,7 @@ pub const InferenceContext = struct {
             input_tokens,
             self.getEosTokenIds(),
             gen_options,
+            &self.tokenizer.?, // Pass tokenizer for stop sequence detection
         );
         defer state.deinit();
 
@@ -270,6 +272,7 @@ pub fn generateWithLogprobs(
         input_tokens,
         eos_token_ids,
         adjusted_options,
+        tokenizer, // Pass tokenizer for stop sequence detection
     );
     defer state.deinit();
 
