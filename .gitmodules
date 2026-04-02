@@ -1,3 +1,6 @@
 [submodule "src/mlx.zig"]
 	path = src/mlx.zig
 	url = https://github.com/jaco-bro/MLX.zig.git
+[submodule "deps/turboquant"]
+	path = deps/turboquant
+	url = https://github.com/botirk38/turboquant.git

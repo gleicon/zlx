@@ -26,6 +26,46 @@ pub fn build(b: *std.Build) !void {
     });
     exe.root_module.addImport("httpz", httpz_dep.module("httpz"));
 
+    // Wire turboquant via git submodule (PHASE-07-02)
+    // Source is in nested turboquant/ directory
+    const turboquant_mod = b.createModule(.{
+        .root_source_file = b.path("deps/turboquant/turboquant/src/turboquant.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // Add internal dependencies that turboquant expects
+    turboquant_mod.addImport("matrix", b.createModule(.{
+        .root_source_file = b.path("deps/turboquant/turboquant/src/matrix.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    turboquant_mod.addImport("polar", b.createModule(.{
+        .root_source_file = b.path("deps/turboquant/turboquant/src/polar.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    turboquant_mod.addImport("qjl", b.createModule(.{
+        .root_source_file = b.path("deps/turboquant/turboquant/src/qjl.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    turboquant_mod.addImport("format", b.createModule(.{
+        .root_source_file = b.path("deps/turboquant/turboquant/src/format.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    turboquant_mod.addImport("rotation", b.createModule(.{
+        .root_source_file = b.path("deps/turboquant/turboquant/src/rotation.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    turboquant_mod.addImport("math", b.createModule(.{
+        .root_source_file = b.path("deps/turboquant/turboquant/src/math.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    exe.root_module.addImport("turboquant", turboquant_mod);
+
     // Wire MLX-C + frameworks + pcre2 (BUILD-02)
     configureExecutable(exe, b, deps);
 
@@ -90,6 +130,22 @@ pub fn build(b: *std.Build) !void {
 
     const run_cache_test = b.addRunArtifact(cache_test);
     test_step.dependOn(&run_cache_test.step);
+
+    // Test turboquant integration (PHASE-07-02)
+    const turboquant_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/turboquant_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    turboquant_test_mod.addImport("turboquant", turboquant_mod);
+
+    const turboquant_test = b.addTest(.{
+        .name = "turboquant_test",
+        .root_module = turboquant_test_mod,
+    });
+
+    const run_turboquant_test = b.addRunArtifact(turboquant_test);
+    test_step.dependOn(&run_turboquant_test.step);
 
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
