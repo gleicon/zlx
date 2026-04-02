@@ -415,7 +415,7 @@ pub const ModelManager = struct {
             // Poll for completion (don't block the worker thread on mutex)
             var wait_count: u32 = 0;
             while (manager.active_generations.load(.acquire) > 0) {
-                std.time.sleep(100 * std.time.ns_per_ms); // 100ms polling
+                std.Thread.sleep(100 * std.time.ns_per_ms); // 100ms polling
                 wait_count += 1;
 
                 // Check cancellation during wait

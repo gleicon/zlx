@@ -141,18 +141,22 @@ pub const ModelRegistry = struct {
                     continue;
                 }
 
+                // Duplicate the model name since entry.name is temporary
+                const model_name = try self.allocator.dupe(u8, entry.name);
+                // NOTE: NOT freeing - testing if StringHashMap copies the key
+
                 // Add to registry
                 const metadata = try ModelMetadata.init(
                     self.allocator,
-                    entry.name,
+                    model_name,
                     model_path,
                     config,
                     size_bytes,
                     memory_mb,
                 );
 
-                try self.models.put(entry.name, metadata);
-                std.log.info("Found model: {s} ({d} MB estimated)", .{ entry.name, memory_mb });
+                try self.models.put(model_name, metadata);
+                std.log.info("Found model: {s} ({d} MB estimated)", .{ model_name, memory_mb });
             } else |err| {
                 std.log.debug("Skipping {s}: {s}", .{ entry.name, @errorName(err) });
             }

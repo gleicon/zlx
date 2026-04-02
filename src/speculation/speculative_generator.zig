@@ -291,7 +291,7 @@ pub const SpeculativeGenerator = struct {
             .draft_cache = draft_cache orelse target_cache, // Use target cache if no draft
             .speculation_depth = depth,
             .options = options,
-            .current_tokens = std.ArrayList(u32).init(allocator),
+            .current_tokens = try std.ArrayList(u32).initCapacity(allocator, 0),
             .draft_tokens_buffer = undefined,
             .metrics = SpeculativeMetrics.init(),
         };
@@ -494,7 +494,7 @@ pub const SpeculativeGenerator = struct {
         // Create causal mask
         var mask_array = mlx.arrayNew();
         defer mlx.arrayFree(mask_array);
-        try mlx.createCausalMask(&mask_array, total_len, self.target_cache.offset, self.target_transformer.mlx_config.dtype, self.target_transformer.mlx_config.stream);
+        try mlx.createCausalMask(&mask_array, @intCast(total_len), self.target_cache.offset, self.target_transformer.mlx_config.dtype, self.target_transformer.mlx_config.stream);
 
         // Run target model
         var logits_array = mlx.arrayNew();
@@ -519,7 +519,7 @@ pub const SpeculativeGenerator = struct {
             // Take logits[:, pos, :]
             var pos_logits_array = mlx.arrayNew();
             defer mlx.arrayFree(pos_logits_array);
-            try mlx.take(&pos_logits_array, logits_array, mlx.int(@intCast(pos)), 1, self.target_transformer.mlx_config.stream);
+            try mlx.take(&pos_logits_array, logits_array, mlx.int(@as(c_int, @intCast(pos))), 1, self.target_transformer.mlx_config.stream);
 
             // Evaluate and copy data
             try mlx.arrayEval(pos_logits_array);

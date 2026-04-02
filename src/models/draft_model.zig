@@ -8,7 +8,7 @@ const mlx = @import("../mlx.zig/src/mlx.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
 const generator = @import("../inference/generator.zig");
 const registry = @import("../models/registry.zig");
-const draft_selector = @import("draft_selector.zig");
+const draft_selector = @import("../speculation/draft_selector.zig");
 
 /// DraftModel wraps a loaded draft model with its resources
 pub const DraftModel = struct {
