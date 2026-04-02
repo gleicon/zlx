@@ -243,17 +243,163 @@ pub const GenerationState = struct {
             try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
             try mlx.item(&next_token, next_token_arr);
         } else {
-            // Apply temperature scaling
+            // D-13, D-16, D-17: Complete sampling pipeline
+            // Pipeline: logits → logit_bias → penalties → top_k → min_p → temperature → softmax → sample
+
+            // Extract logits data from MLX array for CPU-side modifications
+            const vocab_size_c = mlx.arrayDim(last_logits, 1);
+            const vocab_size: usize = @intCast(vocab_size_c);
+
+            // Get raw logits data pointer
+            try mlx.arrayEval(last_logits);
+            const logits_ptr: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(last_logits)));
+
+            // Check if any sampling parameters are active
+            const has_logit_bias = self.options.logit_bias.count() > 0;
+            const has_penalties = self.options.presence_penalty != 0.0 or
+                self.options.frequency_penalty != 0.0 or
+                self.options.repetition_penalty != 1.0;
+            const has_top_k = self.options.top_k > 0 and self.options.top_k < vocab_size;
+            const has_min_p = self.options.min_p > 0.0 and self.options.min_p <= 1.0;
+            const needs_modifications = has_logit_bias or has_penalties or has_top_k or has_min_p;
+
+            var modified_logits: mlx.Array = undefined;
+            var modified_logits_owned = false;
+
+            if (needs_modifications) {
+                // Create mutable copy of logits data for modifications
+                const logits_copy = try self.allocator.alloc(f32, vocab_size);
+                defer self.allocator.free(logits_copy);
+
+                // Copy logits data
+                for (0..@intCast(vocab_size)) |i| {
+                    logits_copy[i] = logits_ptr[i];
+                }
+
+                // D-17: Apply logit_bias first (priority)
+                if (has_logit_bias) {
+                    std.log.debug("Applying logit_bias to {d} tokens", .{self.options.logit_bias.count()});
+                    var bias_iter = self.options.logit_bias.iterator();
+                    while (bias_iter.next()) |entry| {
+                        const token_id = entry.key_ptr.*;
+                        const bias = entry.value_ptr.*;
+                        if (token_id < vocab_size) {
+                            logits_copy[token_id] += bias;
+                        }
+                    }
+                }
+
+                // D-16: Apply penalties
+                if (has_penalties) {
+                    std.log.debug("Applying penalties: presence={d}, frequency={d}, repetition={d}", .{
+                        self.options.presence_penalty,
+                        self.options.frequency_penalty,
+                        self.options.repetition_penalty,
+                    });
+                    // Apply penalties directly on the slice
+                    if (self.current_tokens.items.len > 0) {
+                        // Count token frequencies in current sequence
+                        var freq_map = std.AutoHashMap(u32, u32).init(self.allocator);
+                        defer freq_map.deinit();
+
+                        for (self.current_tokens.items) |token| {
+                            const count = freq_map.get(token) orelse 0;
+                            try freq_map.put(token, count + 1);
+                        }
+
+                        // Apply penalties
+                        var iter = freq_map.iterator();
+                        while (iter.next()) |entry| {
+                            const token_id = entry.key_ptr.*;
+                            const count = entry.value_ptr.*;
+
+                            if (token_id >= vocab_size) continue;
+
+                            // Presence penalty: applied once if token appears at all
+                            if (self.options.presence_penalty != 0.0 and count > 0) {
+                                logits_copy[token_id] -= self.options.presence_penalty;
+                            }
+
+                            // Frequency penalty: applied proportional to count
+                            if (self.options.frequency_penalty != 0.0) {
+                                logits_copy[token_id] -= self.options.frequency_penalty * @as(f32, @floatFromInt(count));
+                            }
+
+                            // Repetition penalty: multiplicative on logits
+                            if (self.options.repetition_penalty > 1.0 and count > 0) {
+                                if (logits_copy[token_id] > 0) {
+                                    logits_copy[token_id] /= self.options.repetition_penalty;
+                                } else {
+                                    logits_copy[token_id] *= self.options.repetition_penalty;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // D-13: Apply top_k filtering
+                if (has_top_k) {
+                    std.log.debug("Applying top_k={d} filtering", .{self.options.top_k});
+                    const k = self.options.top_k;
+
+                    // Find k-th largest logit using selection algorithm
+                    const sorted_logits = try self.allocator.dupe(f32, logits_copy);
+                    defer self.allocator.free(sorted_logits);
+
+                    std.mem.sort(f32, sorted_logits, {}, std.sort.desc(f32));
+                    const kth_logit = sorted_logits[k - 1];
+
+                    // Set all logits below kth to -infinity
+                    for (0..vocab_size) |i| {
+                        if (logits_copy[i] < kth_logit) {
+                            logits_copy[i] = -std.math.inf(f32);
+                        }
+                    }
+                }
+
+                // D-13: Apply min_p filtering
+                if (has_min_p) {
+                    std.log.debug("Applying min_p={d} filtering", .{self.options.min_p});
+
+                    // Find max logit
+                    var max_logit: f32 = -std.math.inf(f32);
+                    for (0..vocab_size) |i| {
+                        if (logits_copy[i] > max_logit) {
+                            max_logit = logits_copy[i];
+                        }
+                    }
+
+                    // Compute min logit threshold
+                    // min_p threshold in probability space: p >= min_p * p_max
+                    // In log space: logit >= max_logit + ln(min_p)
+                    const min_logit_threshold = max_logit + @log(self.options.min_p);
+
+                    // Filter tokens below threshold
+                    for (0..vocab_size) |i| {
+                        if (logits_copy[i] < min_logit_threshold) {
+                            logits_copy[i] = -std.math.inf(f32);
+                        }
+                    }
+                }
+
+                // Create new MLX array from modified logits
+                modified_logits = try mlx.arrayNewData(logits_copy.ptr, .{ 1, @as(c_int, @intCast(vocab_size)) }, mlx.FLOAT32);
+                modified_logits_owned = true;
+            } else {
+                // No modifications needed, use original logits
+                try mlx.arraySet(&modified_logits, last_logits);
+            }
+            defer if (modified_logits_owned) mlx.arrayFree(modified_logits);
+
+            // Apply temperature scaling to modified logits
             var scaled_logits = mlx.arrayNew();
             defer mlx.arrayFree(scaled_logits);
 
             if (self.options.temperature != 1.0) {
-                // Divide logits by temperature: logits / temperature
                 const temp_scalar = mlx.float(self.options.temperature);
-                try mlx.divide(&scaled_logits, last_logits, temp_scalar, transformer.mlx_config.stream);
+                try mlx.divide(&scaled_logits, modified_logits, temp_scalar, transformer.mlx_config.stream);
             } else {
-                // Copy logits
-                try mlx.arraySet(&scaled_logits, last_logits);
+                try mlx.arraySet(&scaled_logits, modified_logits);
             }
 
             // Apply softmax to get probabilities
@@ -267,7 +413,6 @@ pub const GenerationState = struct {
 
             // Get probability data
             const probs_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(probs)));
-            const vocab_size = mlx.arrayDim(probs, 1);
 
             // Sample from the distribution using seeded RNG if available (API-05)
             const random_value = if (self.rng) |*rng| rng.random() else std.crypto.random.float(f32);
@@ -449,7 +594,7 @@ pub const GenerationState = struct {
         for (token_logits) |tl| {
             sum_exp += std.math.exp(tl[1] - max_logit);
         }
-        const log_sum_exp = max_logit + std.math.log(sum_exp);
+        const log_sum_exp = max_logit + @log(sum_exp);
 
         for (0..top_k) |i| {
             const token_id = token_logits[i][0];
