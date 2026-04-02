@@ -12,6 +12,14 @@ const inference = @import("../inference/mod.zig");
 /// Global inference context - initialized at server startup
 pub var global_context: ?*inference.InferenceContext = null;
 
+/// Global timeout configuration (default 60s per D-32)
+pub var request_timeout_seconds: u32 = 60;
+
+/// Get timeout in milliseconds
+fn getTimeoutMs() u64 {
+    return @as(u64, request_timeout_seconds) * 1000;
+}
+
 /// CORS headers for all responses
 const CORS_HEADERS = &[_]struct { []const u8, []const u8 }{
     .{ "Access-Control-Allow-Origin", "*" },
@@ -152,14 +160,55 @@ fn handleStreamingRequest(req: anytype, res: anytype, request: types.ChatComplet
 
 /// Handle non-streaming chat completion request
 fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest, ctx: *inference.InferenceContext, request_id: []const u8) !void {
-    // Generate response
-    const response_json = streaming.generateNonStreamingResponse(
+    // Build prompt from messages
+    const prompt = try types.buildPromptFromMessages(ctx.allocator, request.messages);
+    defer ctx.allocator.free(prompt);
+
+    // Create generation options
+    const gen_options = inference.GenerationOptions{
+        .max_tokens = request.getMaxTokens(),
+        .temperature = request.getTemperature(),
+        .top_p = request.getTopP(),
+        .stop_on_eos = true,
+        .seed = if (request.seed) |s| @intCast(s) else null,
+        .top_k = request.getTopK(),
+        .min_p = request.getMinP(),
+        .presence_penalty = request.getPresencePenalty(),
+        .frequency_penalty = request.getFrequencyPenalty(),
+        .repetition_penalty = request.getRepetitionPenalty(),
+        .logprobs_enabled = request.logprobs orelse false,
+    };
+
+    // Generate with timeout
+    const timeout_ms = getTimeoutMs();
+    const timeout_result = ctx.generateWithTimeout(prompt, gen_options, timeout_ms) catch |err| {
+        std.log.err("[{s}] Generation failed: {s}", .{ request_id, @errorName(err) });
+        try sendServerError(res, "Generation failed", request_id);
+        return;
+    };
+    defer {
+        ctx.allocator.free(timeout_result.result.text);
+        if (timeout_result.result.logprobs) |lp| {
+            for (lp) |*entry| entry.deinit(ctx.allocator);
+            ctx.allocator.free(lp);
+        }
+    }
+
+    // Check if timed out and return 408 if so
+    if (timeout_result.timed_out) {
+        std.log.warn("[{s}] Request timed out", .{request_id});
+        try sendTimeoutError(res, "Request exceeded timeout limit", request_id);
+        return;
+    }
+
+    // Build and send the response
+    const response_json = buildChatCompletionResponse(
         ctx.allocator,
         request,
-        ctx,
+        timeout_result.result,
     ) catch |err| {
-        std.log.err("[{s}] Generation error: {s}", .{ request_id, @errorName(err) });
-        try sendServerError(res, "Generation failed", request_id);
+        std.log.err("[{s}] Failed to build response: {s}", .{ request_id, @errorName(err) });
+        try sendServerError(res, "Failed to build response", request_id);
         return;
     };
     defer ctx.allocator.free(response_json);
@@ -309,6 +358,73 @@ fn setCorsHeaders(res: anytype) void {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
+/// Build chat completion response JSON from generation result
+fn buildChatCompletionResponse(
+    allocator: std.mem.Allocator,
+    request: types.ChatCompletionRequest,
+    result: inference.GenerationResult,
+) ![]const u8 {
+    const completion_id = try types.generateCompletionId(allocator);
+    defer allocator.free(completion_id);
+
+    const created_timestamp = std.time.timestamp();
+
+    // Determine finish_reason
+    const finish_reason = switch (result.stop_reason) {
+        .eos => "stop",
+        .length => "length",
+        .stop => "stop",
+        .timeout => "timeout",
+    };
+
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(allocator);
+
+    const writer = json.writer(allocator);
+
+    try writer.writeAll("{\"id\":\"");
+    try writeJsonString(writer, completion_id);
+    try writer.print("\",\"object\":\"chat.completion\",\"created\":{d},\"model\":\"", .{created_timestamp});
+    try writeJsonString(writer, request.model);
+    try writer.writeAll("\",\"choices\":[");
+
+    // Single choice
+    try writer.writeAll("{\"index\":0,\"message\":{");
+    try writer.writeAll("\"role\":\"assistant\",\"content\":\"");
+    try writeJsonString(writer, result.text);
+    try writer.writeAll("\"},\"finish_reason\":\"");
+    try writer.writeAll(finish_reason);
+    try writer.writeAll("\"}");
+
+    try writer.writeAll("],\"usage\":");
+
+    // Usage stats
+    try writer.print("{{\"prompt_tokens\":{d},\"completion_tokens\":{d},\"total_tokens\":{d}}}}}", .{
+        result.prompt_tokens,
+        result.completion_tokens,
+        result.prompt_tokens + result.completion_tokens,
+    });
+
+    return json.toOwnedSlice(allocator);
+}
+
+/// Write a string with JSON escaping
+fn writeJsonString(writer: anytype, str: []const u8) !void {
+    for (str) |c| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            0x08 => try writer.writeAll("\\b"), // backspace
+            0x0C => try writer.writeAll("\\f"), // form feed
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x0B, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F => try writer.print("\\u{x:0>4}", .{c}),
+            else => try writer.writeByte(c),
+        }
+    }
 }
 
 /// Initialize global inference context

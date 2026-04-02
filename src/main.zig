@@ -16,14 +16,15 @@ const USAGE =
     "  --model <NAME>          Model name or path (required)\n" ++
     "  --port <PORT>           Server port (default: 8080)\n" ++
     "  --host <HOST>           Bind address (default: 127.0.0.1)\n" ++
+    "  --timeout <SECONDS>     Request timeout in seconds (default: 60)\n" ++
     "  --help                  Show this help message\n" ++
     "\n" ++
     "Examples:\n" ++
     "  zlx --model qwen2.5-coder-1.5b\n" ++
-    "  zlx --model ./models/my-model --port 9000\n" ++
+    "  zlx --model ./models/my-model --port 9000 --timeout 120\n" ++
     "\n" ++
     "The server exposes OpenAI-compatible endpoints:\n" ++
-    "  POST /v1/chat/completions    Chat completions\n" ++
+    "  POST /v1/chat_completions    Chat completions\n" ++
     "  GET  /v1/models              List available models\n" ++
     "  GET  /v1/health              Health check\n" ++
     "\n";
@@ -33,6 +34,7 @@ const Config = struct {
     model_path: ?[]const u8 = null,
     port: u16 = 8080,
     host: []const u8 = "127.0.0.1",
+    timeout_seconds: u32 = 60, // Default 60s per D-32
 };
 
 fn printUsage() void {
@@ -69,6 +71,16 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
                 return error.MissingArgument;
             };
             config.host = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, arg, "--timeout")) { // Per D-37
+            const value = args.next() orelse {
+                std.log.err("Expected value after --timeout", .{});
+                return error.MissingArgument;
+            };
+            config.timeout_seconds = try std.fmt.parseInt(u32, value, 10);
+            if (config.timeout_seconds == 0 or config.timeout_seconds > 3600) {
+                std.log.err("Timeout must be between 1 and 3600 seconds", .{});
+                return error.InvalidTimeout;
+            }
         }
     }
 
@@ -150,6 +162,7 @@ pub fn main() !void {
     const server_config = api.ServerConfig{
         .port = config.port,
         .address = config.host,
+        .timeout_seconds = config.timeout_seconds,
     };
 
     try api.runServer(allocator, server_config);

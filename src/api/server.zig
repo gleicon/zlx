@@ -16,6 +16,8 @@ pub const ServerConfig = struct {
     timeout_ms: u32 = 0,
     /// Maximum request body size in bytes
     max_body_size: usize = 10 * 1024 * 1024, // 10MB
+    /// Request timeout in seconds (default 60s per D-32)
+    timeout_seconds: u32 = 60,
 };
 
 /// Global server instance for cleanup
