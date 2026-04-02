@@ -13,6 +13,7 @@ const prompt_cache = @import("cache/prompt_cache.zig");
 const compression = @import("compression/mod.zig");
 const speculation = @import("speculation/mod.zig");
 const config_mod = @import("config.zig");
+const download = @import("download/mod.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -41,6 +42,8 @@ const USAGE =
     "  --draft-model <NAME>   Draft model for speculative decoding (auto-select if not set)\n" ++
     "  --speculation-depth N   Tokens to speculate ahead: 1-8 (default: 4)\n" ++
     "  --no-speculation        Disable speculative decoding\n" ++
+    "  --list-models           List available model shortcuts\n" ++
+    "  --configure-opencode    Auto-configure OpenCode to use this server\n" ++
     "  --help                  Show this help message\n" ++
     "\n" ++
     "Environment Variables:\n" ++
@@ -58,6 +61,13 @@ const USAGE =
     "  zlx --model qwen2.5-coder --cache-size 5 --cache-dir ~/.cache/zlx-small\n" ++
     "  zlx --model qwen2.5-coder --turboquant --turboquant-bits 4\n" ++
     "  zlx --model qwen2.5-coder-7b --draft-model qwen2.5-coder-1.5b --speculation-depth 4\n" ++
+    "  zlx --model gpt-oss-20b                     # OpenAI GPT-OSS (11.2 GB)\n" ++
+    "  zlx --list-models                           # Show all model shortcuts\n" ++
+    "  zlx --download-model qwen2.5-coder-1.5b       # Download a model\n" ++
+    "\n" ++
+    "Model Shortcuts:\n" ++
+    "  Use short names like 'qwen2.5-coder-1.5b' or 'gpt-oss-20b'\n" ++
+    "  Run 'zlx --list-models' to see all available shortcuts\n" ++
     "\n" ++
     "The server exposes OpenAI-compatible endpoints:\n" ++
     "  POST /v1/chat_completions       Chat completions\n" ++
@@ -90,6 +100,7 @@ const Config = struct {
     draft_model: ?[]const u8 = null, // Draft model for speculation (null = auto)
     speculation_depth: usize = 4, // Tokens to speculate ahead (default: 4)
     no_speculation: bool = false, // Disable speculative decoding
+    configure_opencode: bool = false, // Configure OpenCode and exit
 };
 
 fn printUsage() void {
@@ -255,19 +266,54 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
             }
         } else if (std.mem.eql(u8, arg, "--no-speculation")) {
             config.no_speculation = true;
+        } else if (std.mem.eql(u8, arg, "--list-models")) {
+            // List available model shortcuts and exit
+            download.listKnownModels();
+            std.process.exit(0);
+        } else if (std.mem.eql(u8, arg, "--download-model")) {
+            const value = args.next() orelse {
+                std.log.err("Expected model name after --download-model", .{});
+                return error.MissingArgument;
+            };
+            // Resolve alias to HF ID
+            const model_id = download.resolveModelAlias(value);
+            std.log.info("Downloading model: {s} (resolved from: {s})", .{ model_id, value });
+            // TODO: Actually download the model
+            std.log.info("Download not yet implemented - manually download from:", .{});
+            std.log.info("  https://huggingface.co/{s}", .{model_id});
+            std.process.exit(0);
+        } else if (std.mem.eql(u8, arg, "--configure-opencode")) {
+            config.configure_opencode = true;
         }
     }
 
     // Build model path from name if not explicitly set
     if (config.model_path == null) {
         if (config.model_name) |name| {
-            // Try to find model in ./models/{name} or use as-is if it contains /
-            if (std.mem.indexOf(u8, name, "/")) |_| {
-                config.model_path = try allocator.dupe(u8, name);
+            // Resolve model alias to HF ID or path
+            const resolved_name = download.resolveModelAlias(name);
+
+            // Check if it's a HuggingFace ID (contains /) or local path
+            if (std.mem.indexOf(u8, resolved_name, "/")) |_| {
+                // HuggingFace ID - for now use as-is (download manager will handle)
+                config.model_path = try allocator.dupe(u8, resolved_name);
+                std.log.info("Model resolved from '{s}' to HuggingFace ID: {s}", .{ name, resolved_name });
             } else {
-                config.model_path = try std.fmt.allocPrint(allocator, "./models/{s}", .{name});
+                // Local path
+                config.model_path = try std.fmt.allocPrint(allocator, "./models/{s}", .{resolved_name});
             }
         }
+    }
+
+    // Handle --configure-opencode (must come after model_name is set)
+    if (config.configure_opencode) {
+        if (config.model_name == null) {
+            std.log.err("--configure-opencode requires --model to be specified", .{});
+            std.log.info("Example: zlx --model qwen2.5-coder-1.5b --configure-opencode", .{});
+            return error.MissingModelArgument;
+        }
+        try configureOpenCode(allocator, config.port, config.model_name);
+        std.process.exit(0);
     }
 
     // Log configuration source
@@ -347,6 +393,88 @@ fn resolveModelPath(allocator: std.mem.Allocator, name_or_path: []const u8) ![]c
 
     // Otherwise, look in ./models/
     return try std.fmt.allocPrint(allocator, "./models/{s}", .{name_or_path});
+}
+
+/// Configure OpenCode to use this zlx server
+fn configureOpenCode(allocator: std.mem.Allocator, port: u16, model_name: ?[]const u8) !void {
+    const home = std.process.getEnvVarOwned(allocator, "HOME") catch |err| {
+        if (err == error.EnvironmentVariableNotFound) {
+            std.log.err("HOME environment variable not set", .{});
+            return error.HomeNotSet;
+        }
+        return err;
+    };
+    defer allocator.free(home);
+
+    // OpenCode config directory
+    const config_dir = try std.fs.path.join(allocator, &.{ home, ".config", "opencode" });
+    defer allocator.free(config_dir);
+
+    // Create directory if it doesn't exist
+    std.fs.cwd().makeDir(config_dir) catch |err| {
+        if (err != error.PathAlreadyExists) {
+            std.log.err("Failed to create config directory: {s}", .{@errorName(err)});
+            return err;
+        }
+    };
+
+    const config_path = try std.fs.path.join(allocator, &.{ config_dir, "config.json" });
+    defer allocator.free(config_path);
+
+    // Check if config already exists
+    const existing_config = std.fs.cwd().access(config_path, .{}) catch null;
+    if (existing_config != null) {
+        std.log.warn("OpenCode config already exists at: {s}", .{config_path});
+        std.log.info("Backing up to: {s}.backup", .{config_path});
+
+        // Simple backup - just rename (or you could copy)
+        const backup_path = try std.fmt.allocPrint(allocator, "{s}.backup", .{config_path});
+        defer allocator.free(backup_path);
+
+        std.fs.cwd().rename(config_path, backup_path) catch |err| {
+            std.log.warn("Failed to backup existing config: {s}", .{@errorName(err)});
+            std.log.info("Continuing without backup...", .{});
+        };
+    }
+
+    // Determine model name to use in config
+    const model_display_name = blk: {
+        if (model_name) |name| {
+            // Extract basename if it's a path
+            if (std.mem.lastIndexOf(u8, name, "/")) |last_slash| {
+                break :blk name[last_slash + 1 ..];
+            }
+            break :blk name;
+        }
+        break :blk "local-model";
+    };
+
+    // Create config content
+    const config_content = try std.fmt.allocPrint(allocator,
+        \\{{
+        \\  "model": "openai/{s}",
+        \\  "server": {{
+        \\    "baseUrl": "http://127.0.0.1:{d}/v1"
+        \\  }}
+        \\}}
+    , .{ model_display_name, port });
+    defer allocator.free(config_content);
+
+    // Write config file
+    const file = try std.fs.cwd().createFile(config_path, .{});
+    defer file.close();
+
+    try file.writeAll(config_content);
+
+    std.log.info("OpenCode configured successfully!", .{});
+    std.log.info("Config written to: {s}", .{config_path});
+    std.log.info("", .{});
+    std.log.info("To use OpenCode with zlx:", .{});
+    std.log.info("  1. Make sure zlx is running: ./zig-out/bin/zlx --model {s} --port {d}", .{ model_name orelse "<your-model>", port });
+    std.log.info("  2. Run: opencode", .{});
+    std.log.info("", .{});
+    std.log.info("To restore previous config:", .{});
+    std.log.info("  mv {s}.backup {s}", .{ config_path, config_path });
 }
 
 pub fn main() !void {

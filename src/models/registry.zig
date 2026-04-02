@@ -97,6 +97,9 @@ pub const ModelRegistry = struct {
     pub fn deinit(self: *Self) void {
         var iter = self.models.iterator();
         while (iter.next()) |entry| {
+            // Free the key (model_name) stored in the hash map
+            self.allocator.free(entry.key_ptr.*);
+            // Free the value's internal allocations
             entry.value_ptr.deinit();
         }
         self.models.deinit();
@@ -142,8 +145,8 @@ pub const ModelRegistry = struct {
                 }
 
                 // Duplicate the model name since entry.name is temporary
+                // StringHashMap takes ownership of this allocation
                 const model_name = try self.allocator.dupe(u8, entry.name);
-                // NOTE: NOT freeing - testing if StringHashMap copies the key
 
                 // Add to registry
                 const metadata = try ModelMetadata.init(
@@ -157,6 +160,7 @@ pub const ModelRegistry = struct {
 
                 try self.models.put(model_name, metadata);
                 std.log.info("Found model: {s} ({d} MB estimated)", .{ model_name, memory_mb });
+                // NOTE: model_name is now owned by the hash map, don't free it here
             } else |err| {
                 std.log.debug("Skipping {s}: {s}", .{ entry.name, @errorName(err) });
             }
@@ -528,17 +532,23 @@ test "updateStatus changes model status thread-safely" {
         .num_attention_heads = 12,
     };
 
+    // Allocate strings for the test (registry.deinit() will free the key)
+    const model_name = try allocator.dupe(u8, "test-model");
+    const model_path = try allocator.dupe(u8, "/tmp/test-model");
+    defer allocator.free(model_path);
+
     var metadata = try ModelMetadata.init(
         allocator,
-        "test-model",
-        "/tmp/test-model",
+        model_name,
+        model_path,
         config,
         1000000,
         1000,
     );
     errdefer metadata.deinit();
 
-    try registry.models.put("test-model", metadata);
+    try registry.models.put(model_name, metadata);
+    // NOTE: model_name is now owned by the hash map, it will be freed in registry.deinit()
 
     // Update status
     registry.updateStatus("test-model", .loaded);

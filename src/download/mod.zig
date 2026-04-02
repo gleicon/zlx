@@ -20,6 +20,67 @@ pub const initGlobalManager = manager.initGlobalManager;
 pub const deinitGlobalManager = manager.deinitGlobalManager;
 pub const getGlobalManager = manager.getGlobalManager;
 
+/// Model aliases for convenient short names
+/// Maps user-friendly names to HuggingFace model IDs
+pub const ModelAlias = struct {
+    alias: []const u8,
+    hf_id: []const u8,
+    description: []const u8,
+    size_gb: f32,
+};
+
+/// Known model aliases for popular models
+pub const KNOWN_MODELS = [_]ModelAlias{
+    .{
+        .alias = "qwen2.5-coder-1.5b",
+        .hf_id = "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit",
+        .description = "Qwen 2.5 Coder 1.5B - Fast coding model",
+        .size_gb = 1.0,
+    },
+    .{
+        .alias = "qwen2.5-coder-7b",
+        .hf_id = "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+        .description = "Qwen 2.5 Coder 7B - Powerful coding model",
+        .size_gb = 4.2,
+    },
+    .{
+        .alias = "gpt-oss-20b",
+        .hf_id = "mlx-community/gpt-oss-20b-MXFP4-Q4",
+        .description = "OpenAI GPT-OSS 20B - General chat & tool use",
+        .size_gb = 11.2,
+    },
+    .{
+        .alias = "deepseek-coder-v2-lite",
+        .hf_id = "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx",
+        .description = "DeepSeek Coder V2 Lite - MoE coding model (PENDING: requires MoE support)",
+        .size_gb = 8.84,
+    },
+};
+
+/// Resolve a model alias to HuggingFace ID
+/// Returns the original string if not found (assumes it's already a HF ID)
+pub fn resolveModelAlias(alias: []const u8) []const u8 {
+    for (KNOWN_MODELS) |model| {
+        if (std.mem.eql(u8, alias, model.alias)) {
+            return model.hf_id;
+        }
+    }
+    // Not an alias, return original
+    return alias;
+}
+
+/// List all known model aliases
+pub fn listKnownModels() void {
+    std.debug.print("Available model shortcuts:\n", .{});
+    for (KNOWN_MODELS) |model| {
+        std.debug.print("  {s:<25} - {s} ({d:.1} GB)\n", .{
+            model.alias,
+            model.description,
+            model.size_gb,
+        });
+    }
+}
+
 /// Check if a string looks like a HuggingFace model ID (contains "/")
 fn isHuggingFaceId(str: []const u8) bool {
     return std.mem.indexOf(u8, str, "/") != null;
