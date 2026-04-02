@@ -60,6 +60,9 @@ pub const Server = struct {
         // GET /v1/health (health check)
         router.get("/v1/health", handleHealth, .{});
 
+        // GET /v1/metrics (Prometheus metrics)
+        router.get("/v1/metrics", handleMetrics, .{});
+
         // OPTIONS handler for CORS preflight (handled in individual handlers)
         router.options("/v1/chat/completions", handleOptions, .{});
         router.options("/v1/models", handleOptions, .{});
@@ -107,6 +110,11 @@ fn handleSwitchModel(req: *httpz.Request, res: *httpz.Response) !void {
 /// Wrapper for health check handler
 fn handleHealth(req: *httpz.Request, res: *httpz.Response) !void {
     try handlers.handleHealth(req, res);
+}
+
+/// Wrapper for metrics handler
+fn handleMetrics(req: *httpz.Request, res: *httpz.Response) !void {
+    try handlers.handleMetrics(req, res);
 }
 
 /// Options handler for CORS preflight
