@@ -77,7 +77,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Same seed with same prompt produces identical output; different seeds produce different outputs
   5. API returns proper error codes: 400 for bad JSON, 408 for timeouts, 500 with request ID for generation errors
   6. Request timeout (default 60s) cancels generation and returns clean error response
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Stop sequences, seed-based determinism, temperature=0 greedy
+- [ ] 04-02-PLAN.md — Logprobs tracking, sampling parameters (top_k, min_p, penalties, logit_bias)
+- [ ] 04-03-PLAN.md — Error handling with request IDs, request timeouts
 
 ### Phase 5: Multi-Model Support
 **Goal**: Multiple models can be loaded, switched, and managed without server restart
@@ -154,7 +159,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS)
 | 1. Foundation & Build | 1/1 | ✅ Complete | 2026-03-31 |
 | 2. Inference Core | 1/1 | ✅ Complete | 2026-03-31 |
 | 3. HTTP API & Integration | 1/1 | ✅ Complete | 2026-03-31 |
-| 4. API Improvements | 0/1 | Not started | — |
+| 4. API Improvements | 3/3 | 📝 Planned | — |
 | 5. Multi-Model Support | 0/1 | Not started | — |
 | 6. Prompt Caching | 0/1 | Not started | — |
 | 7. TurboQuant Integration | 0/1 | Not started | — |
