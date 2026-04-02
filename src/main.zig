@@ -60,12 +60,15 @@ const USAGE =
     "  zlx --model qwen2.5-coder-7b --draft-model qwen2.5-coder-1.5b --speculation-depth 4\n" ++
     "\n" ++
     "The server exposes OpenAI-compatible endpoints:\n" ++
-    "  POST /v1/chat_completions    Chat completions\n" ++
-    "  GET  /v1/models              List available models\n" ++
-    "  POST /v1/models/switch       Switch to different model\n" ++
-    "  GET  /v1/health              Health check\n" ++
-    "  GET  /v1/metrics             Prometheus metrics\n" ++
-    "  GET  /v1/metrics/speculative Speculative decoding metrics\n" ++
+    "  POST /v1/chat_completions       Chat completions\n" ++
+    "  GET  /v1/models                 List available models\n" ++
+    "  POST /v1/models/load            Start background model load\n" ++
+    "  GET  /v1/models/load-status     Check background load progress\n" ++
+    "  POST /v1/models/load/cancel     Cancel ongoing background load\n" ++
+    "  POST /v1/models/switch          Switch to different model (blocking)\n" ++
+    "  GET  /v1/health                 Health check\n" ++
+    "  GET  /v1/metrics                Prometheus metrics\n" ++
+    "  GET  /v1/metrics/speculative    Speculative decoding metrics\n" ++
     "\n";
 
 const Config = struct {
