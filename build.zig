@@ -237,6 +237,38 @@ pub fn build(b: *std.Build) !void {
     const run_mlx_v4_test = b.addRunArtifact(mlx_v4_test);
     test_step.dependOn(&run_mlx_v4_test.step);
 
+    // Test MoE module (PHASE-11-03)
+    const moe_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/moe_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Add dependencies for moe tests
+    moe_test_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    moe_test_mod.addImport("moe.zig", b.createModule(.{
+        .root_source_file = b.path("src/moe.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    moe_test_mod.addImport("mlx_v4.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx_v4.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+
+    const moe_test = b.addTest(.{
+        .name = "moe_test",
+        .root_module = moe_test_mod,
+    });
+
+    const run_moe_test = b.addRunArtifact(moe_test);
+    test_step.dependOn(&run_moe_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
     // due to cross-module dependencies
