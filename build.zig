@@ -64,6 +64,9 @@ pub fn build(b: *std.Build) !void {
 
     const run_models_test = b.addRunArtifact(models_test);
     test_step.dependOn(&run_models_test.step);
+
+    // Note: manager.zig tests are compiled as part of main build
+    // due to cross-module dependencies
 }
 
 // ── Inlined from src/mlx.zig/build.zig ────────────────────────────────────────
