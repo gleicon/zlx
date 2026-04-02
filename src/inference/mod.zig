@@ -4,6 +4,9 @@
 
 const std = @import("std");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
+const qwen = @import("../mlx.zig/src/qwen.zig");
+const deepseek = @import("../deepseek.zig");
+const mlx = @import("../mlx.zig/src/mlx.zig");
 
 // Maximum total context length to prevent memory exhaustion
 // Qwen 2.5 1.5B has 28 layers, hidden_size=1536, KV cache grows quickly
@@ -24,6 +27,103 @@ pub const GenerationOptions = generator.GenerationOptions;
 pub const Token = generator.Token;
 pub const LogprobEntry = generator.LogprobEntry;
 pub const StopReason = generator.StopReason;
+
+/// Union type for different model implementations
+pub const ModelUnion = union(enum) {
+    qwen: *qwen.Transformer,
+    deepseek: *deepseek.DeepSeekTransformer,
+    // llama: *llama.Transformer, // TODO: Add when implemented
+    // phi: *phi.Transformer, // TODO: Add when implemented
+
+    /// Generate tokens from a model
+    pub fn generate(
+        self: *ModelUnion,
+        allocator: std.mem.Allocator,
+        prompt_tokens: []const u32,
+        max_tokens: usize,
+        eos_token_ids: []const u32,
+    ) ![]u32 {
+        _ = eos_token_ids;
+        switch (self.*) {
+            .qwen => |transformer| {
+                return try transformer.generate(prompt_tokens, max_tokens);
+            },
+            .deepseek => |transformer| {
+                // Convert token slice to MLX array
+                const prompt_array = try mlx.arrayNewData(
+                    prompt_tokens.ptr,
+                    .{ 1, @intCast(prompt_tokens.len) },
+                    mlx.UINT32,
+                );
+                defer mlx.arrayFree(prompt_array);
+
+                // Generate with DeepSeek
+                const result = try transformer.generate(prompt_array, max_tokens, 1.0);
+                defer mlx.arrayFree(result);
+
+                // Convert back to slice
+                const result_len = @as(usize, @intCast(mlx.arrayDim(result, 1)));
+                var tokens = try allocator.alloc(u32, result_len);
+                errdefer allocator.free(tokens);
+
+                // Extract values from MLX array
+                for (0..result_len) |i| {
+                    _ = i;
+                    var token: i32 = 0;
+                    try mlx.item(&token, result);
+                    tokens[i] = @intCast(token);
+                }
+
+                return tokens;
+            },
+        }
+    }
+
+    /// Get model information
+    pub fn getInfo(self: ModelUnion) ModelMetadata {
+        switch (self) {
+            .qwen => {
+                return .{
+                    .name = "qwen",
+                    .architecture = .qwen,
+                    .parameters = 1_500_000_000, // Placeholder
+                    .active_parameters = 1_500_000_000,
+                    .context_length = 8192,
+                };
+            },
+            .deepseek => |t| {
+                return .{
+                    .name = "deepseek-coder-v2-lite",
+                    .architecture = .deepseek_v2_moe,
+                    .parameters = 15_700_000_000,
+                    .active_parameters = 2_000_000_000,
+                    .context_length = t.config.max_position_embeddings,
+                };
+            },
+        }
+    }
+
+    /// Deinitialize the model
+    pub fn deinit(self: *ModelUnion) void {
+        switch (self.*) {
+            .qwen => |transformer| {
+                transformer.deinit();
+            },
+            .deepseek => |*transformer| {
+                transformer.deinit();
+            },
+        }
+    }
+};
+
+/// Metadata about a loaded model
+pub const ModelMetadata = struct {
+    name: []const u8,
+    architecture: ModelType,
+    parameters: u64,
+    active_parameters: u64,
+    context_length: usize,
+};
 
 /// Inference context that holds loaded model and tokenizer
 pub const InferenceContext = struct {
@@ -308,6 +408,3 @@ pub fn generateWithLogprobs(
         .stop_reason = state.getStopReason(),
     };
 }
-
-// Import qwen for transformer access
-const qwen = @import("../mlx.zig/src/qwen.zig");
