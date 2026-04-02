@@ -78,6 +78,19 @@ pub fn build(b: *std.Build) !void {
     const run_memory_test = b.addRunArtifact(memory_test);
     test_step.dependOn(&run_memory_test.step);
 
+    // Test prompt cache module
+    const cache_test = b.addTest(.{
+        .name = "cache_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cache/prompt_cache.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_cache_test = b.addRunArtifact(cache_test);
+    test_step.dependOn(&run_cache_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
 }
