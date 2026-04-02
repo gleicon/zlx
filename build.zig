@@ -206,6 +206,21 @@ pub fn build(b: *std.Build) !void {
     const run_config_test = b.addRunArtifact(config_test);
     test_step.dependOn(&run_config_test.step);
 
+    // Test mlx_v4 module (PHASE-11-01)
+    const mlx_v4_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx_v4_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const mlx_v4_test = b.addTest(.{
+        .name = "mlx_v4_test",
+        .root_module = mlx_v4_test_mod,
+    });
+
+    const run_mlx_v4_test = b.addRunArtifact(mlx_v4_test);
+    test_step.dependOn(&run_mlx_v4_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
     // due to cross-module dependencies
@@ -217,7 +232,11 @@ const Dependencies = struct {
     mlx_c_path: []const u8,
     mlx_c_build_path: []const u8,
     mlx_c_lib_path: []const u8,
+    mlx_c_v4_path: []const u8,
+    mlx_c_v4_build_path: []const u8,
+    mlx_c_v4_lib_path: []const u8,
     install_step: *std.Build.Step,
+    install_v4_step: *std.Build.Step,
 };
 
 fn setupDependencies(
@@ -227,9 +246,16 @@ fn setupDependencies(
 ) !Dependencies {
     _ = target;
     _ = optimize;
+
+    // v0.1.2 paths
     const mlx_c_path = b.pathJoin(&.{ b.cache_root.path.?, "mlx-c" });
     const mlx_c_build_path = b.pathJoin(&.{ mlx_c_path, "build" });
     const mlx_c_lib_path = b.pathJoin(&.{ mlx_c_build_path, "libmlxc.a" });
+
+    // v0.4.1 paths
+    const mlx_c_v4_path = b.pathJoin(&.{ b.cache_root.path.?, "mlx-c-v4" });
+    const mlx_c_v4_build_path = b.pathJoin(&.{ mlx_c_v4_path, "build" });
+    const mlx_c_v4_lib_path = b.pathJoin(&.{ mlx_c_v4_build_path, "libmlxc-v4.a" });
 
     const install_step = b.step("install-mlx-c", "Download and build libmlxc.a if not cached");
     const needs_install = !doesFileExist(mlx_c_lib_path);
@@ -260,6 +286,45 @@ fn setupDependencies(
         install_step.dependOn(&make_cmd.step);
     }
 
+    // v0.4.1 install step
+    const install_v4_step = b.step("install-mlx-c-v4", "Download and build libmlxc-v4.a if not cached");
+    const needs_v4_install = !doesFileExist(mlx_c_v4_lib_path);
+
+    if (needs_v4_install) {
+        // Download mlx-c v0.4.1 tarball and extract to cache
+        const clone_v4_cmd = b.addSystemCommand(&[_][]const u8{
+            "sh", "-c",
+            b.fmt(
+                "if [ ! -d {s} ]; then mkdir -p $(dirname {s}) && " ++
+                    "curl -L https://github.com/ml-explore/mlx-c/archive/refs/tags/v0.4.1.tar.gz " ++
+                    "| tar xz -C $(dirname {s}) && mv $(dirname {s})/mlx-c-0.4.1 {s}; fi",
+                .{ mlx_c_v4_path, mlx_c_v4_path, mlx_c_v4_path, mlx_c_v4_path, mlx_c_v4_path },
+            ),
+        });
+        const mkdir_v4_cmd = b.addSystemCommand(&[_][]const u8{ "mkdir", "-p", mlx_c_v4_build_path });
+        mkdir_v4_cmd.step.dependOn(&clone_v4_cmd.step);
+        const cmake_v4_cmd = b.addSystemCommand(&[_][]const u8{
+            "cmake",                      "..",
+            "-DCMAKE_BUILD_TYPE=Release", "-DMLX_BUILD_METAL=ON",
+            "-DCMAKE_CXX_FLAGS=-w",
+        });
+        cmake_v4_cmd.setCwd(.{ .cwd_relative = mlx_c_v4_build_path });
+        cmake_v4_cmd.step.dependOn(&mkdir_v4_cmd.step);
+        const make_v4_cmd = b.addSystemCommand(&[_][]const u8{ "make", "-j" });
+        make_v4_cmd.setCwd(.{ .cwd_relative = mlx_c_v4_build_path });
+        make_v4_cmd.step.dependOn(&cmake_v4_cmd.step);
+        // Rename libmlxc.a to libmlxc-v4.a to avoid symbol conflicts
+        const rename_v4_cmd = b.addSystemCommand(&[_][]const u8{
+            "sh", "-c",
+            b.fmt(
+                "if [ -f {s}/libmlxc.a ] && [ ! -f {s} ]; then mv {s}/libmlxc.a {s}; fi",
+                .{ mlx_c_v4_build_path, mlx_c_v4_lib_path, mlx_c_v4_build_path, mlx_c_v4_lib_path },
+            ),
+        });
+        rename_v4_cmd.step.dependOn(&make_v4_cmd.step);
+        install_v4_step.dependOn(&rename_v4_cmd.step);
+    }
+
     // Copy mlx.metallib to install dir if present
     if (doesFileExist(b.pathJoin(&.{ mlx_c_build_path, "_deps/mlx-build/mlx.metallib" }))) {
         const dest_dir = b.pathJoin(&.{ b.install_path, "lib", "metal" });
@@ -277,7 +342,11 @@ fn setupDependencies(
         .mlx_c_path = mlx_c_path,
         .mlx_c_build_path = mlx_c_build_path,
         .mlx_c_lib_path = mlx_c_lib_path,
+        .mlx_c_v4_path = mlx_c_v4_path,
+        .mlx_c_v4_build_path = mlx_c_v4_build_path,
+        .mlx_c_v4_lib_path = mlx_c_v4_lib_path,
         .install_step = install_step,
+        .install_v4_step = install_v4_step,
     };
 }
 
@@ -287,13 +356,23 @@ fn configureExecutable(
     deps: Dependencies,
 ) void {
     exe.step.dependOn(deps.install_step);
+    exe.step.dependOn(deps.install_v4_step);
+
     // macOS SDK framework path — required on macOS 26 / Xcode 21 where Zig doesn't auto-detect it
     exe.addFrameworkPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks" });
     // macOS SDK library path — needed for libobjc and other system libraries
     exe.addLibraryPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib" });
+
+    // v0.1.2 includes and library
     exe.addIncludePath(.{ .cwd_relative = deps.mlx_c_path });
     exe.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_build_path, "libmlxc.a" }) });
     exe.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_build_path, "_deps/mlx-build/libmlx.a" }) });
+
+    // v0.4.x includes and library (separate to avoid conflicts)
+    exe.addIncludePath(.{ .cwd_relative = deps.mlx_c_v4_path });
+    exe.addLibraryPath(.{ .cwd_relative = deps.mlx_c_v4_build_path });
+    exe.linkSystemLibrary("mlxc-v4");
+
     exe.linkFramework("Metal");
     exe.linkFramework("Foundation");
     exe.linkFramework("QuartzCore");
