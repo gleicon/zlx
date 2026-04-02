@@ -455,6 +455,24 @@ pub const ModelMetadataInfo = struct {
     loaded_at: i64 = 0,
 };
 
+/// Request body for POST /v1/models/switch
+pub const SwitchModelRequest = struct {
+    /// Model ID to switch to
+    model: []const u8,
+};
+
+/// Response for successful model switch
+pub const SwitchModelResponse = struct {
+    /// Status of the switch
+    status: []const u8 = "success",
+    /// Model that was switched to
+    model: []const u8,
+    /// Previous model (if any)
+    previous_model: ?[]const u8 = null,
+    /// Switch duration in milliseconds
+    duration_ms: u64 = 0,
+};
+
 test "types - prompt building" {
     const allocator = std.testing.allocator;
 

@@ -53,6 +53,10 @@ pub const Server = struct {
         // GET /v1/models
         router.get("/v1/models", handleListModels, .{});
 
+        // POST /v1/models/switch (model switching endpoint)
+        router.post("/v1/models/switch", handleSwitchModel, .{});
+        router.options("/v1/models/switch", handleOptions, .{});
+
         // GET /v1/health (health check)
         router.get("/v1/health", handleHealth, .{});
 
@@ -93,6 +97,11 @@ fn handleChatCompletions(req: *httpz.Request, res: *httpz.Response) !void {
 /// Wrapper for list models handler
 fn handleListModels(req: *httpz.Request, res: *httpz.Response) !void {
     try handlers.handleListModels(req, res);
+}
+
+/// Wrapper for switch model handler
+fn handleSwitchModel(req: *httpz.Request, res: *httpz.Response) !void {
+    try handlers.handleSwitchModel(req, res);
 }
 
 /// Wrapper for health check handler

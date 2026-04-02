@@ -7,6 +7,7 @@ const api = @import("api/server.zig");
 const handlers = @import("api/handlers.zig");
 const metrics = @import("api/metrics.zig");
 const models_mod = @import("models/mod.zig");
+const manager_mod = @import("models/manager.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -27,6 +28,7 @@ const USAGE =
     "The server exposes OpenAI-compatible endpoints:\n" ++
     "  POST /v1/chat_completions    Chat completions\n" ++
     "  GET  /v1/models              List available models\n" ++
+    "  POST /v1/models/switch       Switch to different model\n" ++
     "  GET  /v1/health              Health check\n" ++
     "\n";
 
@@ -146,21 +148,33 @@ pub fn main() !void {
     try models_mod.initGlobalRegistry(allocator);
     defer models_mod.deinitGlobalRegistry(allocator);
 
+    // Initialize model manager
+    if (models_mod.getGlobalRegistry()) |registry| {
+        try manager_mod.initGlobalManager(allocator, registry);
+    }
+    defer manager_mod.deinitGlobalManager(allocator);
+
     // Get model name for status update
     const model_name = config.model_name orelse model_path;
 
     std.log.info("Loading model from: {s}", .{model_path});
 
-    // Initialize inference context (this loads the model and tokenizer)
-    try handlers.initGlobalContext(allocator, model_path);
-    defer handlers.deinitGlobalContext(allocator);
+    // Initialize inference context via manager for proper tracking
+    if (manager_mod.getGlobalManager()) |manager| {
+        // Use manager to load initial model (enables hot-swap later)
+        try manager.switchModel(model_name);
+        std.log.info("Model loaded successfully via manager!", .{});
+    } else {
+        // Fallback: direct loading without manager
+        try handlers.initGlobalContext(allocator, model_path);
 
-    // Update registry status to show model is loaded
-    if (models_mod.getGlobalRegistry()) |reg| {
-        reg.updateStatus(model_name, .loaded);
+        // Update registry status to show model is loaded
+        if (models_mod.getGlobalRegistry()) |reg| {
+            reg.updateStatus(model_name, .loaded);
+        }
+
+        std.log.info("Model loaded successfully!", .{});
     }
-
-    std.log.info("Model loaded successfully!", .{});
 
     // Initialize metrics tracking
     metrics.initMetrics(allocator);
