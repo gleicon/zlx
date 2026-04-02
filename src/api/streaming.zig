@@ -10,6 +10,7 @@ const qwen = @import("../mlx.zig/src/qwen.zig");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const generator = @import("../inference/generator.zig");
 const metrics = @import("metrics.zig");
+const templates = @import("../chat/templates.zig");
 
 /// Check if a string is valid UTF-8
 fn isValidUtf8(str: []const u8) bool {
@@ -78,9 +79,16 @@ pub fn streamResponse(
     const completion_id = try types.generateCompletionId(allocator);
     defer allocator.free(completion_id);
 
-    // Build prompt from messages
-    const prompt = try types.buildPromptFromMessages(allocator, request.messages);
+    // Build prompt from messages using model-specific template
+    const arch = detectModelArchitecture(request.model);
+    const prompt = try templates.formatChatByArchitecture(allocator, arch, request.messages);
     defer allocator.free(prompt);
+
+    // Log template selection
+    std.log.info("[streaming] Using {s} chat template for model: {s}", .{
+        @tagName(arch),
+        request.model,
+    });
 
     // Tokenize the prompt
     const tokenizer_ref = &ctx.tokenizer.?;
@@ -338,9 +346,16 @@ pub fn generateNonStreamingResponse(
     const completion_id = try types.generateCompletionId(allocator);
     defer allocator.free(completion_id);
 
-    // Build prompt from messages
-    const prompt = try types.buildPromptFromMessages(allocator, request.messages);
+    // Build prompt from messages using model-specific template
+    const arch = detectModelArchitecture(request.model);
+    const prompt = try templates.formatChatByArchitecture(allocator, arch, request.messages);
     defer allocator.free(prompt);
+
+    // Log template selection
+    std.log.info("[streaming-v2] Using {s} chat template for model: {s}", .{
+        @tagName(arch),
+        request.model,
+    });
 
     // Tokenize the prompt
     const tokenizer_ref = &ctx.tokenizer.?;
@@ -514,4 +529,35 @@ fn stripSpecialTokens(allocator: std.mem.Allocator, text: []const u8) ![]const u
     }
 
     return result;
+}
+
+/// Detect model architecture from model name
+fn detectModelArchitecture(model_name: []const u8) templates.ModelArchitecture {
+    // Check for DeepSeek models
+    if (std.mem.indexOf(u8, model_name, "deepseek") != null) {
+        if (std.mem.indexOf(u8, model_name, "v2") != null or
+            std.mem.indexOf(u8, model_name, "coder-v2") != null)
+        {
+            return .deepseek_v2_moe;
+        }
+        return .deepseek_v2_moe; // Default DeepSeek to V2 MoE
+    }
+
+    // Check for Qwen models
+    if (std.mem.indexOf(u8, model_name, "qwen") != null) {
+        return .qwen;
+    }
+
+    // Check for Llama models
+    if (std.mem.indexOf(u8, model_name, "llama") != null) {
+        return .llama;
+    }
+
+    // Check for Phi models
+    if (std.mem.indexOf(u8, model_name, "phi") != null) {
+        return .phi;
+    }
+
+    // Default to Qwen (most common in this codebase)
+    return .qwen;
 }
