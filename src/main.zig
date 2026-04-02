@@ -11,6 +11,7 @@ const manager_mod = @import("models/manager.zig");
 const memory = @import("models/memory.zig");
 const prompt_cache = @import("cache/prompt_cache.zig");
 const compression = @import("compression/mod.zig");
+const speculation = @import("speculation/mod.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -28,6 +29,9 @@ const USAGE =
     "  --turboquant            Enable TurboQuant KV cache compression (BETA)\n" ++
     "  --turboquant-bits N     Quantization bits: 3 or 4 (default: 4)\n" ++
     "  --turboquant-adaptive N Keep first/last N layers in FP16 (default: 4)\n" ++
+    "  --draft-model <NAME>   Draft model for speculative decoding (auto-select if not set)\n" ++
+    "  --speculation-depth N   Tokens to speculate ahead: 1-8 (default: 4)\n" ++
+    "  --no-speculation        Disable speculative decoding\n" ++
     "  --help                  Show this help message\n" ++
     "\n" ++
     "Examples:\n" ++
@@ -35,6 +39,7 @@ const USAGE =
     "  zlx --model ./models/my-model --port 9000 --timeout 120\n" ++
     "  zlx --model qwen2.5-coder --cache-size 5 --cache-dir ~/.cache/zlx-small\n" ++
     "  zlx --model qwen2.5-coder --turboquant --turboquant-bits 4\n" ++
+    "  zlx --model qwen2.5-coder-7b --draft-model qwen2.5-coder-1.5b --speculation-depth 4\n" ++
     "\n" ++
     "The server exposes OpenAI-compatible endpoints:\n" ++
     "  POST /v1/chat_completions    Chat completions\n" ++
@@ -42,6 +47,7 @@ const USAGE =
     "  POST /v1/models/switch       Switch to different model\n" ++
     "  GET  /v1/health              Health check\n" ++
     "  GET  /v1/metrics             Prometheus metrics\n" ++
+    "  GET  /v1/metrics/speculative Speculative decoding metrics\n" ++
     "\n";
 
 const Config = struct {
@@ -56,6 +62,9 @@ const Config = struct {
     turboquant_enabled: bool = false, // TurboQuant compression (EXPERIMENTAL)
     turboquant_bits: u4 = 4, // Quantization bits (3 or 4)
     turboquant_adaptive: u8 = 4, // First/last N layers kept in FP16
+    draft_model: ?[]const u8 = null, // Draft model for speculation (null = auto)
+    speculation_depth: usize = 4, // Tokens to speculate ahead (default: 4)
+    no_speculation: bool = false, // Disable speculative decoding
 };
 
 fn printUsage() void {
@@ -155,6 +164,27 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
             if (config.turboquant_adaptive > 32) {
                 std.log.warn("Adaptive layers >32 seems high, but accepting value: {d}", .{config.turboquant_adaptive});
             }
+        } else if (std.mem.eql(u8, arg, "--draft-model")) {
+            const value = args.next() orelse {
+                std.log.err("Expected value after --draft-model", .{});
+                return error.MissingArgument;
+            };
+            config.draft_model = try allocator.dupe(u8, value);
+            std.log.info("Draft model specified: {s}", .{value});
+        } else if (std.mem.eql(u8, arg, "--speculation-depth")) {
+            const value = args.next() orelse {
+                std.log.err("Expected value after --speculation-depth", .{});
+                return error.MissingArgument;
+            };
+            config.speculation_depth = try std.fmt.parseInt(usize, value, 10);
+            if (config.speculation_depth < 1 or config.speculation_depth > 8) {
+                std.log.err("Speculation depth must be 1-8, got {d}", .{config.speculation_depth});
+                return error.InvalidSpeculationDepth;
+            }
+            std.log.info("Speculation depth set to {d}", .{config.speculation_depth});
+        } else if (std.mem.eql(u8, arg, "--no-speculation")) {
+            config.no_speculation = true;
+            std.log.info("Speculative decoding disabled", .{});
         }
     }
 
@@ -285,8 +315,37 @@ pub fn main() !void {
     // Initialize model manager
     if (models_mod.getGlobalRegistry()) |registry| {
         try manager_mod.initGlobalManager(allocator, registry);
+
+        // Initialize speculative decoding subsystem (after registry is available)
+        if (!config.no_speculation) {
+            speculation.initSpeculation(allocator, registry) catch |err| {
+                std.log.warn("Failed to initialize speculative decoding: {s}. Continuing without speculation.", .{@errorName(err)});
+            };
+
+            // Configure speculation settings
+            if (speculation.isInitialized()) {
+                const spec_config = speculation.SpeculationConfig{
+                    .enabled = true,
+                    .draft_model = config.draft_model,
+                    .speculation_depth = config.speculation_depth,
+                };
+                speculation.configure(spec_config);
+
+                std.log.info("Speculative decoding enabled (depth: {d})", .{config.speculation_depth});
+                if (config.draft_model) |dm| {
+                    std.log.info("Draft model: {s}", .{dm});
+                } else {
+                    std.log.info("Draft model: auto-select", .{});
+                }
+            }
+        } else {
+            std.log.info("Speculative decoding disabled by user", .{});
+        }
     }
-    defer manager_mod.deinitGlobalManager(allocator);
+    defer {
+        speculation.shutdownSpeculation(allocator);
+        manager_mod.deinitGlobalManager(allocator);
+    }
 
     // Get model name for status update
     const model_name = config.model_name orelse model_path;
