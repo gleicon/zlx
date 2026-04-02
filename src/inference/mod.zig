@@ -157,11 +157,11 @@ pub const InferenceContext = struct {
         defer state.deinit();
 
         // Collect tokens with timeout checking
-        var output_tokens = std.ArrayList(u32).init(self.allocator);
-        errdefer output_tokens.deinit();
+        var output_tokens = std.ArrayList(u32).empty;
+        errdefer output_tokens.deinit(self.allocator);
 
         while (try state.next()) |token| {
-            try output_tokens.append(token);
+            try output_tokens.append(self.allocator, token);
 
             // Check timeout every token (D-33: measured from request start)
             const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
@@ -177,7 +177,7 @@ pub const InferenceContext = struct {
         const text = try tokenizer_ref.decode(output_tokens.items);
 
         // Get logprobs if enabled
-        const logprobs = if (options.logprobs_enabled) try state.getLogprobs() else null;
+        const logprobs = if (options.logprobs_enabled) state.getLogprobs() else null;
 
         // Set stop reason based on timeout
         var stop_reason = state.getStopReason();

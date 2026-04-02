@@ -100,8 +100,7 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
             error.SyntaxError => "Invalid JSON syntax in request body",
             error.UnexpectedToken => "Unexpected token in JSON",
             error.InvalidNumber => "Invalid number in JSON",
-            error.InvalidCharacters => "Invalid characters in JSON",
-            error.InvalidUtf8 => "Invalid UTF-8 in request body",
+            error.InvalidCharacter => "Invalid character in JSON",
             else => "Invalid JSON in request body",
         };
 
@@ -189,7 +188,8 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
     defer {
         ctx.allocator.free(timeout_result.result.text);
         if (timeout_result.result.logprobs) |lp| {
-            for (lp) |*entry| entry.deinit(ctx.allocator);
+            // Cast away const to deinit - safe since we're in defer cleanup
+            for (@constCast(lp)) |*entry| entry.deinit(ctx.allocator);
             ctx.allocator.free(lp);
         }
     }
