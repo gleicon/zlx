@@ -147,6 +147,9 @@ pub fn streamResponse(
 
     const created_timestamp = std.time.timestamp();
 
+    // Get logprobs if enabled
+    const logprobs_entries = if (gen_options.logprobs_enabled) state.getLogprobs() else null;
+
     // Stream the generated text in chunks
     // Strip special tokens from generated text
     const cleaned_text = try stripSpecialTokens(allocator, generated_text);
@@ -162,6 +165,7 @@ pub fn streamResponse(
             cleaned_text,
             true,
             null,
+            null, // No logprobs in content chunk
         );
         defer allocator.free(chunk);
 
@@ -170,7 +174,7 @@ pub fn streamResponse(
         try writer.writeAll("\n\n");
     }
 
-    // Write final chunk with finish_reason
+    // Write final chunk with finish_reason and logprobs if enabled
     const final_chunk = try buildStreamingChunk(
         allocator,
         completion_id,
@@ -179,6 +183,7 @@ pub fn streamResponse(
         "", // No content in final chunk
         false,
         "stop", // Generation stopped
+        logprobs_entries, // Include logprobs in final chunk if enabled
     );
     defer allocator.free(final_chunk);
 
@@ -206,6 +211,7 @@ fn buildStreamingChunk(
     content: []const u8,
     is_first: bool,
     finish_reason: ?[]const u8,
+    logprobs: ?[]const generator.LogprobEntry,
 ) ![]const u8 {
     var json = std.ArrayList(u8).empty;
     errdefer json.deinit(allocator);
@@ -239,6 +245,33 @@ fn buildStreamingChunk(
     } else {
         // Final chunk - empty delta
         try writer.writeAll("{}");
+    }
+
+    // Add logprobs if present (include in final chunk for MVP)
+    if (logprobs) |entries| {
+        try writer.writeAll(",\"logprobs\":{");
+        try writer.writeAll("\"content\":[");
+
+        for (entries, 0..) |entry, i| {
+            if (i > 0) try writer.writeAll(",");
+            try writer.writeAll("{");
+            // Token string (empty for now - deferred)
+            try writer.writeAll("\"token\":\"\",");
+            // Log probability
+            try writer.print("\"logprob\":{:.6}", .{entry.logprob});
+            // Top logprobs array
+            try writer.writeAll(",\"top_logprobs\":[");
+            for (entry.top_logprobs, 0..) |top, j| {
+                if (j > 0) try writer.writeAll(",");
+                try writer.writeAll("{");
+                try writer.writeAll("\"token\":\"\","); // Token string deferred
+                try writer.print("\"logprob\":{:.6}", .{top.logprob});
+                try writer.writeAll("}");
+            }
+            try writer.writeAll("]}"); // Close top_logprobs and entry
+        }
+
+        try writer.writeAll("]}"); // Close content array and logprobs object
     }
 
     // Add finish_reason inside the choice object
@@ -385,7 +418,8 @@ pub fn generateNonStreamingResponse(
     const content = try stripSpecialTokens(allocator, raw_content);
     defer allocator.free(content);
 
-    // Get logprobs if enabled (stored in state for later retrieval)
+    // Note: logprobs are retrieved but not used in this function's response format
+    // The handlers.zig buildChatCompletionResponse handles logprobs for non-streaming
     _ = if (gen_options.logprobs_enabled) state.getLogprobs() else null;
 
     // Build response
