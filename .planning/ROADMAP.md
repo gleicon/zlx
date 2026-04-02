@@ -185,7 +185,7 @@ Plans:
 - [x] 11-01-PLAN.md — mlx-c v0.4.x integration for Fast Custom Ops API
 - [x] 11-02-PLAN.md — Multi-head Latent Attention (MLA) with 90% KV compression
 - [x] 11-03-PLAN.md — Mixture of Experts (MoE) routing with sparse expert activation
-- [ ] 11-04-PLAN.md — DeepSeek transformer integrating MLA + MoE
+- [x] 11-04-PLAN.md — DeepSeek transformer integrating MLA + MoE
 - [ ] 11-05-PLAN.md — Chat template, registry, memory estimation, end-to-end testing
 
 ## Progress
@@ -214,7 +214,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 7. TurboQuant Integration | 2/2 | ✅ Complete | 2026-04-02 |
 | 8. Speculative Decoding | 1/1 | ✅ Complete | 2026-04-02 |
 | 9. Model Management | 3/3 | ✅ Complete | 2026-04-02 |
-| 11. DeepSeek MoE | 3/6 | In Progress|  |
+| 11. DeepSeek MoE | 4/6 | In Progress|  |
 
 **v1.1.0 Progress:** 9/9 phases complete | All phases COMPLETE | v1.1.0 Released
 
