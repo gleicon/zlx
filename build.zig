@@ -51,6 +51,19 @@ pub fn build(b: *std.Build) !void {
 
     const run_registry_test = b.addRunArtifact(registry_test);
     test_step.dependOn(&run_registry_test.step);
+
+    // Test models module
+    const models_test = b.addTest(.{
+        .name = "models_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/models/mod.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_models_test = b.addRunArtifact(models_test);
+    test_step.dependOn(&run_models_test.step);
 }
 
 // ── Inlined from src/mlx.zig/build.zig ────────────────────────────────────────
