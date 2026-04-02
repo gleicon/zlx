@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: verifying
-stopped_at: Completed 06-01-PLAN.md (Prompt Caching)
-last_updated: "2026-04-02T10:09:26.993Z"
+milestone: v1.1
+milestone_name: Production-Ready
+status: planning
+stopped_at: Planned 07-01-PLAN.md (TurboQuant Integration - Feasibility Spike)
+last_updated: "2026-04-02T14:00:00.000Z"
 progress:
   total_phases: 9
-  completed_phases: 3
-  total_plans: 9
+  completed_phases: 6
+  total_plans: 15
   completed_plans: 11
-  percent: 44
+  percent: 67
 ---
 
 # Project State
@@ -20,24 +20,52 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** Phase 05 — Multi-Model Support (ALL 3 PLANS COMPLETE)
+**Current focus:** Phase 07 — TurboQuant Integration (Feasibility Assessment)
 
 ## Current Position
 
 Milestone: v1.1 (Production-Ready)
-Phase: 05 (Multi-Model Support) — COMPLETE
-Plan: 3 of 3 — Memory Management COMPLETE
-Status: Phase complete — ready for verification
+Phase: 07 (TurboQuant Integration) — PLANNED
+Plan: 1 of 1 — Feasibility Spike Ready for Execution
+Status: Planning complete — Decision point reached
 
-Progress: [████░░░░░░] 44% → Phase 05 is complete! Next: Phase 06
+Progress: [██████▓░░░] 67% → Phase 7 planned, awaiting decision on TurboQuant porting
 
-## Phase 05 Status
+## Phase 07 Status
 
 | Plan | Name | Status | Requirements |
 |------|------|--------|--------------|
-| 05-01 | Model Registry | ✅ COMPLETE | UX-05, INFRA-01 |
-| 05-02 | Model Manager (hot-swap) | ✅ COMPLETE | PERF-03, PERF-05 |
-| 05-03 | Memory Management | ✅ COMPLETE | PERF-05, INFRA-01, INFRA-02 |
+| 07-01 | TurboQuant Feasibility Spike | 📝 PLANNED | PERF-01 |
+
+**Critical Finding:** TurboQuant is 100% Python with no C API. Porting requires extracting Metal kernels from Python strings and implementing custom ops — estimated 40+ hours.
+
+## Phase 07 Plan Summary
+
+**Plan 07-01: TurboQuant Integration - Feasibility Spike**
+
+This is a research/spike plan, not a full implementation. Key findings:
+
+1. **TurboQuant Reality Check:**
+   - Repository: arozanov/turboquant-mlx
+   - Language: 100% Python (no C/C++ API)
+   - Metal kernels: Embedded as Python strings, JIT-compiled at runtime
+   - Cannot directly bind from Zig
+
+2. **Porting Options Identified:**
+   - **Option A:** C++ Custom Ops via mlx-c upgrade (40-60 hours, HIGH risk)
+   - **Option B:** Direct Metal in Zig (60-80 hours, MEDIUM risk)
+   - **Option C:** MLX array ops approximation (20-30 hours, loses benefits)
+
+3. **Plan Deliverables:**
+   - Stub compression module (KvCompressor interface)
+   - TurboQuant stub with NotImplemented markers
+   - --turboquant CLI flag with graceful fallback
+   - RESEARCH.md with porting analysis and recommendation
+
+4. **Decision Required:**
+   After executing 07-01, decide:
+   - **GO:** Proceed with full TurboQuant port (40+ hours)
+   - **NO-GO:** Defer TurboQuant, skip to Phase 8 (Speculative Decoding)
 
 ## Key Decisions Made
 
@@ -54,36 +82,33 @@ Progress: [████░░░░░░] 44% → Phase 05 is complete! Next: P
 11. **Generation Tracking**: Atomic counter with condition variable for graceful model transitions
 12. **Health Checks**: 3-check system (model, memory, registry) for status determination
 13. **Local over Cache**: Duplicate model names prefer ./models/ over ~/.cache/zlx/models/
+14. **TurboQuant Reality**: Python-only library requires significant porting effort (40+ hours)
 
 ## Session Continuity
 
-Last session: 2026-04-02T10:09:26.991Z
-Stopped at: Completed 06-01-PLAN.md (Prompt Caching)
-Resume file: None
+Last session: 2026-04-02T14:00:00.000Z
+Stopped at: Planned 07-01-PLAN.md (TurboQuant Integration - Feasibility Spike)
+Resume file: .planning/phases/07-turboquant-integration/07-01-PLAN.md
 
 ## Next Steps
 
-### Phase 05 COMPLETE
+### Phase 07 Decision Point
 
-All three plans in Phase 05 (Multi-Model Support) are now complete:
+Phase 07 planning is complete. Before executing, decide:
 
-- ✅ 05-01: Model Registry - scanning, metadata, memory estimation
-- ✅ 05-02: Model Manager - hot-swap, memory checking, auto-switching
-- ✅ 05-03: Memory Management - component tracking, enhanced health
+**Question:** Should we proceed with TurboQuant porting or defer to Phase 8?
 
-**New capabilities:**
+**Considerations:**
+- TurboQuant porting: 40+ hours, high risk (mlx-c upgrade required)
+- Current state: Prompt caching (Phase 6) provides adequate performance
+- Alternative: Speculative Decoding (Phase 8) may offer better ROI
+- No C API means custom implementation required
 
-- Multiple models discovered in ./models/ and ~/.cache/zlx/models/
-- GET /v1/models returns all models with metadata (size, memory_required, architecture)
-- POST /v1/models/switch for explicit model switching
-- Automatic model switching when request model differs from current
-- Memory budget validation before loading (20% safety margin)
-- Active generation tracking prevents model unload during generation
-- Enhanced /v1/health with GPU info, memory breakdown, component tracking
-
-### Next: Phase 06 (TBD)
-
-Check ROADMAP.md for the next phase planning.
+**Recommended approach:**
+1. Execute 07-01 spike to get exact effort estimate
+2. Review RESEARCH.md output
+3. Make Go/No-Go decision
+4. If No-Go: Update ROADMAP to skip Phase 7, proceed to Phase 8
 
 ## Research Artifacts
 
@@ -92,9 +117,13 @@ Check ROADMAP.md for the next phase planning.
 - ARCHITECTURE.md: Component architecture and patterns
 - PITFALLS.md: Critical pitfalls and prevention strategies
 - SUMMARY.md: Executive summary with roadmap implications
+- Phase 07: src/compression/RESEARCH.md (to be created during execution)
 
-## Phase 05 Artifacts
+## Phase 06 Artifacts
 
-- 05-01-SUMMARY.md: Model Registry architecture
-- 05-02-SUMMARY.md: Model Manager hot-swap design
-- 05-03-SUMMARY.md: Memory tracking and health enhancement
+- 06-01-SUMMARY.md: Prompt caching with KV persistence, LRU eviction, metrics
+
+## Phase 07 Artifacts (Planned)
+
+- 07-01-PLAN.md: TurboQuant feasibility spike plan
+- 07-01-SUMMARY.md: Portability assessment and Go/No-Go recommendation (after execution)

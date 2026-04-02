@@ -131,7 +131,10 @@ Plans:
   4. Automatic fallback to standard cache if TurboQuant compilation fails
   5. Layer-adaptive mode: first and last N layers remain FP16 for quality
   6. Memory usage visible in logs with before/after compression stats
-**Plans**: TBD
+**Plans**: 1 planned, 1 complete
+
+Plans:
+- [x] 07-01-PLAN.md — TurboQuant feasibility spike: Metal kernel extraction, porting analysis, stub framework with graceful fallback
 
 ### Phase 8: Speculative Decoding
 **Goal**: Draft model speculation achieves 1.5-2.8x throughput increase
@@ -181,8 +184,8 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 4. API Improvements | 5/5 | ✅ Complete | 2026-04-01 |
 | 5. Multi-Model Support | 3/3 | ✅ Complete | 2026-04-02 |
 | 6. Prompt Caching | 1/1 | Complete   | 2026-04-02 |
-| 7. TurboQuant Integration | 0/1 | Not started | — |
+| 7. TurboQuant Integration | 1/1 | 📝 Planned | — |
 | 8. Speculative Decoding | 0/1 | Not started | — |
 | 9. Model Management | 0/1 | Not started | — |
 
-**v1.1 Progress:** 3/6 phases | Phase 6: 0/1 plans planned (ready to execute)
+**v1.1 Progress:** 4/6 phases | Phase 7: 1/1 plans planned (ready to execute - decision point)
