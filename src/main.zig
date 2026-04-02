@@ -8,6 +8,7 @@ const handlers = @import("api/handlers.zig");
 const metrics = @import("api/metrics.zig");
 const models_mod = @import("models/mod.zig");
 const manager_mod = @import("models/manager.zig");
+const memory = @import("models/memory.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -144,7 +145,11 @@ pub fn main() !void {
 
     std.log.info("zlx - Local inference server", .{});
 
-    // Initialize model registry first (scans for available models)
+    // Initialize memory tracker first (tracks all subsequent allocations)
+    try memory.initGlobalTracker(allocator);
+    defer memory.deinitGlobalTracker(allocator);
+
+    // Initialize model registry (scans for available models)
     try models_mod.initGlobalRegistry(allocator);
     defer models_mod.deinitGlobalRegistry(allocator);
 
