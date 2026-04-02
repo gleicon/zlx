@@ -10,6 +10,7 @@ const models_mod = @import("models/mod.zig");
 const manager_mod = @import("models/manager.zig");
 const memory = @import("models/memory.zig");
 const prompt_cache = @import("cache/prompt_cache.zig");
+const compression = @import("compression/mod.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -24,12 +25,16 @@ const USAGE =
     "  --cache-dir <DIR>       Directory for prompt cache (default: ~/.cache/zlx/prompts)\n" ++
     "  --cache-size <GB>       Maximum cache size in GB (default: 10)\n" ++
     "  --cache-enabled         Enable prompt caching (default: true)\n" ++
+    "  --turboquant            Enable TurboQuant KV cache compression (EXPERIMENTAL)\n" ++
+    "  --turboquant-bits N     Quantization bits: 3 or 4 (default: 4)\n" ++
+    "  --turboquant-adaptive N Keep first/last N layers in FP16 (default: 4)\n" ++
     "  --help                  Show this help message\n" ++
     "\n" ++
     "Examples:\n" ++
     "  zlx --model qwen2.5-coder-1.5b\n" ++
     "  zlx --model ./models/my-model --port 9000 --timeout 120\n" ++
     "  zlx --model qwen2.5-coder --cache-size 5 --cache-dir ~/.cache/zlx-small\n" ++
+    "  zlx --model qwen2.5-coder --turboquant --turboquant-bits 4\n" ++
     "\n" ++
     "The server exposes OpenAI-compatible endpoints:\n" ++
     "  POST /v1/chat_completions    Chat completions\n" ++
@@ -48,6 +53,9 @@ const Config = struct {
     cache_dir: []const u8 = "~/.cache/zlx/prompts", // Default cache directory
     cache_size_gb: u32 = 10, // Default 10GB
     cache_enabled: bool = true, // Default enabled
+    turboquant_enabled: bool = false, // TurboQuant compression (EXPERIMENTAL)
+    turboquant_bits: u4 = 4, // Quantization bits (3 or 4)
+    turboquant_adaptive: u8 = 4, // First/last N layers kept in FP16
 };
 
 fn printUsage() void {
@@ -122,6 +130,30 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
             } else {
                 std.log.err("--cache-enabled must be 'true' or 'false'", .{});
                 return error.InvalidCacheEnabled;
+            }
+        } else if (std.mem.eql(u8, arg, "--turboquant")) {
+            config.turboquant_enabled = true;
+            std.log.info("TurboQuant requested (compression not yet implemented, will use graceful fallback)", .{});
+        } else if (std.mem.eql(u8, arg, "--turboquant-bits")) {
+            const value = args.next() orelse {
+                std.log.err("Expected value after --turboquant-bits", .{});
+                return error.MissingArgument;
+            };
+            const bits = try std.fmt.parseInt(u8, value, 10);
+            if (bits < 3 or bits > 4) {
+                std.log.warn("TurboQuant only supports 3-4 bits, got {d}. Using 4 bits.", .{bits});
+                config.turboquant_bits = 4;
+            } else {
+                config.turboquant_bits = @intCast(bits);
+            }
+        } else if (std.mem.eql(u8, arg, "--turboquant-adaptive")) {
+            const value = args.next() orelse {
+                std.log.err("Expected value after --turboquant-adaptive", .{});
+                return error.MissingArgument;
+            };
+            config.turboquant_adaptive = try std.fmt.parseInt(u8, value, 10);
+            if (config.turboquant_adaptive > 32) {
+                std.log.warn("Adaptive layers >32 seems high, but accepting value: {d}", .{config.turboquant_adaptive});
             }
         }
     }
@@ -210,6 +242,24 @@ pub fn main() !void {
     // Initialize memory tracker first (tracks all subsequent allocations)
     try memory.initGlobalTracker(allocator);
     defer memory.deinitGlobalTracker(allocator);
+
+    // Initialize compression configuration (stubbed for now)
+    const compression_config = compression.CompressionConfig{
+        .compression_type = if (config.turboquant_enabled) .TurboQuant else .NoOp,
+        .bits = config.turboquant_bits,
+        .adaptive_layers = config.turboquant_adaptive,
+        .enabled = config.turboquant_enabled,
+    };
+
+    if (config.turboquant_enabled) {
+        std.log.warn("TurboQuant compression requested but not yet implemented.", .{});
+        std.log.warn("See src/compression/RESEARCH.md for porting analysis.", .{});
+        std.log.warn("Falling back to uncompressed KV cache (NoOp compression).", .{});
+        // Continue with NoOp compression - graceful fallback
+    }
+
+    // Store compression config for handlers (currently unused but available for future)
+    _ = compression_config;
 
     // Initialize prompt cache (if enabled)
     if (config.cache_enabled) {
