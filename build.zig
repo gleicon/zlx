@@ -190,7 +190,11 @@ pub fn build(b: *std.Build) !void {
     const run_turboquant_engine_test = b.addRunArtifact(turboquant_engine_test);
     test_step.dependOn(&run_turboquant_engine_test.step);
 
+    // Note: kv_compressor is tested via main executable build
+    // (complex dependencies make isolated testing difficult)
+
     // Note: manager.zig tests are compiled as part of main build
+    // due to cross-module dependencies
     // due to cross-module dependencies
 }
 
