@@ -144,6 +144,12 @@ pub const GenerationState = struct {
     /// Final decoded text without stop sequence (when stopped by stop sequence)
     final_decoded_text: ?[]const u8 = null,
 
+    /// Tracks if prompt has been processed through forward pass (for caching)
+    prompt_processed: bool = false,
+
+    /// Tracks if cache is owned by this GenerationState (false if restored from cache)
+    owns_cache: bool = true,
+
     /// Initialize generation state with a transformer and initial tokens
     pub fn init(
         allocator: std.mem.Allocator,
@@ -185,14 +191,62 @@ pub const GenerationState = struct {
             .decoded_text_buffer = .empty,
             .tokens_since_decode = .empty,
             .tokenizer = tokenizer,
+            .prompt_processed = false,
+            .owns_cache = true,
+        };
+    }
+
+    /// Initialize generation state with a cached KV state (skips prompt processing)
+    /// Used when prompt cache hit occurs - cache already contains processed prompt state
+    pub fn initWithCache(
+        allocator: std.mem.Allocator,
+        transformer: *qwen.Transformer,
+        restored_cache: *mlx.Cache, // Pre-loaded from cache
+        prompt_tokens: []const u32, // Already processed, just for tracking
+        eos_token_ids: []const u32,
+        options: GenerationOptions,
+        tokenizer: ?*mlx_tokenizer.Tokenizer,
+    ) !Self {
+        // Create single token array for generation (not full prompt)
+        // The restored cache already contains the prompt state
+        const toks_array = blk: {
+            // Use last token of prompt for first generation step
+            const last_token = if (prompt_tokens.len > 0) prompt_tokens[prompt_tokens.len - 1] else 0;
+            const single_token = [_]u32{last_token};
+            break :blk try mlx.arrayNewData(&single_token, .{ 1, 1 }, mlx.UINT32);
+        };
+
+        return Self{
+            .allocator = allocator,
+            .transformer = transformer,
+            .cache = restored_cache, // Use restored cache (owned by caller, not freed here)
+            .tokens_generated = 0,
+            .max_tokens = options.max_tokens,
+            .current_tokens = .empty,
+            .is_complete = false,
+            .eos_token_ids = eos_token_ids,
+            .toks_array = toks_array,
+            .logits_array = mlx.arrayNew(),
+            .mask_array = mlx.arrayNew(),
+            .options = options,
+            .logprobs_buffer = .empty,
+            .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
+            .decoded_text_buffer = .empty,
+            .tokens_since_decode = .empty,
+            .tokenizer = tokenizer,
+            .prompt_processed = true, // Prompt already processed (in cached state)
+            .owns_cache = false, // Cache is owned by caller (prompt cache)
         };
     }
 
     /// Deinitialize generation state and free resources
     pub fn deinit(self: *Self) void {
         if (self.cache) |cache| {
-            cache.deinit();
-            self.allocator.destroy(cache);
+            // Only free cache if we own it (not restored from cache)
+            if (self.owns_cache) {
+                cache.deinit();
+                self.allocator.destroy(cache);
+            }
         }
 
         mlx.arrayFree(self.toks_array);
@@ -213,6 +267,34 @@ pub const GenerationState = struct {
         }
 
         self.current_tokens.deinit(self.allocator);
+    }
+
+    /// Save the current KV cache state to the prompt cache.
+    /// Call this after prompt processing is complete (after first next() call).
+    /// Returns the file path where cache was saved, or null if caching is disabled.
+    pub fn saveCacheState(
+        self: *Self,
+        prompt_cache: anytype, // *PromptCache
+        key: anytype, // CacheKey
+        prompt_len: usize,
+    ) !?[]const u8 {
+        if (self.cache == null or !self.owns_cache) {
+            return null; // Nothing to save
+        }
+
+        // Generate cache file path
+        const cache_path = try prompt_cache.getCacheFilePath(key);
+        errdefer prompt_cache.allocator.free(cache_path);
+
+        // Get file size estimate based on cache state
+        const num_layers = self.cache.?.layers.len;
+        const estimated_size: u64 = @intCast(num_layers * prompt_len * 2 * 2 * 1024); // Rough estimate
+
+        // Save cache metadata (actual MLX array serialization handled by caller)
+        try prompt_cache.save(key, cache_path, estimated_size);
+
+        std.log.debug("Saved prompt cache to {s}", .{cache_path});
+        return cache_path;
     }
 
     /// Decode tokens to text using the tokenizer
@@ -538,6 +620,12 @@ pub const GenerationState = struct {
         mlx.arrayFree(self.toks_array);
         const single_token = [_]u32{next_token};
         self.toks_array = try mlx.arrayNewData(&single_token, .{ 1, 1 }, mlx.UINT32);
+
+        // Mark prompt as processed after first forward pass
+        // This is used for prompt caching to know when to save the cache state
+        if (!self.prompt_processed) {
+            self.prompt_processed = true;
+        }
 
         return next_token;
     }
