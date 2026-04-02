@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **v1.1 (Production-Ready):**
 - [x] **Phase 4: API Improvements** - Full OpenAI API compatibility: stop sequences, logprobs, sampling parameters, error handling, timeouts
 - [ ] **Phase 5: Multi-Model Support** - Model registry, hot-swap, memory budget management
-- [ ] **Phase 6: Prompt Caching** - KV cache persistence with sub-second TTFT for repeated contexts
+- [x] **Phase 6: Prompt Caching** - KV cache persistence with sub-second TTFT for repeated contexts (completed 2026-04-02)
 - [ ] **Phase 7: TurboQuant Integration** - Metal kernel KV compression for 4.6x memory reduction
 - [ ] **Phase 8: Speculative Decoding** - Draft model speculation for 1.5-2.8x throughput increase
 - [ ] **Phase 9: Model Management** - Auto-download, configuration, and Open WebUI integration
@@ -118,7 +118,7 @@ Plans:
 **Plans**: 1 plan (Wave 1: Complete caching infrastructure)
 
 Plans:
-- [ ] 06-01-PLAN.md — Prompt caching with KV persistence, LRU eviction, and metrics (PERF-02, INFRA-01)
+- [x] 06-01-PLAN.md — Prompt caching with KV persistence, LRU eviction, and metrics (PERF-02, INFRA-01)
 
 ### Phase 7: TurboQuant Integration
 **Goal**: KV cache compression achieves 4.6x memory reduction via Metal kernels
@@ -180,7 +180,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 3. HTTP API & Integration | 1/1 | ✅ Complete | 2026-03-31 |
 | 4. API Improvements | 5/5 | ✅ Complete | 2026-04-01 |
 | 5. Multi-Model Support | 3/3 | ✅ Complete | 2026-04-02 |
-| 6. Prompt Caching | 0/1 | 🔄 Planned | — |
+| 6. Prompt Caching | 1/1 | Complete   | 2026-04-02 |
 | 7. TurboQuant Integration | 0/1 | Not started | — |
 | 8. Speculative Decoding | 0/1 | Not started | — |
 | 9. Model Management | 0/1 | Not started | — |
