@@ -8,23 +8,24 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 
 **Phase Numbering:**
 - Integer phases (1, 2, 3): v1.0 — COMPLETE
-- Integer phases (4, 5, 6, 7, 8, 9): v1.1 — Production-Ready Inference Server
-- Decimal phases (X.1, X.2): Urgent insertions (marked with INSERTED)
-
-Decimal phases appear between their surrounding integers in numeric order.
+- Integer phases (4, 5, 6, 7, 8, 9): v1.1 — COMPLETE
+- Phase 11: v1.1.1 — DeepSeek MoE Support (IN PROGRESS)
 
 **v1.0 (COMPLETE):**
 - [x] **Phase 1: Foundation & Build** - Resolve build blockers so `zig build` succeeds on macOS aarch64
 - [x] **Phase 2: Inference Core** - Load a model and generate tokens one at a time via Metal GPU
 - [x] **Phase 3: HTTP API & Integration** - Expose completions over HTTP and verify OpenCode works end-to-end
 
-**v1.1 (Production-Ready):**
+**v1.1 (COMPLETE):**
 - [x] **Phase 4: API Improvements** - Full OpenAI API compatibility: stop sequences, logprobs, sampling parameters, error handling, timeouts
-- [ ] **Phase 5: Multi-Model Support** - Model registry, hot-swap, memory budget management
+- [x] **Phase 5: Multi-Model Support** - Model registry, hot-swap, memory budget management
 - [x] **Phase 6: Prompt Caching** - KV cache persistence with sub-second TTFT for repeated contexts (completed 2026-04-02)
-- [ ] **Phase 7: TurboQuant Integration** - Metal kernel KV compression for 4.6x memory reduction
-- [ ] **Phase 8: Speculative Decoding** - Draft model speculation for 1.5-2.8x throughput increase
+- [x] **Phase 7: TurboQuant Integration** - Metal kernel KV compression for 4.6x memory reduction
+- [x] **Phase 8: Speculative Decoding** - Draft model speculation for 1.5-2.8x throughput increase
 - [x] **Phase 9: Model Management** - Auto-download, configuration, and Open WebUI integration (COMPLETE)
+
+**v1.1.1 (IN PROGRESS):**
+- [ ] **Phase 11: DeepSeek MoE Support** - DeepSeek-Coder-V2-Lite via mlx-c v0.4.x with MLA and MoE
 
 ## Phase Details
 
@@ -167,6 +168,26 @@ Plans:
   5. Open WebUI connects successfully to zlx at `http://localhost:8081` with CORS enabled
   6. `GET /v1/models` shows all models: available, loading, loaded with memory requirements
 
+### Phase 11: DeepSeek MoE Support
+**Goal**: Add DeepSeek-V2-Lite support via mlx-c v0.4.x upgrade with MLA and MoE
+**Depends on**: Phase 9
+**Requirements**: New capability — DeepSeek MoE inference with sparse parameters
+**Success Criteria** (what must be TRUE):
+  1. DeepSeek-Coder-V2-Lite model loads and runs inference
+  2. Memory usage matches 2B active params (not 15.7B total)
+  3. 128k context works with MLA compressed KV cache
+  4. Chat completions use correct format (User:/Assistant:)
+  5. Existing models (Qwen, Llama) continue to work
+  6. mlx-c v0.4.x integrated alongside v0.1.2
+**Plans**: 5 plans (Wave 1: mlx-c upgrade, Wave 2: MLA+MoE parallel, Wave 3: Transformer, Wave 4: Integration)
+
+Plans:
+- [ ] 11-01-PLAN.md — mlx-c v0.4.x integration for Fast Custom Ops API
+- [ ] 11-02-PLAN.md — Multi-head Latent Attention (MLA) with 90% KV compression
+- [ ] 11-03-PLAN.md — Mixture of Experts (MoE) routing with sparse expert activation
+- [ ] 11-04-PLAN.md — DeepSeek transformer integrating MLA + MoE
+- [ ] 11-05-PLAN.md — Chat template, registry, memory estimation, end-to-end testing
+
 ## Progress
 
 **Execution Order:**
@@ -193,5 +214,8 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 7. TurboQuant Integration | 2/2 | ✅ Complete | 2026-04-02 |
 | 8. Speculative Decoding | 1/1 | ✅ Complete | 2026-04-02 |
 | 9. Model Management | 3/3 | ✅ Complete | 2026-04-02 |
+| 11. DeepSeek MoE | 0/5 | 🔵 Planned | - |
 
-**v1.1 Progress:** 7/7 phases complete | All phases COMPLETE | v1.1.0 Ready for Release
+**v1.1.0 Progress:** 9/9 phases complete | All phases COMPLETE | v1.1.0 Released
+
+**v1.1.1 Target:** DeepSeek MoE Support | Phase 11 Planned | Ready to Execute
