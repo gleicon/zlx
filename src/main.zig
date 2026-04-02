@@ -9,6 +9,7 @@ const metrics = @import("api/metrics.zig");
 const models_mod = @import("models/mod.zig");
 const manager_mod = @import("models/manager.zig");
 const memory = @import("models/memory.zig");
+const prompt_cache = @import("cache/prompt_cache.zig");
 
 const USAGE =
     "Usage: zlx [OPTIONS]\n" ++
@@ -20,17 +21,22 @@ const USAGE =
     "  --port <PORT>           Server port (default: 8080)\n" ++
     "  --host <HOST>           Bind address (default: 127.0.0.1)\n" ++
     "  --timeout <SECONDS>     Request timeout in seconds (default: 60)\n" ++
+    "  --cache-dir <DIR>       Directory for prompt cache (default: ~/.cache/zlx/prompts)\n" ++
+    "  --cache-size <GB>       Maximum cache size in GB (default: 10)\n" ++
+    "  --cache-enabled         Enable prompt caching (default: true)\n" ++
     "  --help                  Show this help message\n" ++
     "\n" ++
     "Examples:\n" ++
     "  zlx --model qwen2.5-coder-1.5b\n" ++
     "  zlx --model ./models/my-model --port 9000 --timeout 120\n" ++
+    "  zlx --model qwen2.5-coder --cache-size 5 --cache-dir ~/.cache/zlx-small\n" ++
     "\n" ++
     "The server exposes OpenAI-compatible endpoints:\n" ++
     "  POST /v1/chat_completions    Chat completions\n" ++
     "  GET  /v1/models              List available models\n" ++
     "  POST /v1/models/switch       Switch to different model\n" ++
     "  GET  /v1/health              Health check\n" ++
+    "  GET  /v1/metrics             Prometheus metrics\n" ++
     "\n";
 
 const Config = struct {
@@ -39,6 +45,9 @@ const Config = struct {
     port: u16 = 8080,
     host: []const u8 = "127.0.0.1",
     timeout_seconds: u32 = 60, // Default 60s per D-32
+    cache_dir: []const u8 = "~/.cache/zlx/prompts", // Default cache directory
+    cache_size_gb: u32 = 10, // Default 10GB
+    cache_enabled: bool = true, // Default enabled
 };
 
 fn printUsage() void {
@@ -85,6 +94,35 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
                 std.log.err("Timeout must be between 1 and 3600 seconds", .{});
                 return error.InvalidTimeout;
             }
+        } else if (std.mem.eql(u8, arg, "--cache-dir")) {
+            const value = args.next() orelse {
+                std.log.err("Expected value after --cache-dir", .{});
+                return error.MissingArgument;
+            };
+            config.cache_dir = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, arg, "--cache-size")) {
+            const value = args.next() orelse {
+                std.log.err("Expected value after --cache-size", .{});
+                return error.MissingArgument;
+            };
+            config.cache_size_gb = try std.fmt.parseInt(u32, value, 10);
+            if (config.cache_size_gb == 0 or config.cache_size_gb > 1000) {
+                std.log.err("Cache size must be between 1 and 1000 GB", .{});
+                return error.InvalidCacheSize;
+            }
+        } else if (std.mem.eql(u8, arg, "--cache-enabled")) {
+            const value = args.next() orelse {
+                std.log.err("Expected value after --cache-enabled", .{});
+                return error.MissingArgument;
+            };
+            if (std.mem.eql(u8, value, "true")) {
+                config.cache_enabled = true;
+            } else if (std.mem.eql(u8, value, "false")) {
+                config.cache_enabled = false;
+            } else {
+                std.log.err("--cache-enabled must be 'true' or 'false'", .{});
+                return error.InvalidCacheEnabled;
+            }
         }
     }
 
@@ -101,6 +139,30 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
     }
 
     return config;
+}
+
+fn expandHomeDir(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    // Check if path starts with ~
+    if (path.len == 0 or path[0] != '~') {
+        return allocator.dupe(u8, path);
+    }
+
+    // Get HOME environment variable
+    const home = std.process.getEnvVarOwned(allocator, "HOME") catch |err| {
+        std.log.warn("Could not get HOME environment variable: {s}. Using path as-is.", .{@errorName(err)});
+        return allocator.dupe(u8, path);
+    };
+    defer allocator.free(home);
+
+    // Replace ~ with home directory
+    if (path.len == 1) {
+        return allocator.dupe(u8, home);
+    } else if (path.len > 1 and path[1] == '/') {
+        return try std.fmt.allocPrint(allocator, "{s}{s}", .{ home, path[1..] });
+    } else {
+        // ~something - treat as literal path
+        return allocator.dupe(u8, path);
+    }
 }
 
 fn resolveModelPath(allocator: std.mem.Allocator, name_or_path: []const u8) ![]const u8 {
@@ -148,6 +210,20 @@ pub fn main() !void {
     // Initialize memory tracker first (tracks all subsequent allocations)
     try memory.initGlobalTracker(allocator);
     defer memory.deinitGlobalTracker(allocator);
+
+    // Initialize prompt cache (if enabled)
+    if (config.cache_enabled) {
+        const cache_dir_expanded = try expandHomeDir(allocator, config.cache_dir);
+        defer allocator.free(cache_dir_expanded);
+
+        prompt_cache.initGlobalCache(allocator, cache_dir_expanded, config.cache_size_gb) catch |err| {
+            std.log.warn("Failed to initialize prompt cache: {s}. Continuing without caching.", .{@errorName(err)});
+            // Continue without cache - not fatal
+        };
+    } else {
+        std.log.info("Prompt caching disabled", .{});
+    }
+    defer prompt_cache.deinitGlobalCache(allocator);
 
     // Initialize model registry (scans for available models)
     try models_mod.initGlobalRegistry(allocator);
