@@ -4,8 +4,4 @@
 pub const mlx_v4 = @cImport({
     @cDefine("MLX_C_VERSION", "0.4.1");
     @cInclude("mlx/c/mlx.h");
-    @cInclude("mlx/c/vector.h");
-    @cInclude("mlx/c/array.h");
-    @cInclude("mlx/c/stream.h");
-    @cInclude("mlx/c/fast.h"); // Fast Custom Ops API
 });

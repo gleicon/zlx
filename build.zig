@@ -213,10 +213,26 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    // Add v0.4.x include paths for test compilation (use absolute path)
+    const mlx_c_v4_absolute = b.pathJoin(&.{ "/Users/gleicon/code/zig/zlx", deps.mlx_c_v4_path });
+    mlx_v4_test_mod.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    mlx_v4_test_mod.addObjectFile(.{ .cwd_relative = deps.mlx_c_v4_lib_path });
+    mlx_v4_test_mod.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_v4_build_path, "_deps/mlx-build/libmlx.a" }) });
+
     const mlx_v4_test = b.addTest(.{
         .name = "mlx_v4_test",
         .root_module = mlx_v4_test_mod,
     });
+    mlx_v4_test.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    mlx_v4_test.addObjectFile(.{ .cwd_relative = deps.mlx_c_v4_lib_path });
+    mlx_v4_test.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_v4_build_path, "_deps/mlx-build/libmlx.a" }) });
+    mlx_v4_test.addLibraryPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib" });
+    mlx_v4_test.addFrameworkPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks" });
+    mlx_v4_test.linkLibCpp();
+    mlx_v4_test.linkFramework("Metal");
+    mlx_v4_test.linkFramework("Foundation");
+    mlx_v4_test.linkFramework("QuartzCore");
+    mlx_v4_test.linkFramework("Accelerate");
 
     const run_mlx_v4_test = b.addRunArtifact(mlx_v4_test);
     test_step.dependOn(&run_mlx_v4_test.step);

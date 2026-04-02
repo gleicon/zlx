@@ -19,7 +19,7 @@ pub const MlxV4Error = error{
 /// FastMetalKernel wraps mlx-c v0.4.x's custom Metal kernel API
 /// for high-performance operations like MoE routing and MLA attention
 pub const FastMetalKernel = struct {
-    kernel: ?*c.mlx_v4.mlx_fast_metal_kernel,
+    kernel: c.mlx_v4.mlx_fast_metal_kernel,
     allocator: std.mem.Allocator,
     name: []const u8,
 
@@ -47,7 +47,7 @@ pub const FastMetalKernel = struct {
         ensure_row_contiguous: bool,
         atomic_outputs: bool,
     ) MlxV4Error!Self {
-        // Convert input names to C strings
+        // Convert input names to C string vector
         const input_c_strings = allocator.alloc([*c]const u8, input_names.len) catch {
             return MlxV4Error.OutOfMemory;
         };
@@ -68,7 +68,7 @@ pub const FastMetalKernel = struct {
             }
         }
 
-        // Convert output names to C strings
+        // Convert output names to C string vector
         const output_c_strings = allocator.alloc([*c]const u8, output_names.len) catch {
             return MlxV4Error.OutOfMemory;
         };
@@ -88,58 +88,50 @@ pub const FastMetalKernel = struct {
             }
         }
 
-        // Create input/output name vectors
-        var input_vec: c.mlx_v4.mlx_vector_string = undefined;
-        c.mlx_v4.mlx_vector_string_new_data(
-            &input_vec,
+        // Create input/output name vectors using v0.4.x API
+        const input_vec = c.mlx_v4.mlx_vector_string_new_data(
             input_c_strings.ptr,
-            @intCast(input_names.len),
+            input_names.len,
         );
-        defer c.mlx_v4.mlx_vector_string_free(&input_vec);
+        defer _ = c.mlx_v4.mlx_vector_string_free(input_vec);
 
-        var output_vec: c.mlx_v4.mlx_vector_string = undefined;
-        c.mlx_v4.mlx_vector_string_new_data(
-            &output_vec,
+        const output_vec = c.mlx_v4.mlx_vector_string_new_data(
             output_c_strings.ptr,
-            @intCast(output_names.len),
+            output_names.len,
         );
-        defer c.mlx_v4.mlx_vector_string_free(&output_vec);
+        defer _ = c.mlx_v4.mlx_vector_string_free(output_vec);
 
-        // Create kernel
-        const source_c = allocator.dupeZ(u8, metal_source) catch {
-            return MlxV4Error.OutOfMemory;
-        };
-        defer allocator.free(source_c);
-
+        // Create C strings for name, source, header
         const name_c = allocator.dupeZ(u8, name) catch {
             return MlxV4Error.OutOfMemory;
         };
         defer allocator.free(name_c);
+
+        const source_c = allocator.dupeZ(u8, metal_source) catch {
+            return MlxV4Error.OutOfMemory;
+        };
+        defer allocator.free(source_c);
 
         const header_c = allocator.dupeZ(u8, "") catch {
             return MlxV4Error.OutOfMemory;
         };
         defer allocator.free(header_c);
 
-        var kernel: c.mlx_v4.mlx_fast_metal_kernel = undefined;
-        const result = c.mlx_v4.mlx_fast_metal_kernel_new(
-            &kernel,
+        // Create kernel using v0.4.x 7-argument API:
+        // mlx_fast_metal_kernel_new(name, input_names, output_names, source, header, ensure_row_contiguous, atomic_outputs)
+        const kernel = c.mlx_v4.mlx_fast_metal_kernel_new(
             name_c,
-            &input_vec,
-            &output_vec,
+            input_vec,
+            output_vec,
             source_c,
             header_c,
-            if (ensure_row_contiguous) 1 else 0,
-            if (atomic_outputs) 1 else 0,
+            ensure_row_contiguous,
+            atomic_outputs,
         );
-
-        if (result != 0) {
-            return MlxV4Error.KernelCreationFailed;
-        }
 
         // Allocate persistent name copy
         const name_copy = allocator.dupe(u8, name) catch {
-            _ = c.mlx_v4.mlx_fast_metal_kernel_free(&kernel);
+            _ = c.mlx_v4.mlx_fast_metal_kernel_free(kernel);
             return MlxV4Error.OutOfMemory;
         };
 
@@ -152,10 +144,7 @@ pub const FastMetalKernel = struct {
 
     /// Free kernel resources
     pub fn deinit(self: *Self) void {
-        if (self.kernel) |*k| {
-            _ = c.mlx_v4.mlx_fast_metal_kernel_free(k);
-            self.kernel = null;
-        }
+        _ = c.mlx_v4.mlx_fast_metal_kernel_free(self.kernel);
         self.allocator.free(self.name);
     }
 
@@ -178,10 +167,6 @@ pub const FastMetalKernel = struct {
         thread_group_dims: [3]u32,
         stream: c.mlx_v4.mlx_stream,
     ) MlxV4Error!void {
-        if (self.kernel == null) {
-            return MlxV4Error.InvalidInput;
-        }
-
         // Create input vector
         var input_vec: c.mlx_v4.mlx_vector_array = undefined;
         c.mlx_v4.mlx_vector_array_new_data(
@@ -215,10 +200,9 @@ pub const FastMetalKernel = struct {
         };
 
         // Apply kernel
-        var kernel_mut = self.kernel.?;
         const result = c.mlx_v4.mlx_fast_metal_kernel_apply(
             &output_vec,
-            &kernel_mut,
+            self.kernel,
             &input_vec,
             &config,
             stream,
@@ -242,11 +226,9 @@ pub const FastMetalKernel = struct {
 /// Check if mlx-c v0.4.x Fast Ops API is available
 /// This can be used to conditionally enable advanced features
 pub fn hasFastOps() bool {
-    // Try to access a v0.4.x specific function
-    // If the library is not linked, this will fail at link time
-    // At runtime, we check if the symbols are present by attempting
-    // a minimal operation
-    return true; // Simplified - actual check would verify library presence
+    // For now, we assume it's available if the library is linked
+    // In a production implementation, we might check for symbol presence
+    return true;
 }
 
 /// Configuration for grid/thread dimensions

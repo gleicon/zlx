@@ -28,7 +28,7 @@ fn testKernelCreation() !void {
     const allocator = std.testing.allocator;
 
     // Create a simple test kernel
-    const kernel = mlx_v4.FastMetalKernel.init(
+    var kernel = mlx_v4.FastMetalKernel.init(
         allocator,
         "test_kernel",
         &[_][]const u8{"input"},
