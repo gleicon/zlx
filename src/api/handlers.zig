@@ -412,6 +412,209 @@ fn determineArchitecture(config: *const @import("../models/registry.zig").Config
     }
 }
 
+/// Handle POST /v1/models/load - Start background model load
+pub fn handleLoadModel(req: anytype, res: anytype) !void {
+    // Set CORS headers
+    setCorsHeaders(res);
+
+    // Handle preflight OPTIONS request
+    if (req.method == .OPTIONS) {
+        res.status = 204;
+        return;
+    }
+
+    // Get request body
+    const body = req.body() orelse {
+        try sendBadRequestError(res, "Missing request body", null, "req-load");
+        return;
+    };
+
+    // Parse JSON request
+    const parsed = std.json.parseFromSlice(
+        types.LoadModelRequest,
+        std.heap.page_allocator,
+        body,
+        .{ .ignore_unknown_fields = true },
+    ) catch |err| {
+        std.log.err("Failed to parse load model request: {s}", .{@errorName(err)});
+        try sendBadRequestError(res, "Invalid JSON in request body", null, "req-load");
+        return;
+    };
+    defer parsed.deinit();
+
+    const request = parsed.value;
+
+    // Get the manager
+    const manager = manager_mod.getGlobalManager();
+    if (manager == null) {
+        try sendError(res, 503, "Model manager not available", "service_unavailable", "req-load");
+        return;
+    }
+    const m = manager.?;
+
+    // Check if model exists in registry
+    if (models_mod.getGlobalRegistry()) |reg| {
+        if (reg.getModel(request.model) == null) {
+            try sendError(res, 404, "Model not found in registry", "model_not_found", "req-load");
+            return;
+        }
+    } else {
+        try sendError(res, 503, "Model registry not available", "service_unavailable", "req-load");
+        return;
+    }
+
+    // Check memory availability
+    if (!m.canLoadModel(request.model)) {
+        try sendError(res, 503, "Insufficient memory to load model", "insufficient_memory", "req-load");
+        return;
+    }
+
+    // Start background load
+    m.startBackgroundLoad(request.model, request.auto_switch) catch |err| {
+        std.log.err("Failed to start background load for '{s}': {s}", .{
+            request.model,
+            @errorName(err),
+        });
+        const error_msg = switch (err) {
+            error.LoadInProgress => "Another model is already loading in background",
+            error.ModelNotFound => "Model not found",
+            error.InsufficientMemory => "Insufficient memory",
+            else => "Failed to start background load",
+        };
+        try sendError(res, 503, error_msg, "load_failed", "req-load");
+        return;
+    };
+
+    // Return 202 Accepted
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(std.heap.page_allocator);
+    const writer = json.writer(std.heap.page_allocator);
+
+    try writer.writeAll("{");
+    try writer.writeAll("\"status\":\"loading_started\",");
+    try writer.print("\"model\":\"{s}\",", .{request.model});
+    try writer.print("\"auto_switch\":{s}", .{if (request.auto_switch) "true" else "false"});
+    try writer.writeAll("}");
+
+    res.status = 202; // Accepted
+    res.content_type = .JSON;
+    try res.writer().writeAll(json.items);
+}
+
+/// Handle GET /v1/models/load-status - Get background load progress
+pub fn handleLoadStatus(req: anytype, res: anytype) !void {
+    // Set CORS headers
+    setCorsHeaders(res);
+
+    // Handle preflight OPTIONS request
+    if (req.method == .OPTIONS) {
+        res.status = 204;
+        return;
+    }
+
+    // Get the manager
+    const manager = manager_mod.getGlobalManager();
+    if (manager == null) {
+        try sendError(res, 503, "Model manager not available", "service_unavailable", "req-status");
+        return;
+    }
+    const m = manager.?;
+
+    // Get progress
+    const progress_opt = m.getLoadProgress();
+
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(std.heap.page_allocator);
+    const writer = json.writer(std.heap.page_allocator);
+
+    if (progress_opt) |progress| {
+        // Build status response
+        const status_str = switch (progress.status) {
+            .loading => "loading",
+            .completed => "completed",
+            .failed => "failed",
+            .cancelled => "cancelled",
+        };
+
+        const stage_str = switch (progress.stage) {
+            .downloading => "downloading",
+            .loading_weights => "loading_weights",
+            .initializing => "initializing",
+            .complete => "complete",
+        };
+
+        try writer.writeAll("{");
+        try writer.writeAll("\"status\":\"active\",");
+        try writer.print("\"model\":\"{s}\",", .{progress.model_id});
+        try writer.print("\"load_status\":\"{s}\",", .{status_str});
+        try writer.print("\"stage\":\"{s}\",", .{stage_str});
+        try writer.print("\"percent_complete\":{d},", .{progress.percent_complete});
+        try writer.print("\"bytes_loaded\":{d},", .{progress.bytes_loaded});
+        try writer.print("\"bytes_total\":{d},", .{progress.bytes_total});
+        try writer.print("\"started_at\":{d},", .{progress.started_at});
+        try writer.print("\"updated_at\":{d}", .{progress.updated_at});
+        if (progress.error_message) |msg| {
+            try writer.print(",\"error\":\"{s}\"", .{msg});
+        }
+        try writer.writeAll("}");
+    } else {
+        // No active load
+        try writer.writeAll("{");
+        try writer.writeAll("\"status\":\"no_active_load\",");
+        try writer.writeAll("\"message\":\"No background model load is currently active\"");
+        try writer.writeAll("}");
+    }
+
+    res.status = 200;
+    res.content_type = .JSON;
+    try res.writer().writeAll(json.items);
+}
+
+/// Handle POST /v1/models/load/cancel - Cancel ongoing background load
+pub fn handleCancelLoad(req: anytype, res: anytype) !void {
+    // Set CORS headers
+    setCorsHeaders(res);
+
+    // Handle preflight OPTIONS request
+    if (req.method == .OPTIONS) {
+        res.status = 204;
+        return;
+    }
+
+    // Get the manager
+    const manager = manager_mod.getGlobalManager();
+    if (manager == null) {
+        try sendError(res, 503, "Model manager not available", "service_unavailable", "req-cancel");
+        return;
+    }
+    const m = manager.?;
+
+    // Try to cancel
+    m.cancelLoad() catch |err| {
+        std.log.err("Failed to cancel background load: {s}", .{@errorName(err)});
+        const error_msg = switch (err) {
+            error.NoActiveLoad => "No active background load to cancel",
+            else => "Failed to cancel background load",
+        };
+        try sendError(res, 400, error_msg, "cancel_failed", "req-cancel");
+        return;
+    };
+
+    // Return success
+    var json = std.ArrayList(u8).empty;
+    errdefer json.deinit(std.heap.page_allocator);
+    const writer = json.writer(std.heap.page_allocator);
+
+    try writer.writeAll("{");
+    try writer.writeAll("\"status\":\"cancelled\",");
+    try writer.writeAll("\"message\":\"Background model load has been cancelled\"");
+    try writer.writeAll("}");
+
+    res.status = 200;
+    res.content_type = .JSON;
+    try res.writer().writeAll(json.items);
+}
+
 /// Handle POST /v1/models/switch (explicit model switching endpoint)
 pub fn handleSwitchModel(req: anytype, res: anytype) !void {
     // Set CORS headers

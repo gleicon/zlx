@@ -461,6 +461,14 @@ pub const SwitchModelRequest = struct {
     model: []const u8,
 };
 
+/// Request body for POST /v1/models/load (background loading)
+pub const LoadModelRequest = struct {
+    /// Model ID to load in background
+    model: []const u8,
+    /// Whether to auto-switch to this model when load completes
+    auto_switch: bool = false,
+};
+
 /// Response for successful model switch
 pub const SwitchModelResponse = struct {
     /// Status of the switch
