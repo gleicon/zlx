@@ -63,6 +63,18 @@ pub const Server = struct {
         // GET /v1/metrics (Prometheus metrics)
         router.get("/v1/metrics", handleMetrics, .{});
 
+        // POST /v1/models/load (background model loading)
+        router.post("/v1/models/load", handleLoadModel, .{});
+        router.options("/v1/models/load", handleOptions, .{});
+
+        // GET /v1/models/load-status (check background load progress)
+        router.get("/v1/models/load-status", handleLoadStatus, .{});
+        router.options("/v1/models/load-status", handleOptions, .{});
+
+        // POST /v1/models/load/cancel (cancel background load)
+        router.post("/v1/models/load/cancel", handleCancelLoad, .{});
+        router.options("/v1/models/load/cancel", handleOptions, .{});
+
         // OPTIONS handler for CORS preflight (handled in individual handlers)
         router.options("/v1/chat/completions", handleOptions, .{});
         router.options("/v1/models", handleOptions, .{});
@@ -105,6 +117,21 @@ fn handleListModels(req: *httpz.Request, res: *httpz.Response) !void {
 /// Wrapper for switch model handler
 fn handleSwitchModel(req: *httpz.Request, res: *httpz.Response) !void {
     try handlers.handleSwitchModel(req, res);
+}
+
+/// Wrapper for load model handler (background loading)
+fn handleLoadModel(req: *httpz.Request, res: *httpz.Response) !void {
+    try handlers.handleLoadModel(req, res);
+}
+
+/// Wrapper for load status handler
+fn handleLoadStatus(req: *httpz.Request, res: *httpz.Response) !void {
+    try handlers.handleLoadStatus(req, res);
+}
+
+/// Wrapper for cancel load handler
+fn handleCancelLoad(req: *httpz.Request, res: *httpz.Response) !void {
+    try handlers.handleCancelLoad(req, res);
 }
 
 /// Wrapper for health check handler
