@@ -198,6 +198,16 @@ pub const ChatCompletionRequest = struct {
         return if (self.min_p) |mp| @floatCast(mp.value) else 0.0;
     }
 
+    /// Get effective presence_penalty (-2.0 to 2.0, default 0.0)
+    pub fn getPresencePenalty(self: ChatCompletionRequest) f32 {
+        return if (self.presence_penalty) |pp| @floatCast(pp.value) else 0.0;
+    }
+
+    /// Get effective frequency_penalty (-2.0 to 2.0, default 0.0)
+    pub fn getFrequencyPenalty(self: ChatCompletionRequest) f32 {
+        return if (self.frequency_penalty) |fp| @floatCast(fp.value) else 0.0;
+    }
+
     /// Get effective repetition_penalty (1.0 = disabled)
     pub fn getRepetitionPenalty(self: ChatCompletionRequest) f32 {
         return if (self.repetition_penalty) |rp| @floatCast(rp.value) else 1.0;

@@ -103,19 +103,45 @@ pub fn streamResponse(
         std.log.warn("Streaming input truncated from {d} to {d} tokens", .{ input_tokens.len + max_input_tokens, max_input_tokens });
     }
 
+    // Create generation options with all sampling parameters
+    const gen_options = generator.GenerationOptions{
+        .max_tokens = max_new_tokens,
+        .temperature = request.getTemperature(),
+        .top_p = request.getTopP(),
+        .stop_on_eos = true,
+        .seed = if (request.seed) |s| @intCast(s) else null,
+        .top_k = request.getTopK(),
+        .min_p = request.getMinP(),
+        .presence_penalty = request.getPresencePenalty(),
+        .frequency_penalty = request.getFrequencyPenalty(),
+        .repetition_penalty = request.getRepetitionPenalty(),
+        .logprobs_enabled = request.logprobs orelse false,
+    };
+
     // Initialize transformer (we need it for generation)
     var transformer = try qwen.Transformer.init(allocator, ctx.model_path);
     defer transformer.deinit();
 
-    // Use built-in transformer generate method instead of custom generator
-    const generated_tokens = transformer.generate(input_tokens, max_new_tokens) catch |err| {
-        std.log.err("Generation failed: {s}", .{@errorName(err)});
-        return err;
-    };
-    defer allocator.free(generated_tokens);
+    // Use generation state with full sampling support
+    var state = try generator.GenerationState.init(
+        allocator,
+        &transformer,
+        input_tokens,
+        transformer.eos_token_ids,
+        gen_options,
+    );
+    defer state.deinit();
+
+    // Collect all tokens using the iterator
+    var generated_tokens = std.ArrayList(u32).empty;
+    defer generated_tokens.deinit(allocator);
+
+    while (try state.next()) |token| {
+        try generated_tokens.append(allocator, token);
+    }
 
     // Decode generated tokens
-    const generated_text = try tokenizer_ref.decode(generated_tokens);
+    const generated_text = try tokenizer_ref.decode(generated_tokens.items);
     defer allocator.free(generated_text);
 
     const created_timestamp = std.time.timestamp();
@@ -165,7 +191,7 @@ pub fn streamResponse(
     // Record metrics
     const end_time = std.time.milliTimestamp();
     const generation_time_ms = @as(u64, @intCast(end_time - start_time));
-    const completion_token_count: u32 = @intCast(generated_tokens.len);
+    const completion_token_count: u32 = @intCast(generated_tokens.items.len);
     // For streaming, we don't have true TTFT since we wait for all tokens, so use 0
     metrics.recordRequest(prompt_token_count, completion_token_count, generation_time_ms, 0);
 }
@@ -306,6 +332,13 @@ pub fn generateNonStreamingResponse(
         .temperature = request.getTemperature(),
         .top_p = request.getTopP(),
         .stop_on_eos = true,
+        .seed = if (request.seed) |s| @intCast(s) else null,
+        .top_k = request.getTopK(),
+        .min_p = request.getMinP(),
+        .presence_penalty = request.getPresencePenalty(),
+        .frequency_penalty = request.getFrequencyPenalty(),
+        .repetition_penalty = request.getRepetitionPenalty(),
+        .logprobs_enabled = request.logprobs orelse false,
     };
 
     // Initialize transformer
@@ -349,6 +382,9 @@ pub fn generateNonStreamingResponse(
     // Strip special tokens from output
     const content = try stripSpecialTokens(allocator, raw_content);
     defer allocator.free(content);
+
+    // Get logprobs if enabled (stored in state for later retrieval)
+    _ = if (gen_options.logprobs_enabled) state.getLogprobs() else null;
 
     // Build response
     const created_timestamp = std.time.timestamp();
