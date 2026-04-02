@@ -8,6 +8,8 @@ const std = @import("std");
 const types = @import("types.zig");
 const streaming = @import("streaming.zig");
 const inference = @import("../inference/mod.zig");
+const models_mod = @import("../models/mod.zig");
+const manager_mod = @import("../models/manager.zig");
 
 /// Global inference context - initialized at server startup
 pub var global_context: ?*inference.InferenceContext = null;
@@ -111,18 +113,64 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
 
     const request = parsed.value;
 
-    // Validate model matches loaded model
-    // For now, we support only the loaded model
+    // Check if model switching is needed
     const loaded_model_name = std.fs.path.basename(ctx.model_path);
-    if (!std.mem.eql(u8, request.model, loaded_model_name)) {
-        // Allow if model name is a substring or vice versa (flexible matching)
-        const model_matches = std.mem.indexOf(u8, loaded_model_name, request.model) != null or
-            std.mem.indexOf(u8, request.model, loaded_model_name) != null;
 
-        if (!model_matches) {
-            std.log.warn("[{s}] Model not found: requested={s}, loaded={s}", .{ request_id, request.model, loaded_model_name });
-            try sendError(res, 404, "Model not found", "model_not_found", request_id);
-            return;
+    // Try to get the manager for automatic model switching
+    if (manager_mod.getGlobalManager()) |manager| {
+        const current_model = manager.getCurrentModel();
+
+        // Check if we need to switch models
+        if (current_model == null or !std.mem.eql(u8, current_model.?, request.model)) {
+            std.log.info("[{s}] Requested model '{s}' differs from current, attempting switch...", .{
+                request_id, request.model,
+            });
+
+            // Check if model is available
+            if (models_mod.getGlobalRegistry()) |reg| {
+                if (reg.getModel(request.model) == null) {
+                    try sendError(res, 404, "Model not found in registry", "model_not_found", request_id);
+                    return;
+                }
+            }
+
+            // Check memory availability
+            if (!manager.canLoadModel(request.model)) {
+                try sendError(res, 503, "Insufficient memory to load model", "insufficient_memory", request_id);
+                return;
+            }
+
+            // Perform the switch
+            const switch_start = std.time.milliTimestamp();
+            manager.switchModel(request.model) catch |err| {
+                std.log.err("[{s}] Failed to switch to model '{s}': {s}", .{
+                    request_id, request.model, @errorName(err),
+                });
+                const error_msg = switch (err) {
+                    error.ModelNotFound => "Model not found",
+                    error.InsufficientMemory => "Insufficient memory",
+                    error.ModelLoadFailed => "Failed to load model",
+                    else => "Model switch failed",
+                };
+                try sendError(res, 500, error_msg, "model_switch_failed", request_id);
+                return;
+            };
+            const switch_duration = @as(u64, @intCast(std.time.milliTimestamp() - switch_start));
+            std.log.info("[{s}] Model switch completed in {d}ms", .{ request_id, switch_duration });
+
+            // Context will be reloaded from global_context in the handlers
+        }
+    } else {
+        // No manager available - use legacy model validation
+        if (!std.mem.eql(u8, request.model, loaded_model_name)) {
+            const model_matches = std.mem.indexOf(u8, loaded_model_name, request.model) != null or
+                std.mem.indexOf(u8, request.model, loaded_model_name) != null;
+
+            if (!model_matches) {
+                std.log.warn("[{s}] Model not found: requested={s}, loaded={s}", .{ request_id, request.model, loaded_model_name });
+                try sendError(res, 404, "Model not found", "model_not_found", request_id);
+                return;
+            }
         }
     }
 
@@ -138,6 +186,17 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
 fn handleStreamingRequest(req: anytype, res: anytype, request: types.ChatCompletionRequest, ctx: *inference.InferenceContext, request_id: []const u8) !void {
     _ = req; // Request already parsed, not used directly
     std.log.info("[{s}] Starting streaming generation", .{request_id});
+
+    // Notify manager that generation is starting
+    const manager = manager_mod.getGlobalManager();
+    if (manager) |m| {
+        m.startGeneration();
+    }
+    defer {
+        if (manager) |m| {
+            m.endGeneration();
+        }
+    }
 
     // Set SSE headers
     res.status = 200;
@@ -159,6 +218,17 @@ fn handleStreamingRequest(req: anytype, res: anytype, request: types.ChatComplet
 
 /// Handle non-streaming chat completion request
 fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest, ctx: *inference.InferenceContext, request_id: []const u8) !void {
+    // Notify manager that generation is starting
+    const manager = manager_mod.getGlobalManager();
+    if (manager) |m| {
+        m.startGeneration();
+    }
+    defer {
+        if (manager) |m| {
+            m.endGeneration();
+        }
+    }
+
     // Build prompt from messages
     const prompt = try types.buildPromptFromMessages(ctx.allocator, request.messages);
     defer ctx.allocator.free(prompt);
@@ -232,8 +302,7 @@ pub fn handleListModels(req: anytype, res: anytype) !void {
         return;
     }
 
-    // Get the global registry
-    const models_mod = @import("../models/mod.zig");
+    // Get the global registry (already imported at top of file)
     const registry = models_mod.getGlobalRegistry();
 
     // Build models response
