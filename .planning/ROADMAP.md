@@ -80,7 +80,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 3 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Stop sequences, seed-based determinism, temperature=0 greedy
+- [x] 04-01-PLAN.md — Stop sequences, seed-based determinism, temperature=0 greedy
 - [x] 04-02-PLAN.md — Logprobs tracking, sampling parameters (top_k, min_p, penalties, logit_bias)
 - [ ] 04-03-PLAN.md — Error handling with request IDs, request timeouts
 
