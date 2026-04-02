@@ -330,12 +330,17 @@ pub const GenerationState = struct {
 
         if (should_check and self.options.stop_sequences.len > 0) {
             // TODO: Decode tokens_since_decode and append to decoded_text_buffer
-            // For now: placeholder - this requires tokenizer integration
-            // Once decoded, check: if (self.checkStopSequence()) { ... }
+            // This requires tokenizer integration to decode tokens to text
+            // Once decoded and appended to decoded_text_buffer, call:
+            // if (self.checkStopSequence()) {
+            //     self.is_complete = true;
+            //     self.stop_reason = .stop;
+            //     self.truncateStopSequence();
+            //     return null;
+            // }
 
-            // Simplified: Check if we need to decode (we need at least tokenizer access)
-            // This will be fully implemented when tokenizer is properly integrated
-            _ = self.checkStopSequence; // Mark as used
+            // Placeholder: suppress unused field warning
+            _ = self.tokens_since_decode.items.len;
         }
 
         // Prepare tokens array for next iteration: [1, 1] with just the new token
