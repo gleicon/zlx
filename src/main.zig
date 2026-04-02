@@ -69,6 +69,10 @@ const USAGE =
     "  GET  /v1/health                 Health check\n" ++
     "  GET  /v1/metrics                Prometheus metrics\n" ++
     "  GET  /v1/metrics/speculative    Speculative decoding metrics\n" ++
+    "\n" ++
+    "CORS Configuration:\n" ++
+    "  Default: CORS is enabled for all origins (*) for Open WebUI compatibility.\n" ++
+    "  Set cors_origins in ~/.config/zlx/config.json to restrict (e.g., \"http://localhost:8081\").\n" ++
     "\n";
 
 const Config = struct {

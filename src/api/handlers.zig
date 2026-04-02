@@ -23,12 +23,14 @@ fn getTimeoutMs() u64 {
     return @as(u64, request_timeout_seconds) * 1000;
 }
 
-/// CORS headers for all responses
-const CORS_HEADERS = &[_]struct { []const u8, []const u8 }{
-    .{ "Access-Control-Allow-Origin", "*" },
-    .{ "Access-Control-Allow-Methods", "GET, POST, OPTIONS" },
-    .{ "Access-Control-Allow-Headers", "Content-Type, Authorization" },
-};
+/// CORS headers for all responses (configurable via config.cors_origins)
+/// Open WebUI compatibility: default "*" allows any origin including localhost:8081
+fn setCorsHeaders(res: anytype) void {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    res.header("Access-Control-Max-Age", "86400"); // 24 hour preflight cache
+}
 
 /// Handle POST /v1/chat/completions
 pub fn handleChatCompletions(req: anytype, res: anytype) !void {
@@ -46,8 +48,6 @@ pub fn handleChatCompletions(req: anytype, res: anytype) !void {
         res.status = 204;
         return;
     }
-
-    // Ensure context is available
     const ctx = global_context orelse {
         std.log.err("[{s}] Server not initialized", .{request_id});
         try sendServerError(res, "Server not initialized", request_id);
@@ -592,10 +592,7 @@ pub fn handleCancelLoad(req: anytype, res: anytype) !void {
     // Try to cancel
     m.cancelLoad() catch |err| {
         std.log.err("Failed to cancel background load: {s}", .{@errorName(err)});
-        const error_msg = switch (err) {
-            error.NoActiveLoad => "No active background load to cancel",
-            else => "Failed to cancel background load",
-        };
+        const error_msg = if (err == error.NoActiveLoad) "No active background load to cancel" else "Failed to cancel background load";
         try sendError(res, 400, error_msg, "cancel_failed", "req-cancel");
         return;
     };
@@ -956,13 +953,6 @@ fn sendJsonResponse(res: anytype, status: u16, body: []const u8) !void {
 
     const writer = res.writer();
     try writer.writeAll(body);
-}
-
-/// Set CORS headers on response
-fn setCorsHeaders(res: anytype) void {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
 /// Build chat completion response JSON from generation result
