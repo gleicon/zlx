@@ -6,7 +6,10 @@ const std = @import("std");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
 const deepseek = @import("../deepseek.zig");
+const mla = @import("../mlx.zig/src/mla.zig");
+const moe = @import("../moe.zig");
 const safetensors_index = @import("safetensors_index.zig");
+const dequantize = @import("dequantize.zig");
 
 pub const ModelType = enum {
     qwen,
@@ -51,6 +54,10 @@ pub const LoadError = error{
     WeightsNotFound,
     InvalidConfig,
     UnsupportedModelType,
+    WeightNotFound,
+    BiasNotFound,
+    ScaleNotFound,
+    DequantizationFailed,
 };
 
 /// Information about a model directory
@@ -382,88 +389,257 @@ fn registerWeightKey(
     try weights_hash.put(owned_key, weight_ptr);
 }
 
-/// Map loaded weights to DeepSeekWeights structure
+/// Map loaded weights to DeepSeekWeights structure with dequantization
 fn mapWeightsToDeepSeek(
     allocator: std.mem.Allocator,
     weights_hash: *std.StringHashMap(*mlx.Array),
     config: deepseek.DeepSeekConfig,
 ) !deepseek.DeepSeekWeights {
-    var weights = deepseek.DeepSeekWeights{
-        .embed_tokens = try mapQuantizedWeight(weights_hash, "model.embed_tokens"),
-        .norm = mlx.arrayNew(),
-        .lm_head = try mapQuantizedWeight(weights_hash, "lm_head"),
-        .layers = try allocator.alloc(deepseek.DeepSeekLayer, config.num_hidden_layers),
-    };
+    // Map and dequantize token embeddings (group_size=64 for embeddings)
+    const token_embedding = try mapQuantizedWeight(allocator, weights_hash, "model.embed_tokens", 64);
+    errdefer mlx.arrayFree(token_embedding);
+
+    // Map and dequantize LM head (group_size=64)
+    const lm_head = try mapQuantizedWeight(allocator, weights_hash, "lm_head", 64);
+    errdefer mlx.arrayFree(lm_head);
 
     // Map final norm (not quantized)
+    var norm = mlx.arrayNew();
     if (weights_hash.get("model.norm.weight")) |norm_ptr| {
-        weights.norm = norm_ptr.*;
+        norm = norm_ptr.*;
     } else {
         std.log.warn("Missing weight: model.norm.weight", .{});
+    }
+    errdefer mlx.arrayFree(norm);
+
+    // Allocate layers
+    var layers = try allocator.alloc(deepseek.DeepSeekLayer, config.num_hidden_layers);
+    errdefer {
+        for (layers) |*layer| {
+            layer.deinit();
+        }
+        allocator.free(layers);
     }
 
     // Map per-layer weights
     var buf: [256]u8 = undefined;
     for (0..config.num_hidden_layers) |layer_idx| {
-        // Initialize layer with default values
-        weights.layers[layer_idx] = deepseek.DeepSeekLayer{
-            .input_norm = mlx.arrayNew(),
-            .mla = undefined, // Will be initialized separately
-            .post_attn_norm = mlx.arrayNew(),
-            .moe = undefined, // Will be initialized separately
-        };
-
         // Map layer norms (not quantized)
         const input_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx});
+        var input_norm = mlx.arrayNew();
         if (weights_hash.get(input_ln_key)) |ptr| {
-            weights.layers[layer_idx].input_norm = ptr.*;
+            input_norm = ptr.*;
+        } else {
+            std.log.warn("Missing weight: {s}", .{input_ln_key});
         }
 
         const post_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.post_attention_layernorm.weight", .{layer_idx});
+        var post_attn_norm = mlx.arrayNew();
         if (weights_hash.get(post_ln_key)) |ptr| {
-            weights.layers[layer_idx].post_attn_norm = ptr.*;
+            post_attn_norm = ptr.*;
+        } else {
+            std.log.warn("Missing weight: {s}", .{post_ln_key});
         }
+
+        // Map and dequantize MLA attention weights (group_size=64 for attention)
+        const q_proj_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.q_proj", .{layer_idx});
+        const q_proj = try mapQuantizedWeight(allocator, weights_hash, q_proj_key, 64);
+
+        const kv_a_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_a_proj_with_mqa", .{layer_idx});
+        const kv_a_proj = try mapQuantizedWeight(allocator, weights_hash, kv_a_key, 64);
+
+        const kv_b_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_b_proj", .{layer_idx});
+        const kv_b_proj = try mapQuantizedWeight(allocator, weights_hash, kv_b_key, 64);
+
+        const o_proj_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.o_proj", .{layer_idx});
+        const o_proj = try mapQuantizedWeight(allocator, weights_hash, o_proj_key, 64);
+
+        const kv_a_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_a_layernorm.weight", .{layer_idx});
+        var kv_a_layernorm = mlx.arrayNew();
+        if (weights_hash.get(kv_a_ln_key)) |ptr| {
+            kv_a_layernorm = ptr.*;
+        }
+
+        // Create MLA weights
+        const mla_weights = deepseek.MLAWeights{
+            .q_proj = q_proj,
+            .kv_a_proj_with_mqa = kv_a_proj,
+            .kv_b_proj = kv_b_proj,
+            .o_proj = o_proj,
+            .kv_a_layernorm = kv_a_layernorm,
+        };
+
+        // Initialize MLA (will be completed separately)
+        const mla_layer = mla.MultiHeadLatentAttention{
+            .weights = mla_weights,
+            .config = mla.MLAConfig{
+                .hidden_size = config.hidden_size,
+                .num_heads = config.num_attention_heads,
+                .latent_dim = config.latent_dim,
+            },
+        };
+
+        // Map MLP/MoE weights based on layer index
+        // Layer 0 uses dense MLP, layers 1+ use MoE
+        const moe_layer = if (layer_idx == 0) blk: {
+            // Dense MLP for layer 0 (group_size=32)
+            const up_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.up_proj", .{layer_idx});
+            const up_proj = try mapQuantizedWeight(allocator, weights_hash, up_key, 32);
+
+            const gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.gate_proj", .{layer_idx});
+            const gate_proj = try mapQuantizedWeight(allocator, weights_hash, gate_key, 32);
+
+            const down_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.down_proj", .{layer_idx});
+            const down_proj = try mapQuantizedWeight(allocator, weights_hash, down_key, 32);
+
+            const dense_weights = deepseek.DenseMLPWeights{
+                .up_proj = up_proj,
+                .gate_proj = gate_proj,
+                .down_proj = down_proj,
+            };
+
+            break :blk moe.MixtureOfExperts{
+                .config = moe.MoEConfig{
+                    .num_experts = 1, // Dense layer uses single "expert"
+                    .top_k = 1,
+                    .hidden_size = config.hidden_size,
+                    .intermediate_size = config.intermediate_size,
+                },
+                .dense_weights = dense_weights,
+            };
+        } else blk: {
+            // MoE for layers 1+
+            const gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.gate.weight", .{layer_idx});
+            var gate = mlx.arrayNew();
+            if (weights_hash.get(gate_key)) |ptr| {
+                gate = ptr.*;
+            }
+
+            // Map shared experts (2 experts, quantized, group_size=32)
+            var shared_experts = try allocator.alloc(struct { gate_proj: mlx.Array, up_proj: mlx.Array, down_proj: mlx.Array }, config.num_shared_experts);
+
+            for (0..config.num_shared_experts) |exp_idx| {
+                const shared_gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.gate_proj", .{ layer_idx, exp_idx });
+                shared_experts[exp_idx].gate_proj = try mapQuantizedWeight(allocator, weights_hash, shared_gate_key, 32);
+
+                const shared_up_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.up_proj", .{ layer_idx, exp_idx });
+                shared_experts[exp_idx].up_proj = try mapQuantizedWeight(allocator, weights_hash, shared_up_key, 32);
+
+                const shared_down_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.down_proj", .{ layer_idx, exp_idx });
+                shared_experts[exp_idx].down_proj = try mapQuantizedWeight(allocator, weights_hash, shared_down_key, 32);
+            }
+
+            // Map switch_mlp (fused 64 experts, group_size=32)
+            const switch_gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.gate_proj", .{layer_idx});
+            const switch_gate = try mapQuantizedWeight(allocator, weights_hash, switch_gate_key, 32);
+
+            const switch_up_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.up_proj", .{layer_idx});
+            const switch_up = try mapQuantizedWeight(allocator, weights_hash, switch_up_key, 32);
+
+            const switch_down_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.down_proj", .{layer_idx});
+            const switch_down = try mapQuantizedWeight(allocator, weights_hash, switch_down_key, 32);
+
+            const moe_weights = deepseek.MoEWeights{
+                .gate = gate,
+                .shared_experts = shared_experts,
+                .switch_mlp = .{
+                    .gate_proj = switch_gate,
+                    .up_proj = switch_up,
+                    .down_proj = switch_down,
+                },
+            };
+
+            break :blk moe.MixtureOfExperts{
+                .config = moe.MoEConfig{
+                    .num_experts = config.num_experts,
+                    .top_k = config.top_k,
+                    .hidden_size = config.hidden_size,
+                    .intermediate_size = config.intermediate_size,
+                    .num_shared_experts = config.num_shared_experts,
+                },
+                .moe_weights = moe_weights,
+            };
+        };
+
+        // Initialize layer
+        layers[layer_idx] = deepseek.DeepSeekLayer{
+            .input_norm = input_norm,
+            .mla = mla_layer,
+            .post_attn_norm = post_attn_norm,
+            .moe = moe_layer,
+        };
     }
 
-    return weights;
+    return deepseek.DeepSeekWeights{
+        .token_embedding = token_embedding,
+        .norm = norm,
+        .lm_head = lm_head,
+        .layers = layers,
+    };
 }
 
-/// Helper to map a quantized weight group from hash
+/// Helper to map a quantized weight group from hash and dequantize to float16
+///
+/// Parameters:
+/// - allocator: Memory allocator for temporary allocations
+/// - weights_hash: Hash map containing weight arrays
+/// - base_key: Base key for the weight (e.g., "model.layers.0.self_attn.q_proj")
+/// - group_size: Quantization group size (32 for MLP, 64 for attention)
+///
+/// Returns: Dequantized MLX array (float16)
 fn mapQuantizedWeight(
+    allocator: std.mem.Allocator,
     weights_hash: *std.StringHashMap(*mlx.Array),
     base_key: []const u8,
-) !deepseek.QuantizedWeight {
+    group_size: usize,
+) !mlx.Array {
     var buf: [256]u8 = undefined;
 
     const weight_key = try std.fmt.bufPrint(&buf, "{s}.weight", .{base_key});
     const biases_key = try std.fmt.bufPrint(&buf, "{s}.biases", .{base_key});
     const scales_key = try std.fmt.bufPrint(&buf, "{s}.scales", .{base_key});
 
-    var qw = deepseek.QuantizedWeight{
-        .weight = mlx.arrayNew(),
-        .biases = mlx.arrayNew(),
-        .scales = mlx.arrayNew(),
-    };
+    // Get quantized components
+    var weight = mlx.arrayNew();
+    var biases = mlx.arrayNew();
+    var scales = mlx.arrayNew();
+    errdefer {
+        mlx.arrayFree(weight);
+        mlx.arrayFree(biases);
+        mlx.arrayFree(scales);
+    }
 
     if (weights_hash.get(weight_key)) |ptr| {
-        qw.weight = ptr.*;
+        weight = ptr.*;
     } else {
         std.log.warn("Missing quantized weight: {s}", .{weight_key});
+        return error.WeightNotFound;
     }
 
     if (weights_hash.get(biases_key)) |ptr| {
-        qw.biases = ptr.*;
+        biases = ptr.*;
     } else {
         std.log.warn("Missing quantized bias: {s}", .{biases_key});
+        return error.BiasNotFound;
     }
 
     if (weights_hash.get(scales_key)) |ptr| {
-        qw.scales = ptr.*;
+        scales = ptr.*;
     } else {
         std.log.warn("Missing quantized scales: {s}", .{scales_key});
+        return error.ScaleNotFound;
     }
 
-    return qw;
+    _ = allocator; // Used for future Metal kernel allocations
+
+    // Dequantize to float16
+    const config = dequantize.DequantizeConfig{
+        .group_size = group_size,
+        .output_dtype = .f16,
+        .signed = false, // mlx-community uses unsigned 4-bit
+    };
+
+    return dequantize.dequantizeAffine4Bit(weight, biases, scales, config);
 }
 
 /// Default model paths relative to executable
