@@ -6,6 +6,7 @@ const std = @import("std");
 
 pub const huggingface = @import("huggingface.zig");
 pub const manager = @import("manager.zig");
+pub const deepseek = @import("deepseek.zig");
 
 // Re-export key types
 pub const HuggingFaceId = huggingface.HuggingFaceId;
@@ -14,6 +15,10 @@ pub const DownloadStatus = manager.DownloadStatus;
 pub const DownloadProgress = manager.DownloadProgress;
 pub const DownloadTask = manager.DownloadTask;
 pub const FileInfo = huggingface.FileInfo;
+
+// Re-export deepseek functions
+pub const downloadDeepSeekModel = deepseek.downloadDeepSeekModel;
+pub const verifyDeepSeekModel = deepseek.verifyDeepSeekModel;
 
 // Re-export global functions
 pub const initGlobalManager = manager.initGlobalManager;
@@ -46,7 +51,7 @@ pub const KNOWN_MODELS = [_]ModelAlias{
     .{
         .alias = "gpt-oss-20b",
         .hf_id = "mlx-community/gpt-oss-20b-MXFP4-Q4",
-        .description = "OpenAI GPT-OSS 20B - General chat & tool use",
+        .description = "OpenAI GPT-OSS 20B - General chat & tool use (PENDING: requires MoE support)",
         .size_gb = 11.2,
     },
     .{

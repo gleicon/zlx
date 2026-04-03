@@ -111,7 +111,31 @@ pub fn defaultOptions() BackendOptions {
     return .{};
 }
 
-/// Create MLX backend (placeholder for 14-03, 14-04)
+// Backend implementations
+const llama_cpp = @import("llama_cpp.zig");
+// const mlx_backend = @import("mlx_backend.zig"); // TODO(14-05)
+
+/// Create llama.cpp backend with real implementation
+fn createLlamaBackend(
+    allocator: std.mem.Allocator,
+    model_path: []const u8,
+    arch: registry.ModelArchitecture,
+) !backend.Backend {
+    _ = arch;
+
+    std.log.info("Initializing llama.cpp backend for {s}", .{model_path});
+
+    // Create actual LlamaBackend
+    const llama_backend = try llama_cpp.LlamaBackend.init(allocator, model_path);
+
+    // Wrap in opaque pointer for Backend union
+    const ptr = try allocator.create(llama_cpp.LlamaBackend);
+    ptr.* = llama_backend;
+
+    return backend.Backend{ .llama_cpp = ptr };
+}
+
+/// Create MLX backend (placeholder for 14-05)
 fn createMlxBackend(
     allocator: std.mem.Allocator,
     model_path: []const u8,
@@ -129,26 +153,6 @@ fn createMlxBackend(
     ptr.* = 0; // Just a marker
 
     return backend.Backend{ .mlx = ptr };
-}
-
-/// Create llama.cpp backend (placeholder for 14-03, 14-04)
-fn createLlamaBackend(
-    allocator: std.mem.Allocator,
-    model_path: []const u8,
-    arch: registry.ModelArchitecture,
-) !backend.Backend {
-    _ = arch;
-
-    std.log.info("Initializing llama.cpp backend for {s}", .{model_path});
-
-    // TODO(14-03, 14-04): Implement actual llama.cpp backend creation
-    // For now, return stub that will be implemented in subsequent plans
-
-    // Create placeholder opaque pointer
-    const ptr = try allocator.create(u8);
-    ptr.* = 0; // Just a marker
-
-    return backend.Backend{ .llama_cpp = ptr };
 }
 
 /// Get backend capabilities for a given architecture
