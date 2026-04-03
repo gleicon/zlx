@@ -89,17 +89,38 @@ parse_args() {
                 TEST_MEMORY=true
                 shift
                 ;;
+            --deepseek)
+                TEST_DEEPSEEK=true
+                shift
+                ;;
+            --gptoss|--gpt-oss)
+                TEST_GPTOSS=true
+                shift
+                ;;
+            --auto-download)
+                AUTO_DOWNLOAD=true
+                shift
+                ;;
+            --all-moe)
+                TEST_DEEPSEEK=true
+                TEST_GPTOSS=true
+                shift
+                ;;
             --help)
                 echo "Usage: $0 [options] [model_name]"
                 echo "Options:"
-                echo "  --verbose       Detailed logging"
-                echo "  --report-json   Generate JSON report"
-                echo "  --benchmark     Performance benchmarking"
-                echo "  --ci            CI mode (no interactive output)"
-                echo "  --quick         Skip heavy tests"
-                echo "  --test-context  Test various context lengths"
-                echo "  --test-memory   Test for memory leaks"
-                echo "  --help          Show this help"
+                echo "  --verbose        Detailed logging"
+                echo "  --report-json    Generate JSON report"
+                echo "  --benchmark      Performance benchmarking"
+                echo "  --ci             CI mode (no interactive output)"
+                echo "  --quick          Skip heavy tests"
+                echo "  --test-context   Test various context lengths"
+                echo "  --test-memory    Test for memory leaks"
+                echo "  --deepseek       Test DeepSeek-Coder-V2-Lite only"
+                echo "  --gptoss         Test GPT-OSS-20B only"
+                echo "  --auto-download  Auto-download missing models (GPT-OSS)"
+                echo "  --all-moe        Test all MoE models (DeepSeek + GPT-OSS)"
+                echo "  --help           Show this help"
                 exit 0
                 ;;
             -*)
@@ -442,6 +463,237 @@ generate_json_report() {
     log_info "Report saved to: $report_file"
 }
 
+# Test DeepSeek-Coder-V2-Lite
+test_deepseek() {
+    local model_name="DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx"
+    local port=8082
+    
+    log_info "Testing DeepSeek-Coder-V2-Lite..."
+    
+    # Check if model exists
+    if [[ ! -d "./models/${model_name}" ]]; then
+        log_warn "Model not found at ./models/${model_name}, skipping DeepSeek tests"
+        return 0
+    fi
+    
+    # Kill any existing server
+    pkill -9 -f "zlx --model" 2>/dev/null || true
+    sleep 2
+    
+    # Test weight loading (with 60s timeout for MoE model)
+    log_info "  - Testing weight loading (60s timeout for MoE)..."
+    timeout 60 $ZLX_BIN --model "./models/${model_name}" --port ${port} --turboquant > /tmp/zlx_deepseek.log 2>&1 &
+    local server_pid=$!
+    
+    # Wait for server to be ready
+    local wait_time=0
+    while [[ $wait_time -lt 60 ]]; do
+        sleep 5
+        wait_time=$((wait_time + 5))
+        
+        if curl -s http://localhost:${port}/v1/models > /dev/null 2>&1; then
+            break
+        fi
+        
+        if ! kill -0 $server_pid 2>/dev/null; then
+            log_fail "    Server failed to start"
+            if [ "$VERBOSE" = true ]; then
+                tail -50 /tmp/zlx_deepseek.log
+            fi
+            return 1
+        fi
+    done
+    
+    # Test /v1/models endpoint
+    log_info "  - Testing /v1/models..."
+    local models_response=$(curl -s http://localhost:${port}/v1/models)
+    if [[ ! $models_response == *"${model_name}"* ]]; then
+        log_fail "    Model not listed in /v1/models"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Model listed"
+    
+    # Test chat completion
+    log_info "  - Testing chat completion..."
+    local response=$(curl -s -X POST http://localhost:${port}/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -d "{\"model\": \"${model_name}\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}], \"max_tokens\": 10}")
+    
+    if [[ ! $response == *"choices"* ]]; then
+        log_fail "    No choices in response"
+        [ "$VERBOSE" = true ] && echo "Response: $response"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Chat completion works"
+    
+    # Test memory usage (should be under 16GB with TurboQuant)
+    log_info "  - Checking memory usage..."
+    local mem_usage=$(ps -o rss= -p $server_pid 2>/dev/null | awk '{print $1/1024}')
+    if [[ -n $mem_usage && $(echo "$mem_usage < 16384" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+        log_pass "    Memory under 16GB (${mem_usage}MB)"
+    else
+        log_warn "    Memory high or unavailable (${mem_usage}MB)"
+    fi
+    
+    # Cleanup
+    kill $server_pid 2>/dev/null
+    wait $server_pid 2>/dev/null
+    
+    log_pass "  DeepSeek tests passed"
+    RESULTS["deepseek"]="passed"
+    ((PASSED++))
+    return 0
+}
+
+# Download GPT-OSS model from HuggingFace
+download_gptoss_model() {
+    local model_id="mlx-community/gpt-oss-20b-MXFP4-Q4"
+    local target_dir="./models/gpt-oss-20b-MXFP4-Q4"
+    
+    log_info "Downloading GPT-OSS from HuggingFace..."
+    
+    # Create directory
+    mkdir -p "${target_dir}"
+    
+    # Download config.json
+    log_info "  Downloading config.json..."
+    curl -L -o "${target_dir}/config.json" \
+        "https://huggingface.co/${model_id}/raw/main/config.json" || {
+        log_fail "Failed to download config.json"
+        return 1
+    }
+    
+    # Download tokenizer files
+    log_info "  Downloading tokenizer.json..."
+    curl -L -o "${target_dir}/tokenizer.json" \
+        "https://huggingface.co/${model_id}/resolve/main/tokenizer.json" 2>/dev/null || {
+        log_warn "tokenizer.json download failed (may be optional)"
+    }
+    
+    # Download safetensors index
+    log_info "  Downloading model.safetensors.index.json..."
+    curl -L -o "${target_dir}/model.safetensors.index.json" \
+        "https://huggingface.co/${model_id}/raw/main/model.safetensors.index.json" || {
+        log_fail "Failed to download index"
+        return 1
+    }
+    
+    # Download weight shards (~11GB total)
+    local shard_count=$(jq '.weight_map | values | group_by(.) | length' "${target_dir}/model.safetensors.index.json" 2>/dev/null || echo "3")
+    log_info "Downloading ${shard_count} weight shards (~11GB total)..."
+    
+    for i in $(seq 1 $shard_count); do
+        local shard_file=$(printf "model-%05d-of-%05d.safetensors" $i $shard_count)
+        log_info "  Downloading ${shard_file}..."
+        
+        # Use resume capability
+        curl -C - -L --progress-bar -o "${target_dir}/${shard_file}" \
+            "https://huggingface.co/${model_id}/resolve/main/${shard_file}" || {
+            log_fail "Failed to download ${shard_file}"
+            return 1
+        }
+    done
+    
+    log_pass "GPT-OSS download complete"
+    return 0
+}
+
+# Test GPT-OSS-20B
+test_gptoss() {
+    local model_name="gpt-oss-20b-MXFP4-Q4"
+    local port=8083
+    
+    log_info "Testing GPT-OSS-20B..."
+    
+    # Check if model exists, offer to download
+    if [[ ! -d "./models/${model_name}" ]]; then
+        log_warn "Model not found at ./models/${model_name}"
+        
+        if [[ "${AUTO_DOWNLOAD:-false}" == "true" ]]; then
+            log_info "  Auto-downloading GPT-OSS (11GB)..."
+            if ! download_gptoss_model; then
+                log_fail "Download failed, skipping GPT-OSS tests"
+                return 0
+            fi
+        else
+            log_warn "Skipping GPT-OSS tests (use --auto-download to fetch)"
+            return 0
+        fi
+    fi
+    
+    # Kill any existing server
+    pkill -9 -f "zlx --model" 2>/dev/null || true
+    sleep 2
+    
+    # Test weight loading (may take longer due to 11GB, 3min timeout)
+    log_info "  - Testing weight loading (11GB, 3min timeout)..."
+    timeout 180 $ZLX_BIN --model "./models/${model_name}" --port ${port} --turboquant > /tmp/zlx_gptoss.log 2>&1 &
+    local server_pid=$!
+    
+    # Wait longer for GPT-OSS (larger model)
+    local wait_time=0
+    while [[ $wait_time -lt 120 ]]; do
+        sleep 5
+        wait_time=$((wait_time + 5))
+        
+        if curl -s http://localhost:${port}/v1/models > /dev/null 2>&1; then
+            break
+        fi
+        
+        if ! kill -0 $server_pid 2>/dev/null; then
+            log_fail "    Server failed to start"
+            if [ "$VERBOSE" = true ]; then
+                tail -50 /tmp/zlx_gptoss.log
+            fi
+            return 1
+        fi
+    done
+    
+    # Test /v1/models endpoint
+    log_info "  - Testing /v1/models..."
+    local models_response=$(curl -s http://localhost:${port}/v1/models)
+    if [[ ! $models_response == *"${model_name}"* ]]; then
+        log_fail "    Model not listed in /v1/models"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Model listed"
+    
+    # Test chat completion
+    log_info "  - Testing chat completion..."
+    local response=$(curl -s -X POST http://localhost:${port}/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -d "{\"model\": \"${model_name}\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}], \"max_tokens\": 10}")
+    
+    if [[ ! $response == *"choices"* ]]; then
+        log_fail "    No choices in response"
+        [ "$VERBOSE" = true ] && echo "Response: $response"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Chat completion works"
+    
+    # Test memory usage (should be under 16GB with TurboQuant)
+    log_info "  - Checking memory usage..."
+    local mem_usage=$(ps -o rss= -p $server_pid 2>/dev/null | awk '{print $1/1024}')
+    if [[ -n $mem_usage && $(echo "$mem_usage < 16384" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+        log_pass "    Memory under 16GB (${mem_usage}MB)"
+    else
+        log_warn "    Memory high or unavailable (${mem_usage}MB)"
+    fi
+    
+    # Cleanup
+    kill $server_pid 2>/dev/null
+    wait $server_pid 2>/dev/null
+    
+    log_pass "  GPT-OSS tests passed"
+    RESULTS["gptoss"]="passed"
+    ((PASSED++))
+    return 0
+}
+
 # Main execution
 main() {
     parse_args "$@"
@@ -479,7 +731,18 @@ main() {
     fi
     
     # Test specific or all models
-    if [ -n "${TARGET_MODEL:-}" ]; then
+    if [ "${TEST_DEEPSEEK:-false}" = true ]; then
+        test_deepseek
+    fi
+    
+    if [ "${TEST_GPTOSS:-false}" = true ]; then
+        test_gptoss
+    fi
+    
+    # If MoE-specific tests were run, don't run regular tests
+    if [ "${TEST_DEEPSEEK:-false}" = true ] || [ "${TEST_GPTOSS:-false}" = true ]; then
+        : # Skip regular tests, already ran MoE tests
+    elif [ -n "${TARGET_MODEL:-}" ]; then
         found=0
         for i in "${!MODELS[@]}"; do
             if [ "${MODELS[$i]}" = "$TARGET_MODEL" ]; then
