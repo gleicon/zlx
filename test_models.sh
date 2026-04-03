@@ -91,6 +91,12 @@ parse_args() {
                 ;;
             --deepseek)
                 TEST_DEEPSEEK=true
+                DEEPSEEK_BACKEND="mlx"
+                shift
+                ;;
+            --deepseek-llama)
+                TEST_DEEPSEEK=true
+                DEEPSEEK_BACKEND="llama"
                 shift
                 ;;
             --gptoss|--gpt-oss)
@@ -116,7 +122,8 @@ parse_args() {
                 echo "  --quick          Skip heavy tests"
                 echo "  --test-context   Test various context lengths"
                 echo "  --test-memory    Test for memory leaks"
-                echo "  --deepseek       Test DeepSeek-Coder-V2-Lite only"
+                echo "  --deepseek       Test DeepSeek-Coder-V2-Lite via MLX (default)"
+                echo "  --deepseek-llama Test DeepSeek via llama.cpp backend (requires GGUF)"
                 echo "  --gptoss         Test GPT-OSS-20B only"
                 echo "  --auto-download  Auto-download missing models (GPT-OSS)"
                 echo "  --all-moe        Test all MoE models (DeepSeek + GPT-OSS)"
@@ -547,6 +554,111 @@ test_deepseek() {
     return 0
 }
 
+# Test DeepSeek via llama.cpp backend with GGUF model
+test_deepseek_llama() {
+    local model_name="deepseek-coder-v2-lite.Q4_K_M"
+    local port=8083
+    local model_path="./models/${model_name}.gguf"
+    
+    log_info "Testing DeepSeek-Coder-V2-Lite via llama.cpp backend..."
+    
+    # Check if GGUF model exists
+    if [[ ! -f "${model_path}" ]]; then
+        log_warn "GGUF model not found at ${model_path}"
+        log_info "  Downloading DeepSeek GGUF model (~4.5GB)..."
+        
+        # Create models directory
+        mkdir -p ./models
+        
+        # Download using curl
+        curl -L --progress-bar -o "${model_path}" \
+            "https://huggingface.co/TheBloke/deepseek-coder-v2-lite-GGUF/resolve/main/deepseek-coder-v2-lite.Q4_K_M.gguf" || {
+            log_fail "Failed to download DeepSeek GGUF model"
+            return 1
+        }
+        
+        log_pass "  Download complete"
+    fi
+    
+    # Verify it's a valid GGUF file
+    local magic=$(xxd -l 4 "${model_path}" | grep -o 'GGUF')
+    if [[ "$magic" != "GGUF" ]]; then
+        log_warn "File may not be a valid GGUF model (magic bytes don't match)"
+    fi
+    
+    # Kill any existing server
+    pkill -9 -f "zlx --model" 2>/dev/null || true
+    sleep 2
+    
+    # Test with llama.cpp backend
+    log_info "  - Starting zlx with llama.cpp backend..."
+    timeout 90 $ZLX_BIN --model "${model_path}" --backend llama_cpp --port ${port} --turboquant > /tmp/zlx_deepseek_llama.log 2>&1 &
+    local server_pid=$!
+    
+    # Wait for server to be ready
+    local wait_time=0
+    while [[ $wait_time -lt 60 ]]; do
+        sleep 5
+        wait_time=$((wait_time + 5))
+        
+        if curl -s http://localhost:${port}/v1/models > /dev/null 2>&1; then
+            break
+        fi
+        
+        if ! kill -0 $server_pid 2>/dev/null; then
+            log_fail "    Server failed to start"
+            if [ "$VERBOSE" = true ]; then
+                tail -50 /tmp/zlx_deepseek_llama.log
+            fi
+            return 1
+        fi
+    done
+    
+    log_pass "    Server started (llama.cpp backend)"
+    
+    # Test /v1/models endpoint
+    log_info "  - Testing /v1/models..."
+    local models_response=$(curl -s http://localhost:${port}/v1/models)
+    if [[ ! $models_response == *"deepseek"* ]]; then
+        log_fail "    Model not listed in /v1/models"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Model listed"
+    
+    # Test chat completion
+    log_info "  - Testing chat completion..."
+    local response=$(curl -s -X POST http://localhost:${port}/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -d "{\"model\": \"deepseek-coder-v2-lite\", \"messages\": [{\"role\": \"user\", \"content\": \"Write a Python function\"}], \"max_tokens\": 30}")
+    
+    if [[ ! $response == *"choices"* ]]; then
+        log_fail "    No choices in response"
+        [ "$VERBOSE" = true ] && echo "Response: $response"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Chat completion works"
+    
+    # Test memory usage
+    log_info "  - Checking memory usage..."
+    local mem_usage=$(ps -o rss= -p $server_pid 2>/dev/null | awk '{print $1/1024}')
+    if [[ -n $mem_usage && $(echo "$mem_usage < 16384" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+        log_pass "    Memory under 16GB (${mem_usage}MB)"
+    else
+        log_warn "    Memory high or unavailable (${mem_usage}MB)"
+    fi
+    
+    # Cleanup
+    kill $server_pid 2>/dev/null
+    wait $server_pid 2>/dev/null
+    
+    log_pass "  DeepSeek llama.cpp tests passed"
+    RESULTS["deepseek-llama"]="passed"
+    ((PASSED++))
+    return 0
+}
+
 # Download GPT-OSS model from HuggingFace
 download_gptoss_model() {
     local model_id="mlx-community/gpt-oss-20b-MXFP4-Q4"
@@ -732,7 +844,11 @@ main() {
     
     # Test specific or all models
     if [ "${TEST_DEEPSEEK:-false}" = true ]; then
-        test_deepseek
+        if [ "${DEEPSEEK_BACKEND:-mlx}" = "llama" ]; then
+            test_deepseek_llama
+        else
+            test_deepseek
+        fi
     fi
     
     if [ "${TEST_GPTOSS:-false}" = true ]; then

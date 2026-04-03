@@ -28,6 +28,16 @@ pub const KnownModelInfo = struct {
     quantization: []const u8,
     recommended: bool,
     description: []const u8,
+    // PHASE-14: Backend selection and download support
+    preferred_backend: ?BackendType = null, // null = use default
+    download_urls: ?[]const []const u8 = null,
+    gguf_filename: ?[]const u8 = null,
+};
+
+/// Backend type for preferred_backend field
+pub const BackendType = enum {
+    mlx,
+    llama_cpp,
 };
 
 /// Pre-configured known models
@@ -35,28 +45,38 @@ pub const KNOWN_MODELS = &[_]KnownModelInfo{
     // DeepSeek-Coder-V2-Lite (15.7B total, 2B active MoE)
     .{
         .id = "deepseek-coder-v2-lite",
-        .aliases = &.{ "deepseek", "deepseek-v2", "deepseek-coder", "deepseek-coder-v2-lite-instruct" },
+        .aliases = &.{ "deepseek", "deepseek-v2", "deepseek-coder", "deepseek-coder-v2-lite-instruct", "deepseek-coder-v2-lite-gguf" },
         .architecture = .deepseek_v2_moe,
         .total_params = 15_700_000_000,
         .active_params = 2_000_000_000,
         .memory_required_gb = 2.5,
         .max_context = 128_000,
-        .quantization = "4bit",
+        .quantization = "Q4_K_M_GGUF", // Primary format via llama.cpp
         .recommended = true,
-        .description = "DeepSeek-Coder-V2-Lite 15.7B MoE (2B active) - Code generation",
+        .description = "DeepSeek-Coder-V2-Lite 15.7B MoE (2B active) - llama.cpp backend recommended",
+        .preferred_backend = .llama_cpp,
+        .download_urls = &.{
+            "https://huggingface.co/TheBloke/deepseek-coder-v2-lite-GGUF/resolve/main/deepseek-coder-v2-lite.Q4_K_M.gguf",
+        },
+        .gguf_filename = "deepseek-coder-v2-lite.Q4_K_M.gguf",
     },
     // GPT-OSS-20B (20B total, ~5B active MoE)
     .{
         .id = "gpt-oss-20b",
-        .aliases = &.{ "gpt-oss", "gptoss", "gpt-oss-20b-mxfp4" },
+        .aliases = &.{ "gpt-oss", "gptoss", "gpt-oss-20b-mxfp4", "gpt-oss-20b-gguf" },
         .architecture = .gpt_oss,
         .total_params = 20_000_000_000,
         .active_params = 5_000_000_000,
         .memory_required_gb = 11.0,
         .max_context = 131_072,
-        .quantization = "mxfp4",
+        .quantization = "Q4_K_M_GGUF", // Primary format via llama.cpp
         .recommended = true,
-        .description = "GPT-OSS-20B MoE (5B active) with sliding window + Yarn RoPE",
+        .description = "GPT-OSS-20B MoE (5B active) - llama.cpp backend recommended for best compatibility",
+        .preferred_backend = .llama_cpp,
+        .download_urls = &.{
+            "https://huggingface.co/bartowski/GPT-OSS-20B-GGUF/resolve/main/GPT-OSS-20B-Q4_K_M.gguf",
+        },
+        .gguf_filename = "GPT-OSS-20B-Q4_K_M.gguf",
     },
 };
 
@@ -184,6 +204,49 @@ pub fn architectureToString(arch: ModelArchitecture) []const u8 {
         .gpt_oss => "gpt_oss",
         .unknown => "unknown",
     };
+}
+
+/// Download information for model fetching
+pub const DownloadInfo = struct {
+    urls: []const []const u8,
+    filename: []const u8,
+    expected_size_bytes: u64,
+    checksum: ?[]const u8,
+};
+
+/// Get download info for a model by ID
+pub fn getDownloadInfo(model_id: []const u8) ?DownloadInfo {
+    const model = getKnownModel(model_id) orelse return null;
+
+    if (std.mem.eql(u8, model.id, "deepseek-coder-v2-lite")) {
+        return DownloadInfo{
+            .urls = &.{
+                "https://huggingface.co/TheBloke/deepseek-coder-v2-lite-GGUF/resolve/main/deepseek-coder-v2-lite.Q4_K_M.gguf",
+            },
+            .filename = "deepseek-coder-v2-lite.Q4_K_M.gguf",
+            .expected_size_bytes = 4_500_000_000, // ~4.5GB
+            .checksum = null,
+        };
+    }
+
+    if (std.mem.eql(u8, model.id, "gpt-oss-20b")) {
+        return DownloadInfo{
+            .urls = &.{
+                "https://huggingface.co/bartowski/GPT-OSS-20B-GGUF/resolve/main/GPT-OSS-20B-Q4_K_M.gguf",
+            },
+            .filename = "GPT-OSS-20B-Q4_K_M.gguf",
+            .expected_size_bytes = 11_500_000_000, // ~11GB
+            .checksum = null,
+        };
+    }
+
+    return null;
+}
+
+/// Get preferred backend for a model
+pub fn getPreferredBackend(model_id: []const u8) ?BackendType {
+    const model = getKnownModel(model_id) orelse return null;
+    return model.preferred_backend;
 }
 
 /// Model status states
