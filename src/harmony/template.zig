@@ -1,4 +1,8 @@
-//! harmony_template.zig - Format conversations to Harmony format
+//! template.zig - Format conversations to Harmony format
+//!
+//! Converts OpenAI-format messages into Harmony-encoded text suitable for
+//! GPT-OSS models. Handles tool definitions in system prompts, tool call
+//! formatting, tool result injection, and reasoning chain markers.
 
 const std = @import("std");
 const harmony = @import("harmony.zig");
@@ -34,138 +38,155 @@ pub const HarmonyTemplate = struct {
         };
     }
 
-    /// Convert OpenAI messages to Harmony format
+    /// Convert OpenAI-format messages to Harmony format string.
+    /// The output ends with an open <|assistant|> tag ready for model generation.
     pub fn formatHarmonyChat(
         self: *HarmonyTemplate,
         messages: []const OpenAIMessage,
         system_tools: ?[]const ToolDefinition,
     ) ![]u8 {
-        var output = std.ArrayList(u8).init(self.allocator);
-        errdefer output.deinit();
+        var output: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer output.deinit(self.allocator);
 
         // Start marker
-        try output.appendSlice("<|startoftext|>\n");
+        try output.appendSlice(self.allocator, "<|startoftext|>\n");
 
-        // System message with tools
+        // Optional system message with tool definitions
         if (system_tools) |tools| {
-            try output.appendSlice("<|system|>\n");
-            try output.appendSlice("You are a helpful assistant.\n\n");
-            try output.appendSlice("You have access to the following tools:\n");
+            try output.appendSlice(self.allocator, "<|system|>\n");
+            try output.appendSlice(self.allocator, "You are a helpful assistant.\n\n");
+            try output.appendSlice(self.allocator, "You have access to the following tools:\n");
 
             for (tools) |tool| {
-                try std.fmt.format(output.writer(), "\n- {s}: {s}\n", .{
+                try std.fmt.format(output.writer(self.allocator), "\n- {s}: {s}\n", .{
                     tool.name,
                     tool.description,
                 });
-                try std.json.stringify(tool.parameters, .{}, output.writer());
-                try output.appendSlice("\n");
+                try std.fmt.format(output.writer(self.allocator), "{f}\n", .{std.json.fmt(tool.parameters, .{})});
             }
 
-            try output.appendSlice("<|/system|>\n");
+            try output.appendSlice(self.allocator, "<|/system|>\n");
         }
 
-        // Format each message
+        // Format each OpenAI message
         for (messages) |msg| {
             if (std.mem.eql(u8, msg.role, "system")) {
-                try output.appendSlice("<|system|>\n");
-                try output.appendSlice(msg.content);
-                try output.appendSlice("\n<|/system|>\n");
+                try output.appendSlice(self.allocator, "<|system|>\n");
+                try output.appendSlice(self.allocator, msg.content);
+                try output.appendSlice(self.allocator, "\n<|/system|>\n");
             } else if (std.mem.eql(u8, msg.role, "user")) {
-                try output.appendSlice("<|recipient|>user<|/recipient|>\n");
-                try output.appendSlice("<|user|>\n");
-                try output.appendSlice(msg.content);
-                try output.appendSlice("\n<|/user|>\n");
+                try output.appendSlice(self.allocator, "<|recipient|>user<|/recipient|>\n");
+                try output.appendSlice(self.allocator, "<|user|>\n");
+                try output.appendSlice(self.allocator, msg.content);
+                try output.appendSlice(self.allocator, "\n<|/user|>\n");
             } else if (std.mem.eql(u8, msg.role, "assistant")) {
                 if (msg.tool_calls) |tool_calls| {
                     for (tool_calls) |tc| {
                         try std.fmt.format(
-                            output.writer(),
+                            output.writer(self.allocator),
                             "<|recipient|>{s}<|/recipient|>\n",
                             .{tc.name},
                         );
-                        try output.appendSlice("<|tool_call|>\n");
-                        try output.appendSlice(tc.arguments);
-                        try output.appendSlice("\n<|/tool_call|>\n");
+                        try output.appendSlice(self.allocator, "<|tool_call|>\n");
+                        try output.appendSlice(self.allocator, tc.arguments);
+                        try output.appendSlice(self.allocator, "\n<|/tool_call|>\n");
                     }
                 } else {
-                    try output.appendSlice("<|recipient|>user<|/recipient|>\n");
-                    try output.appendSlice("<|assistant|>\n");
-                    try output.appendSlice(msg.content);
-                    try output.appendSlice("\n<|/assistant|>\n");
+                    try output.appendSlice(self.allocator, "<|recipient|>user<|/recipient|>\n");
+                    try output.appendSlice(self.allocator, "<|assistant|>\n");
+                    try output.appendSlice(self.allocator, msg.content);
+                    try output.appendSlice(self.allocator, "\n<|/assistant|>\n");
                 }
             } else if (std.mem.eql(u8, msg.role, "tool")) {
                 const tool_name = msg.tool_call_id orelse "tool";
                 try std.fmt.format(
-                    output.writer(),
+                    output.writer(self.allocator),
                     "<|recipient|>{s}<|/recipient|>\n",
                     .{tool_name},
                 );
-                try output.appendSlice("<|tool_result|>\n");
-                try output.appendSlice(msg.content);
-                try output.appendSlice("\n<|/tool_result|>\n");
+                try output.appendSlice(self.allocator, "<|tool_result|>\n");
+                try output.appendSlice(self.allocator, msg.content);
+                try output.appendSlice(self.allocator, "\n<|/tool_result|>\n");
             }
         }
 
-        // Add assistant prompt for generation
-        try output.appendSlice("<|recipient|>user<|/recipient|>\n");
-        try output.appendSlice("<|assistant|>\n");
+        // Add open assistant prompt for model generation
+        try output.appendSlice(self.allocator, "<|recipient|>user<|/recipient|>\n");
+        try output.appendSlice(self.allocator, "<|assistant|>\n");
 
-        return output.toOwnedSlice();
+        return output.toOwnedSlice(self.allocator);
     }
 
-    /// Format a tool execution result as Harmony
+    /// Render a complete HarmonyConversation for model completion
+    pub fn renderConversation(
+        self: *HarmonyTemplate,
+        conversation: HarmonyConversation,
+    ) ![]u8 {
+        var output: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+
+        try output.appendSlice(self.allocator, "<|startoftext|>\n");
+
+        for (conversation.messages.items) |msg| {
+            const msg_text = try formatMessage(self.allocator, msg);
+            defer self.allocator.free(msg_text);
+            try output.appendSlice(self.allocator, msg_text);
+        }
+
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    /// Format a tool execution result as Harmony with assistant continuation prompt
     pub fn formatToolResult(
         self: *HarmonyTemplate,
         tool_name: []const u8,
         result: []const u8,
         is_error: bool,
     ) ![]u8 {
-        var output = std.ArrayList(u8).init(self.allocator);
-        errdefer output.deinit();
+        var output: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer output.deinit(self.allocator);
 
         try std.fmt.format(
-            output.writer(),
+            output.writer(self.allocator),
             "<|recipient|>{s}<|/recipient|>\n",
             .{tool_name},
         );
-        try output.appendSlice("<|tool_result|>\n");
+        try output.appendSlice(self.allocator, "<|tool_result|>\n");
 
         if (is_error) {
-            try output.appendSlice("Error: ");
+            try output.appendSlice(self.allocator, "Error: ");
         }
 
-        try output.appendSlice(result);
-        try output.appendSlice("\n<|/tool_result|>\n");
+        try output.appendSlice(self.allocator, result);
+        try output.appendSlice(self.allocator, "\n<|/tool_result|>\n");
 
         // Add assistant continuation prompt
-        try output.appendSlice("<|recipient|>user<|/recipient|>\n");
-        try output.appendSlice("<|assistant|>\n");
+        try output.appendSlice(self.allocator, "<|recipient|>user<|/recipient|>\n");
+        try output.appendSlice(self.allocator, "<|assistant|>\n");
 
-        return output.toOwnedSlice();
+        return output.toOwnedSlice(self.allocator);
     }
 
-    /// Format tool definitions for system prompt
+    /// Format tool definitions for inclusion in a system prompt
     pub fn formatToolDefinitions(
         self: *HarmonyTemplate,
         tools: []const ToolDefinition,
     ) ![]u8 {
-        var output = std.ArrayList(u8).init(self.allocator);
-        errdefer output.deinit();
+        var output: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer output.deinit(self.allocator);
 
-        try output.appendSlice("Available tools:\n");
+        try output.appendSlice(self.allocator, "Available tools:\n");
 
         for (tools) |tool| {
-            try std.fmt.format(output.writer(), "\n{s}:\n", .{tool.name});
-            try output.appendSlice(tool.description);
-            try output.appendSlice("\nParameters: ");
-            try std.json.stringify(tool.parameters, .{}, output.writer());
-            try output.appendSlice("\n");
+            try std.fmt.format(output.writer(self.allocator), "\n{s}:\n", .{tool.name});
+            try output.appendSlice(self.allocator, tool.description);
+            try std.fmt.format(output.writer(self.allocator), "\nParameters: {f}\n", .{std.json.fmt(tool.parameters, .{})});
         }
 
-        return output.toOwnedSlice();
+        return output.toOwnedSlice(self.allocator);
     }
 
-    /// Add reasoning markers based on effort level
+    /// Add reasoning chain markers based on configured effort level
     pub fn addReasoningMarkers(
         self: *HarmonyTemplate,
         content: []const u8,
@@ -173,50 +194,37 @@ pub const HarmonyTemplate = struct {
         switch (self.reasoning_effort) {
             .low => return self.allocator.dupe(u8, content),
             .medium => {
-                var output = std.ArrayList(u8).init(self.allocator);
-                errdefer output.deinit();
-                try output.appendSlice("<|reasoning|>\n");
-                try output.appendSlice(content);
-                try output.appendSlice("\n<|/reasoning|>\n");
-                return output.toOwnedSlice();
+                var output: std.ArrayListUnmanaged(u8) = .empty;
+                errdefer output.deinit(self.allocator);
+                try output.appendSlice(self.allocator, "<|reasoning|>\n");
+                try output.appendSlice(self.allocator, content);
+                try output.appendSlice(self.allocator, "\n<|/reasoning|>\n");
+                return output.toOwnedSlice(self.allocator);
             },
             .high => {
-                var output = std.ArrayList(u8).init(self.allocator);
-                errdefer output.deinit();
-                try output.appendSlice("<|reasoning|>\n");
-                try output.appendSlice("Let me think through this step by step:\n");
-                try output.appendSlice(content);
-                try output.appendSlice("\n<|/reasoning|>\n");
-                return output.toOwnedSlice();
+                var output: std.ArrayListUnmanaged(u8) = .empty;
+                errdefer output.deinit(self.allocator);
+                try output.appendSlice(self.allocator, "<|reasoning|>\n");
+                try output.appendSlice(self.allocator, "Let me think through this step by step:\n");
+                try output.appendSlice(self.allocator, content);
+                try output.appendSlice(self.allocator, "\n<|/reasoning|>\n");
+                return output.toOwnedSlice(self.allocator);
             },
         }
     }
-
-    /// Render conversation for model completion
-    pub fn renderConversationForCompletion(
-        self: *HarmonyTemplate,
-        conversation: HarmonyConversation,
-        target_role: HarmonyRole,
-    ) ![]u8 {
-        _ = self;
-        _ = conversation;
-        _ = target_role;
-        // TODO: Implement conversation rendering with special tokens
-        return self.allocator.dupe(u8, "");
-    }
 };
 
-/// Format a single message to Harmony string
+/// Format a single HarmonyMessage into its Harmony text representation
 pub fn formatMessage(
     allocator: std.mem.Allocator,
     msg: HarmonyMessage,
 ) ![]u8 {
-    var output = std.ArrayList(u8).init(allocator);
-    errdefer output.deinit();
+    var output: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer output.deinit(allocator);
 
     if (msg.recipient) |recipient| {
         try std.fmt.format(
-            output.writer(),
+            output.writer(allocator),
             "<|recipient|>{s}<|/recipient|>\n",
             .{recipient},
         );
@@ -224,56 +232,58 @@ pub fn formatMessage(
 
     switch (msg.role) {
         .user => {
-            try output.appendSlice("<|user|>\n");
+            try output.appendSlice(allocator, "<|user|>\n");
             switch (msg.content) {
-                .text => |text| try output.appendSlice(text),
+                .text => |text| try output.appendSlice(allocator, text),
                 else => {},
             }
-            try output.appendSlice("\n<|/user|>\n");
+            try output.appendSlice(allocator, "\n<|/user|>\n");
         },
         .assistant => {
-            try output.appendSlice("<|assistant|>\n");
             switch (msg.content) {
-                .text => |text| try output.appendSlice(text),
+                .text => |text| {
+                    try output.appendSlice(allocator, "<|assistant|>\n");
+                    try output.appendSlice(allocator, text);
+                    try output.appendSlice(allocator, "\n<|/assistant|>\n");
+                },
                 .tool_call => |tc| {
-                    try output.appendSlice("<|tool_call|>\n");
-                    try std.fmt.format(output.writer(), "{{\"name\": \"{s}\", \"arguments\": {s}}}\n", .{
+                    try output.appendSlice(allocator, "<|tool_call|>\n");
+                    try std.fmt.format(output.writer(allocator), "{{\"name\": \"{s}\", \"arguments\": {s}}}\n", .{
                         tc.name,
                         tc.arguments,
                     });
-                    try output.appendSlice("<|/tool_call|>\n");
+                    try output.appendSlice(allocator, "<|/tool_call|>\n");
                 },
                 .reasoning => |r| {
-                    try output.appendSlice("<|reasoning|>\n");
-                    try output.appendSlice(r);
-                    try output.appendSlice("\n<|/reasoning|>\n");
+                    try output.appendSlice(allocator, "<|reasoning|>\n");
+                    try output.appendSlice(allocator, r);
+                    try output.appendSlice(allocator, "\n<|/reasoning|>\n");
                 },
                 else => {},
             }
-            try output.appendSlice("<|/assistant|>\n");
         },
         .system => {
-            try output.appendSlice("<|system|>\n");
+            try output.appendSlice(allocator, "<|system|>\n");
             switch (msg.content) {
-                .text => |text| try output.appendSlice(text),
+                .text => |text| try output.appendSlice(allocator, text),
                 else => {},
             }
-            try output.appendSlice("\n<|/system|>\n");
+            try output.appendSlice(allocator, "\n<|/system|>\n");
         },
         .tool => {
             switch (msg.content) {
                 .tool_result => |tr| {
-                    try output.appendSlice("<|tool_result|>\n");
+                    try output.appendSlice(allocator, "<|tool_result|>\n");
                     if (tr.is_error) {
-                        try output.appendSlice("Error: ");
+                        try output.appendSlice(allocator, "Error: ");
                     }
-                    try output.appendSlice(tr.result);
-                    try output.appendSlice("\n<|/tool_result|>\n");
+                    try output.appendSlice(allocator, tr.result);
+                    try output.appendSlice(allocator, "\n<|/tool_result|>\n");
                 },
                 else => {},
             }
         },
     }
 
-    return output.toOwnedSlice();
+    return output.toOwnedSlice(allocator);
 }
