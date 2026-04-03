@@ -40,6 +40,39 @@ pub const QuantizedWeight = struct {
             self.biases.ptr != null and
             self.scales.ptr != null;
     }
+
+    /// Dequantize this quantized weight to float array
+    /// Uses automatic group size detection based on weight name if provided
+    pub fn dequantize(
+        self: QuantizedWeight,
+        weight_name: ?[]const u8,
+        output_dtype: enum { f32, f16 },
+    ) !mlx.Array {
+        // Import dequantize module
+        const dequantize_mod = @import("inference/dequantize.zig");
+
+        // Determine group size
+        const group_size: usize = if (weight_name) |name|
+            dequantize_mod.getGroupSizeForWeight(name)
+        else
+            64; // Default
+
+        const config = dequantize_mod.DequantizeConfig{
+            .group_size = group_size,
+            .output_dtype = switch (output_dtype) {
+                .f32 => .f32,
+                .f16 => .f16,
+            },
+            .signed = false, // mlx-community uses unsigned 4-bit
+        };
+
+        return dequantize_mod.dequantizeAffine4Bit(
+            self.weight,
+            self.biases,
+            self.scales,
+            config,
+        );
+    }
 };
 
 /// DeepSeek transformer layer with MLA + MoE
@@ -48,52 +81,108 @@ pub const DeepSeekLayer = struct {
     mla: mla.MultiHeadLatentAttention,
     post_attn_norm: mlx.Array,
     moe: moe.MixtureOfExperts,
+
+    pub fn deinit(self: *DeepSeekLayer) void {
+        mlx.arrayFree(self.input_norm);
+        mlx.arrayFree(self.post_attn_norm);
+        // mla and moe have their own deinit methods
+        self.mla.deinit();
+        self.moe.deinit();
+    }
 };
 
 /// Weight container for DeepSeek model loading
+/// Note: All weights are stored dequantized (float16/float32)
 pub const DeepSeekWeights = struct {
-    // Token embeddings (quantized)
-    embed_tokens: QuantizedWeight,
+    // Token embeddings (dequantized)
+    token_embedding: mlx.Array,
     // Final norm (not quantized)
     norm: mlx.Array,
-    // LM head (quantized)
-    lm_head: QuantizedWeight,
+    // LM head (dequantized)
+    lm_head: mlx.Array,
     // Per-layer weights
     layers: []DeepSeekLayer,
+
+    /// Free all weight arrays
+    pub fn deinit(self: *DeepSeekWeights, allocator: std.mem.Allocator) void {
+        mlx.arrayFree(self.token_embedding);
+        mlx.arrayFree(self.norm);
+        mlx.arrayFree(self.lm_head);
+
+        for (self.layers) |*layer| {
+            layer.deinit();
+        }
+        allocator.free(self.layers);
+    }
 };
 
-/// MLA attention weights (quantized components)
+/// MLA attention weights (dequantized)
 pub const MLAWeights = struct {
-    q_proj: QuantizedWeight,
-    kv_a_proj_with_mqa: QuantizedWeight,
-    kv_b_proj: QuantizedWeight,
-    o_proj: QuantizedWeight,
+    q_proj: mlx.Array,
+    kv_a_proj_with_mqa: mlx.Array,
+    kv_b_proj: mlx.Array,
+    o_proj: mlx.Array,
     kv_a_layernorm: mlx.Array, // Not quantized
+
+    pub fn deinit(self: *MLAWeights) void {
+        mlx.arrayFree(self.q_proj);
+        mlx.arrayFree(self.kv_a_proj_with_mqa);
+        mlx.arrayFree(self.kv_b_proj);
+        mlx.arrayFree(self.o_proj);
+        mlx.arrayFree(self.kv_a_layernorm);
+    }
 };
 
-/// Dense MLP weights for Layer 0 (quantized)
+/// Dense MLP weights for Layer 0 (dequantized)
 pub const DenseMLPWeights = struct {
-    up_proj: QuantizedWeight,
-    gate_proj: QuantizedWeight,
-    down_proj: QuantizedWeight,
+    up_proj: mlx.Array,
+    gate_proj: mlx.Array,
+    down_proj: mlx.Array,
+
+    pub fn deinit(self: *DenseMLPWeights) void {
+        mlx.arrayFree(self.up_proj);
+        mlx.arrayFree(self.gate_proj);
+        mlx.arrayFree(self.down_proj);
+    }
 };
 
-/// MoE layer weights (quantized)
+/// MoE layer weights (dequantized)
 pub const MoEWeights = struct {
     // Router gate (not quantized)
     gate: mlx.Array,
     // Shared experts
     shared_experts: []struct {
-        gate_proj: QuantizedWeight,
-        up_proj: QuantizedWeight,
-        down_proj: QuantizedWeight,
+        gate_proj: mlx.Array,
+        up_proj: mlx.Array,
+        down_proj: mlx.Array,
+
+        pub fn deinit(self: *@This()) void {
+            mlx.arrayFree(self.gate_proj);
+            mlx.arrayFree(self.up_proj);
+            mlx.arrayFree(self.down_proj);
+        }
     },
     // Routed experts via switch_mlp
     switch_mlp: struct {
-        gate_proj: QuantizedWeight,
-        up_proj: QuantizedWeight,
-        down_proj: QuantizedWeight,
+        gate_proj: mlx.Array,
+        up_proj: mlx.Array,
+        down_proj: mlx.Array,
+
+        pub fn deinit(self: *@This()) void {
+            mlx.arrayFree(self.gate_proj);
+            mlx.arrayFree(self.up_proj);
+            mlx.arrayFree(self.down_proj);
+        }
     },
+
+    pub fn deinit(self: *MoEWeights, allocator: std.mem.Allocator) void {
+        mlx.arrayFree(self.gate);
+        for (self.shared_experts) |*expert| {
+            expert.deinit();
+        }
+        allocator.free(self.shared_experts);
+        self.switch_mlp.deinit();
+    }
 };
 
 /// DeepSeek-V2 Transformer with MLA attention and MoE FFN
