@@ -199,6 +199,20 @@ pub fn build(b: *std.Build) !void {
     const run_backends_test = b.addRunArtifact(backends_test);
     test_step.dependOn(&run_backends_test.step);
 
+    // Test backend integration (PHASE-14-05)
+    const backend_integration_test = b.addTest(.{
+        .name = "backend_integration_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test_backend_integration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    backend_integration_test.root_module.addImport("backends", backends_mod);
+
+    const run_backend_integration_test = b.addRunArtifact(backend_integration_test);
+    test_step.dependOn(&run_backend_integration_test.step);
+
     // Test turboquant integration (PHASE-07-02)
     const turboquant_test_mod = b.createModule(.{
         .root_source_file = b.path("src/turboquant_test.zig"),

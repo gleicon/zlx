@@ -1,6 +1,7 @@
 //! generator.zig - Token generation with iterator pattern
 //!
 //! Provides GenerationState that yields one token at a time via next().
+//! Now supports both MLX.zig and llama.cpp backends via unified Backend interface.
 
 const std = @import("std");
 const mlx = @import("../mlx.zig/src/mlx.zig");
@@ -8,6 +9,12 @@ const qwen = @import("../mlx.zig/src/qwen.zig");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
 const speculation = @import("../speculation/speculative_generator.zig");
 const draft_model = @import("../models/draft_model.zig");
+const backends = @import("../backends/mod.zig");
+const factory = @import("../backends/factory.zig");
+const registry = @import("../models/registry.zig");
+
+// TODO(14-05): Generator is being migrated to use backends.Backend abstraction
+// Currently uses hardcoded MLX.zig, will transition to unified backend interface
 
 /// Token type for generation
 pub const Token = u32;
@@ -466,8 +473,8 @@ pub const GenerationState = struct {
             const has_min_p = self.options.min_p > 0.0 and self.options.min_p <= 1.0;
             const needs_modifications = has_logit_bias or has_penalties or has_top_k or has_min_p;
 
-            var modified_logits: mlx.Array = undefined;
-            var modified_logits_owned = false;
+            var modified_logits = mlx.arrayNew();
+            defer mlx.arrayFree(modified_logits);
 
             if (needs_modifications) {
                 // Create mutable copy of logits data for modifications
@@ -585,14 +592,16 @@ pub const GenerationState = struct {
                     }
                 }
 
+                // Free the empty array before creating a new one with actual data
+                mlx.arrayFree(modified_logits);
+
                 // Create new MLX array from modified logits
                 modified_logits = try mlx.arrayNewData(logits_copy.ptr, .{ 1, @as(c_int, @intCast(vocab_size)) }, mlx.FLOAT32);
-                modified_logits_owned = true;
             } else {
-                // No modifications needed, use original logits
+                // No modifications needed, copy original logits into initialized array
                 try mlx.arraySet(&modified_logits, last_logits);
             }
-            defer if (modified_logits_owned) mlx.arrayFree(modified_logits);
+            // Note: mlx.arrayFree is handled by defer at line 470-471
 
             // Apply temperature scaling to modified logits
             var scaled_logits = mlx.arrayNew();
