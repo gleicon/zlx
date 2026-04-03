@@ -66,6 +66,14 @@ pub fn build(b: *std.Build) !void {
     }));
     exe.root_module.addImport("turboquant", turboquant_mod);
 
+    // Wire backends module (PHASE-14-01)
+    const backends_mod = b.createModule(.{
+        .root_source_file = b.path("src/backends/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("backends", backends_mod);
+
     // Wire MLX-C + frameworks + pcre2 (BUILD-02)
     configureExecutable(exe, b, deps);
 
