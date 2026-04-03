@@ -38,13 +38,38 @@ pub const YarnRopeConfig = struct {
     original_max_position: usize = 4096,
 };
 
+/// GPT-OSS expert weights for MoE
+pub const GptOssExpert = struct {
+    gate_proj: mlx.Array,
+    up_proj: mlx.Array,
+    down_proj: mlx.Array,
+
+    pub fn deinit(self: *GptOssExpert) void {
+        mlx.arrayFree(self.gate_proj);
+        mlx.arrayFree(self.up_proj);
+        mlx.arrayFree(self.down_proj);
+    }
+};
+
 /// GPT-OSS transformer layer
 pub const GptOssLayer = struct {
     layer_type: enum { sliding, full },
     input_norm: mlx.Array,
     attention: GptOssAttention,
     post_attn_norm: mlx.Array,
-    moe: moe.MixtureOfExperts,
+    router: mlx.Array,
+    experts: []GptOssExpert,
+
+    pub fn deinit(self: *GptOssLayer, allocator: std.mem.Allocator) void {
+        mlx.arrayFree(self.input_norm);
+        mlx.arrayFree(self.post_attn_norm);
+        mlx.arrayFree(self.router);
+        self.attention.deinit();
+        for (self.experts) |*expert| {
+            expert.deinit();
+        }
+        allocator.free(self.experts);
+    }
 };
 
 /// GPT-OSS attention with GQA and sliding window support
@@ -57,6 +82,13 @@ pub const GptOssAttention = struct {
     num_kv_heads: usize,
     head_dim: usize,
     layer_idx: usize,
+
+    pub fn deinit(self: *GptOssAttention) void {
+        mlx.arrayFree(self.q_proj);
+        mlx.arrayFree(self.k_proj);
+        mlx.arrayFree(self.v_proj);
+        mlx.arrayFree(self.o_proj);
+    }
 
     /// Forward pass with optional sliding window
     pub fn forward(
@@ -230,6 +262,16 @@ pub const GptOssWeights = struct {
     layers: []GptOssLayer,
     norm: mlx.Array,
     lm_head: mlx.Array,
+
+    pub fn deinit(self: *GptOssWeights, allocator: std.mem.Allocator) void {
+        mlx.arrayFree(self.token_embedding);
+        mlx.arrayFree(self.norm);
+        mlx.arrayFree(self.lm_head);
+        for (self.layers) |*layer| {
+            layer.deinit(allocator);
+        }
+        allocator.free(self.layers);
+    }
 };
 
 /// GPT-OSS Transformer
