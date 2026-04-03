@@ -268,60 +268,105 @@ fn registerDeepSeekWeightKeys(
     weights_hash: *std.StringHashMap(*mlx.Array),
     config: deepseek.DeepSeekConfig,
 ) !void {
-    // Embedding and output weights
-    try registerWeightKey(allocator, weights_hash, "model.embed_tokens.weight");
+    // Embedding and output weights (quantized: weight + biases + scales)
+    try registerQuantizedWeightKey(allocator, weights_hash, "model.embed_tokens");
     try registerWeightKey(allocator, weights_hash, "model.norm.weight");
-    try registerWeightKey(allocator, weights_hash, "lm_head.weight");
+    try registerQuantizedWeightKey(allocator, weights_hash, "lm_head");
 
     // Per-layer weights
     var buf: [256]u8 = undefined;
     for (0..config.num_hidden_layers) |layer_idx| {
-        // Layer norms
+        // Layer norms (not quantized)
         const input_ln = try std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx});
         try registerWeightKey(allocator, weights_hash, input_ln);
 
         const post_attn_ln = try std.fmt.bufPrint(&buf, "model.layers.{d}.post_attention_layernorm.weight", .{layer_idx});
         try registerWeightKey(allocator, weights_hash, post_attn_ln);
 
-        // MLA attention weights (DeepSeek V2 uses MLA compression)
-        const q_proj = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.q_proj.weight", .{layer_idx});
-        try registerWeightKey(allocator, weights_hash, q_proj);
+        // MLA attention weights (all quantized in 4-bit model)
+        // q_proj
+        const q_proj_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.q_proj", .{layer_idx});
+        try registerQuantizedWeightKey(allocator, weights_hash, q_proj_base);
 
-        const kv_b_proj = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_b_proj.weight", .{layer_idx});
-        try registerWeightKey(allocator, weights_hash, kv_b_proj);
+        // kv_b_proj
+        const kv_b_proj_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_b_proj", .{layer_idx});
+        try registerQuantizedWeightKey(allocator, weights_hash, kv_b_proj_base);
 
-        const o_proj = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.o_proj.weight", .{layer_idx});
-        try registerWeightKey(allocator, weights_hash, o_proj);
+        // o_proj
+        const o_proj_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.o_proj", .{layer_idx});
+        try registerQuantizedWeightKey(allocator, weights_hash, o_proj_base);
 
-        // MLA-specific projections (for compressed KV)
-        const q_a_proj = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.q_a_proj.weight", .{layer_idx});
-        try registerWeightKey(allocator, weights_hash, q_a_proj);
+        // kv_a_proj_with_mqa (DeepSeek V2 uses MLA with MQA)
+        const kv_a_proj_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_a_proj_with_mqa", .{layer_idx});
+        try registerQuantizedWeightKey(allocator, weights_hash, kv_a_proj_base);
 
-        const q_b_proj = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.q_b_proj.weight", .{layer_idx});
-        try registerWeightKey(allocator, weights_hash, q_b_proj);
+        // kv_a_layernorm (per-layer normalization for compressed KV)
+        const kv_a_ln = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_a_layernorm.weight", .{layer_idx});
+        try registerWeightKey(allocator, weights_hash, kv_a_ln);
 
-        const kv_a_proj = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_a_proj.weight", .{layer_idx});
-        try registerWeightKey(allocator, weights_hash, kv_a_proj);
+        // Layer 0 uses dense MLP (first_k_dense_replace = 1)
+        if (layer_idx == 0) {
+            // Dense MLP: up_proj, gate_proj, down_proj (all quantized)
+            const up_proj_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.up_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, up_proj_base);
 
-        // MoE router
-        const gate = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.gate.weight", .{layer_idx});
-        try registerWeightKey(allocator, weights_hash, gate);
+            const gate_proj_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.gate_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, gate_proj_base);
 
-        // Shared experts (2 shared experts per layer)
-        for (0..config.num_shared_experts) |exp_idx| {
-            const shared_gate = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.gate_proj.weight", .{ layer_idx, exp_idx });
-            try registerWeightKey(allocator, weights_hash, shared_gate);
+            const down_proj_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.down_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, down_proj_base);
+        } else {
+            // Layers 1+ use MoE with switch_mlp for experts
 
-            const shared_up = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.up_proj.weight", .{ layer_idx, exp_idx });
-            try registerWeightKey(allocator, weights_hash, shared_up);
+            // MoE router gate (not quantized)
+            const gate = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.gate.weight", .{layer_idx});
+            try registerWeightKey(allocator, weights_hash, gate);
 
-            const shared_down = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.down_proj.weight", .{ layer_idx, exp_idx });
-            try registerWeightKey(allocator, weights_hash, shared_down);
+            // Shared experts (2 experts per layer, all quantized)
+            for (0..config.num_shared_experts) |exp_idx| {
+                const shared_gate_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.gate_proj", .{ layer_idx, exp_idx });
+                try registerQuantizedWeightKey(allocator, weights_hash, shared_gate_base);
+
+                const shared_up_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.up_proj", .{ layer_idx, exp_idx });
+                try registerQuantizedWeightKey(allocator, weights_hash, shared_up_base);
+
+                const shared_down_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.down_proj", .{ layer_idx, exp_idx });
+                try registerQuantizedWeightKey(allocator, weights_hash, shared_down_base);
+            }
+
+            // Routed experts via switch_mlp (fused 64 experts, all quantized)
+            // switch_mlp contains all expert weights fused together
+            const switch_gate_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.gate_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, switch_gate_base);
+
+            const switch_up_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.up_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, switch_up_base);
+
+            const switch_down_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.down_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, switch_down_base);
         }
-
-        // Routed experts (64 experts, but load lazily - just register router for now)
-        // Expert weights are loaded on-demand to save memory
     }
+}
+
+/// Register a quantized weight key group (.weight + .biases + .scales)
+fn registerQuantizedWeightKey(
+    allocator: std.mem.Allocator,
+    weights_hash: *std.StringHashMap(*mlx.Array),
+    base_key: []const u8,
+) !void {
+    var buf: [256]u8 = undefined;
+
+    // Register .weight
+    const weight_key = try std.fmt.bufPrint(&buf, "{s}.weight", .{base_key});
+    try registerWeightKey(allocator, weights_hash, weight_key);
+
+    // Register .biases
+    const biases_key = try std.fmt.bufPrint(&buf, "{s}.biases", .{base_key});
+    try registerWeightKey(allocator, weights_hash, biases_key);
+
+    // Register .scales
+    const scales_key = try std.fmt.bufPrint(&buf, "{s}.scales", .{base_key});
+    try registerWeightKey(allocator, weights_hash, scales_key);
 }
 
 /// Register a single weight key in the hash map
@@ -344,30 +389,17 @@ fn mapWeightsToDeepSeek(
     config: deepseek.DeepSeekConfig,
 ) !deepseek.DeepSeekWeights {
     var weights = deepseek.DeepSeekWeights{
-        .token_embedding = mlx.arrayNew(),
-        .layers = try allocator.alloc(deepseek.DeepSeekLayer, config.num_hidden_layers),
+        .embed_tokens = try mapQuantizedWeight(weights_hash, "model.embed_tokens"),
         .norm = mlx.arrayNew(),
-        .lm_head = mlx.arrayNew(),
+        .lm_head = try mapQuantizedWeight(weights_hash, "lm_head"),
+        .layers = try allocator.alloc(deepseek.DeepSeekLayer, config.num_hidden_layers),
     };
 
-    // Map embedding
-    if (weights_hash.get("model.embed_tokens.weight")) |embed_ptr| {
-        weights.token_embedding = embed_ptr.*;
-    } else {
-        std.log.warn("Missing weight: model.embed_tokens.weight", .{});
-    }
-
-    // Map final norm and lm_head
+    // Map final norm (not quantized)
     if (weights_hash.get("model.norm.weight")) |norm_ptr| {
         weights.norm = norm_ptr.*;
     } else {
         std.log.warn("Missing weight: model.norm.weight", .{});
-    }
-
-    if (weights_hash.get("lm_head.weight")) |lm_head_ptr| {
-        weights.lm_head = lm_head_ptr.*;
-    } else {
-        std.log.warn("Missing weight: lm_head.weight", .{});
     }
 
     // Map per-layer weights
@@ -381,7 +413,7 @@ fn mapWeightsToDeepSeek(
             .moe = undefined, // Will be initialized separately
         };
 
-        // Map layer norms
+        // Map layer norms (not quantized)
         const input_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx});
         if (weights_hash.get(input_ln_key)) |ptr| {
             weights.layers[layer_idx].input_norm = ptr.*;
@@ -394,6 +426,44 @@ fn mapWeightsToDeepSeek(
     }
 
     return weights;
+}
+
+/// Helper to map a quantized weight group from hash
+fn mapQuantizedWeight(
+    weights_hash: *std.StringHashMap(*mlx.Array),
+    base_key: []const u8,
+) !deepseek.QuantizedWeight {
+    var buf: [256]u8 = undefined;
+
+    const weight_key = try std.fmt.bufPrint(&buf, "{s}.weight", .{base_key});
+    const biases_key = try std.fmt.bufPrint(&buf, "{s}.biases", .{base_key});
+    const scales_key = try std.fmt.bufPrint(&buf, "{s}.scales", .{base_key});
+
+    var qw = deepseek.QuantizedWeight{
+        .weight = mlx.arrayNew(),
+        .biases = mlx.arrayNew(),
+        .scales = mlx.arrayNew(),
+    };
+
+    if (weights_hash.get(weight_key)) |ptr| {
+        qw.weight = ptr.*;
+    } else {
+        std.log.warn("Missing quantized weight: {s}", .{weight_key});
+    }
+
+    if (weights_hash.get(biases_key)) |ptr| {
+        qw.biases = ptr.*;
+    } else {
+        std.log.warn("Missing quantized bias: {s}", .{biases_key});
+    }
+
+    if (weights_hash.get(scales_key)) |ptr| {
+        qw.scales = ptr.*;
+    } else {
+        std.log.warn("Missing quantized scales: {s}", .{scales_key});
+    }
+
+    return qw;
 }
 
 /// Default model paths relative to executable

@@ -27,6 +27,21 @@ pub const DeepSeekConfig = struct {
     latent_dim: usize = 512,
 };
 
+/// Quantized weight components (4-bit with biases and scales)
+pub const QuantizedWeight = struct {
+    weight: mlx.Array, // 4-bit packed weights
+    biases: mlx.Array, // Quantization biases
+    scales: mlx.Array, // Quantization scales
+
+    pub fn isValid(self: QuantizedWeight) bool {
+        // Check if all components are initialized (non-null arrays)
+        // MLX arrays are opaque pointers, so we check if they're not null
+        return self.weight.ptr != null and
+            self.biases.ptr != null and
+            self.scales.ptr != null;
+    }
+};
+
 /// DeepSeek transformer layer with MLA + MoE
 pub const DeepSeekLayer = struct {
     input_norm: mlx.Array,
@@ -37,10 +52,48 @@ pub const DeepSeekLayer = struct {
 
 /// Weight container for DeepSeek model loading
 pub const DeepSeekWeights = struct {
-    token_embedding: mlx.Array,
-    layers: []DeepSeekLayer,
+    // Token embeddings (quantized)
+    embed_tokens: QuantizedWeight,
+    // Final norm (not quantized)
     norm: mlx.Array,
-    lm_head: mlx.Array,
+    // LM head (quantized)
+    lm_head: QuantizedWeight,
+    // Per-layer weights
+    layers: []DeepSeekLayer,
+};
+
+/// MLA attention weights (quantized components)
+pub const MLAWeights = struct {
+    q_proj: QuantizedWeight,
+    kv_a_proj_with_mqa: QuantizedWeight,
+    kv_b_proj: QuantizedWeight,
+    o_proj: QuantizedWeight,
+    kv_a_layernorm: mlx.Array, // Not quantized
+};
+
+/// Dense MLP weights for Layer 0 (quantized)
+pub const DenseMLPWeights = struct {
+    up_proj: QuantizedWeight,
+    gate_proj: QuantizedWeight,
+    down_proj: QuantizedWeight,
+};
+
+/// MoE layer weights (quantized)
+pub const MoEWeights = struct {
+    // Router gate (not quantized)
+    gate: mlx.Array,
+    // Shared experts
+    shared_experts: []struct {
+        gate_proj: QuantizedWeight,
+        up_proj: QuantizedWeight,
+        down_proj: QuantizedWeight,
+    },
+    // Routed experts via switch_mlp
+    switch_mlp: struct {
+        gate_proj: QuantizedWeight,
+        up_proj: QuantizedWeight,
+        down_proj: QuantizedWeight,
+    },
 };
 
 /// DeepSeek-V2 Transformer with MLA attention and MoE FFN
