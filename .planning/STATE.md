@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: in_progress
-stopped_at: Phase 14 complete - DeepSeek & GPT-OSS with llama.cpp backend
-last_updated: "2026-04-03T23:00:00.000Z"
+status: executing
+stopped_at: Completed 15-mlx-gptoss-02-PLAN.md (Harmony parser and template)
+last_updated: "2026-04-03T23:17:09.734Z"
 progress:
   total_phases: 14
-  completed_phases: 8
-  total_plans: 29
-  completed_plans: 30
+  completed_phases: 7
+  total_plans: 37
+  completed_plans: 32
   percent: 98
 ---
 
@@ -20,7 +20,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** Phase 14 — DeepSeek & GPT-OSS Integration with llama.cpp
+**Current focus:** Phase 15 — mlx-gptoss
 
 ## Version Update: v1.1.1 → v1.1.2
 
@@ -37,8 +37,9 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 ## Current Position
 
 Milestone: v1.1.2 (MoE Models with llama.cpp)
-Phase: 14 (DeepSeek & GPT-OSS Integration) — ✅ COMPLETE
-Status: All 5 plans complete, llama.cpp backend integrated
+Phase: 15 (mlx-gptoss) — EXECUTING
+Plan: 2 of 6
+Status: Ready to execute
 
 Progress: [███████████] 98% → Phase 14 complete, ready for model testing
 
@@ -81,6 +82,7 @@ Progress: [███████████] 98% → Phase 14 complete, ready f
 | GPT-OSS | llama.cpp | --backend llama_cpp |
 
 **Test Commands:**
+
 ```bash
 ./test_models.sh --deepseek-llama      # Test DeepSeek via llama.cpp
 ./test_models.sh --gptoss-llama        # Test GPT-OSS (requires download)
@@ -93,6 +95,7 @@ Progress: [███████████] 98% → Phase 14 complete, ready f
 ## Previous Phase: 13 — ✅ COMPLETE
 
 Phase 13 completed with MLX-based MoE support:
+
 - DeepSeek 4-bit dequantization
 - GPT-OSS 11GB download infrastructure
 - Integration testing framework
@@ -129,6 +132,6 @@ Phase 13 completed with MLX-based MoE support:
 
 ## Session Continuity
 
-Last session: 2026-04-03T22:30:00Z
-Stopped at: Phase 14 complete - All plans executed
+Last session: 2026-04-03T23:17:09.731Z
+Stopped at: Completed 15-mlx-gptoss-02-PLAN.md (Harmony parser and template)
 Resume: Model testing with actual GGUF downloads

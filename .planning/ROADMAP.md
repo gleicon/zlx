@@ -271,7 +271,7 @@ Plans:
 Plans:
 - [ ] 15-MASTER-PLAN.md — Overview and architecture (GPTOSS-01 through GPTOSS-05)
 - [ ] 15-01-PLAN.md — MLX GPT-OSS transformer with Metal kernels (GPTOSS-01)
-- [ ] 15-02-PLAN.md — Harmony format parser and chat template (GPTOSS-02)
+- [x] 15-02-PLAN.md — Harmony format parser and chat template (GPTOSS-02)
 - [ ] 15-03-PLAN.md — Browser and Python tool implementation (GPTOSS-03)
 - [ ] 15-04-PLAN.md — Weight loading and MXFP4 support (GPTOSS-04)
 - [ ] 15-05-PLAN.md — Integration with zlx server (GPTOSS-05)
@@ -306,7 +306,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 12. MoE Production-Ready | 8/8 | ✅ Complete | 2026-04-03 |
 | 13. DeepSeek & GPT-OSS Completion | 0/3 | 🔄 Planned | In Progress |
 | 14. llama.cpp Backend Integration | 0/5 | 📋 Planned | Not Started |
-| 15. Native MLX GPT-OSS | 6/6 | 📋 Planned | Phase 15 Planning Complete |
+| 15. Native MLX GPT-OSS | 1/6 | In Progress|  |
 
 **v1.1.0 Progress:** 9/9 phases complete | All phases COMPLETE | v1.1.0 Released
 
