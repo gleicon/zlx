@@ -25,7 +25,9 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 - [x] **Phase 9: Model Management** - Auto-download, configuration, and Open WebUI integration (COMPLETE)
 
 **v1.1.1 (IN PROGRESS):**
-- [ ] **Phase 11: DeepSeek MoE Support** - DeepSeek-Coder-V2-Lite via mlx-c v0.4.x with MLA and MoE
+- [x] **Phase 11: DeepSeek MoE Infrastructure** - MLA attention, MoE routing, mlx-c v0.4.x upgrade (COMPLETED)
+- [x] **Phase 12: MoE Models Production-Ready** - Infrastructure: safetensors loading, GPT-OSS architecture, memory constraints, testing (COMPLETED)
+- [ ] **Phase 13: DeepSeek & GPT-OSS Completion** - Quantized weight dequantization, model download, integration testing (CURRENT)
 
 ## Phase Details
 
@@ -168,25 +170,62 @@ Plans:
   5. Open WebUI connects successfully to zlx at `http://localhost:8081` with CORS enabled
   6. `GET /v1/models` shows all models: available, loading, loaded with memory requirements
 
-### Phase 11: DeepSeek MoE Support
-**Goal**: Add DeepSeek-V2-Lite support via mlx-c v0.4.x upgrade with MLA and MoE
+### Phase 11: DeepSeek MoE Infrastructure
+**Goal**: Build foundation for MoE models via mlx-c v0.4.x with MLA attention and MoE routing
 **Depends on**: Phase 9
-**Requirements**: New capability — DeepSeek MoE inference with sparse parameters
+**Requirements**: New capability — DeepSeek MoE architecture components
 **Success Criteria** (what must be TRUE):
-  1. DeepSeek-Coder-V2-Lite model loads and runs inference
-  2. Memory usage matches 2B active params (not 15.7B total)
-  3. 128k context works with MLA compressed KV cache
-  4. Chat completions use correct format (User:/Assistant:)
-  5. Existing models (Qwen, Llama) continue to work
-  6. mlx-c v0.4.x integrated alongside v0.1.2
-**Plans**: 5 plans (Wave 1: mlx-c upgrade, Wave 2: MLA+MoE parallel, Wave 3: Transformer, Wave 4: Integration)
+  1. mlx-c v0.4.x integrated alongside v0.1.2 for Fast Custom Ops API
+  2. MLA (Multi-head Latent Attention) compresses KV cache by 90%
+  3. MoE routing layer with sparse expert activation (top-k selection)
+  4. DeepSeek transformer architecture defined with MLA + MoE layers
+  5. Chat template for DeepSeek format (User:/Assistant:)
+**Plans**: 6 plans complete (11-01 through 11-05 + MASTER)
 
 Plans:
 - [x] 11-01-PLAN.md — mlx-c v0.4.x integration for Fast Custom Ops API
 - [x] 11-02-PLAN.md — Multi-head Latent Attention (MLA) with 90% KV compression
 - [x] 11-03-PLAN.md — Mixture of Experts (MoE) routing with sparse expert activation
-- [x] 11-04-PLAN.md — DeepSeek transformer integrating MLA + MoE
+- [x] 11-04-PLAN.md — DeepSeek transformer architecture (integration layer)
 - [x] 11-05-PLAN.md — Chat template, registry, memory estimation, end-to-end testing
+
+### Phase 12: MoE Models Production-Ready
+**Goal**: Make MoE models (DeepSeek + GPT-OSS) work on small machines (8-16GB RAM) with TurboQuant
+**Depends on**: Phase 11 (infrastructure complete)
+**Requirements**: MOE-01, MOE-02, MOE-03, MOE-04, MOE-05
+**Success Criteria** (what must be TRUE):
+  1. DeepSeek-Coder-V2-Lite loads weights and generates tokens without crash
+  2. GPT-OSS-20B loads weights and generates tokens without crash
+  3. Both models work on 16GB MacBook with TurboQuant enabled (4.6x compression)
+  4. Server auto-enables TurboQuant on <16GB systems and limits context if needed
+  5. `./test_models.sh` passes for all three models (Qwen, DeepSeek, GPT-OSS)
+  6. CI/CD runs automated tests on every PR with regression detection
+**Plans**: 5 plans (12-01 through 12-05) + 3 gap closure fixes
+
+Plans:
+- [x] 12-01-PLAN.md — DeepSeek weight loading from safetensors files
+- [x] 12-02-PLAN.md — GPT-OSS architecture (sliding window, Yarn RoPE, 32-expert MoE)
+- [x] 12-03-PLAN.md — TurboQuant verification/fix (4.6x KV cache compression)
+- [x] 12-04-PLAN.md — Small machine constraints (memory budgets, auto-TurboQuant)
+- [x] 12-05-PLAN.md — Testing infrastructure (automated testing shell script, CI/CD)
+
+### Phase 13: DeepSeek & GPT-OSS Completion
+**Goal**: Complete MoE model support with working quantized weight dequantization (DeepSeek) and full weight loading (GPT-OSS)
+**Depends on**: Phase 12 (infrastructure complete)
+**Requirements**: MOE-06, MOE-07, MOE-08, MOE-09, MOE-10
+**Success Criteria** (what must be TRUE):
+  1. DeepSeek-Coder-V2-Lite dequantizes 4-bit weights correctly and generates tokens
+  2. GPT-OSS-20B downloads weights (11GB) and loads without errors
+  3. Both models pass `./test_models.sh` with all tests passing
+  4. TurboQuant achieves 4.6x+ KV cache compression with both models
+  5. No stub functions or TODOs remain in weight loading code
+  6. CI/CD integration testing works for all three models
+**Plans**: 3 plans (13-01 through 13-03)
+
+Plans:
+- [ ] 13-01-PLAN.md — DeepSeek quantized weight reconstruction (4-bit affine dequantization)
+- [ ] 13-02-PLAN.md — GPT-OSS download and weight loading (MXFP4 support)
+- [ ] 13-03-PLAN.md — Integration testing and verification (test_models.sh, CI/CD)
 
 ## Progress
 
@@ -214,8 +253,10 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 7. TurboQuant Integration | 2/2 | ✅ Complete | 2026-04-02 |
 | 8. Speculative Decoding | 1/1 | ✅ Complete | 2026-04-02 |
 | 9. Model Management | 3/3 | ✅ Complete | 2026-04-02 |
-| 11. DeepSeek MoE | 5/6 | In Progress|  |
+| 11. DeepSeek MoE Infrastructure | 6/6 | ✅ Complete | 2026-04-03 |
+| 12. MoE Production-Ready | 8/8 | ✅ Complete | 2026-04-03 |
+| 13. DeepSeek & GPT-OSS Completion | 0/3 | 🔄 Planned | In Progress |
 
 **v1.1.0 Progress:** 9/9 phases complete | All phases COMPLETE | v1.1.0 Released
 
-**v1.1.1 Target:** DeepSeek MoE Support | Phase 11 Planned | Ready to Execute
+**v1.1.1 Target:** MoE Models Production-Ready | Phase 13 Planning Complete | DeepSeek + GPT-OSS Weight Loading
