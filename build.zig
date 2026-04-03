@@ -316,6 +316,49 @@ pub fn build(b: *std.Build) !void {
     const run_deepseek_test = b.addRunArtifact(deepseek_test);
     test_step.dependOn(&run_deepseek_test.step);
 
+    // Integration tests for MoE models (13-03)
+    const integration_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/test_integration.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // Add required imports
+    integration_test_mod.addImport("mlx.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    integration_test_mod.addImport("deepseek.zig", b.createModule(.{
+        .root_source_file = b.path("src/deepseek.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    integration_test_mod.addImport("gpt_oss.zig", b.createModule(.{
+        .root_source_file = b.path("src/gpt_oss.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    integration_test_mod.addImport("models/registry.zig", b.createModule(.{
+        .root_source_file = b.path("src/models/registry.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    integration_test_mod.addImport("inference/loader.zig", b.createModule(.{
+        .root_source_file = b.path("src/inference/loader.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+
+    const integration_test = b.addTest(.{
+        .name = "integration_test",
+        .root_module = integration_test_mod,
+    });
+
+    const run_integration_test = b.addRunArtifact(integration_test);
+    const test_integration_step = b.step("test-integration", "Run MoE model integration tests");
+    test_integration_step.dependOn(&run_integration_test.step);
+    test_step.dependOn(&run_integration_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
     // due to cross-module dependencies
