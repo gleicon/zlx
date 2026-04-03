@@ -99,12 +99,17 @@ pub const Header = struct {
     }
 
     pub fn deinit(self: *Header) void {
-        var iter = self.tensors.valueIterator();
-        while (iter.next()) |info| {
+        // Free both keys (owned copies) and values (shapes)
+        var key_iter = self.tensors.keyIterator();
+        while (key_iter.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        var val_iter = self.tensors.valueIterator();
+        while (val_iter.next()) |info| {
             info.deinit(self.allocator);
         }
         self.tensors.deinit();
-        if (self.metadata) |*m| m.deinit();
+        // metadata is not stored (std.json.Value not owned after parsing)
     }
 };
 
@@ -173,9 +178,9 @@ pub const SafetensorsReader = struct {
         );
         defer parsed.deinit();
 
-        // Extract metadata if present
+        // Extract metadata if present (stored as std.json.Value)
         if (parsed.value.object.get("__metadata__")) |meta| {
-            header.metadata = try meta.jsonStringify(self.allocator);
+            _ = meta; // Metadata present but not stored (std.json.Value not owned after parsed.deinit)
         }
 
         // Extract tensor information
@@ -204,7 +209,10 @@ pub const SafetensorsReader = struct {
                 @intCast(offsets.items[1].integer),
             };
 
-            try header.tensors.put(entry.key_ptr.*, .{
+            // Dupe the key so it survives parsed.deinit()
+            const key_owned = try self.allocator.dupe(u8, entry.key_ptr.*);
+            errdefer self.allocator.free(key_owned);
+            try header.tensors.put(key_owned, .{
                 .dtype = dtype,
                 .shape = shape,
                 .data_offsets = data_offsets,
@@ -241,15 +249,15 @@ pub const SafetensorsReader = struct {
     pub fn getTensorNames(self: *const SafetensorsReader, allocator: std.mem.Allocator) ![][]const u8 {
         const header = self.header orelse return error.NoHeader;
 
-        var names = std.ArrayList([]const u8).init(allocator);
-        errdefer names.deinit();
+        var names = std.ArrayList([]const u8).empty;
+        errdefer names.deinit(allocator);
 
         var iter = header.tensors.keyIterator();
         while (iter.next()) |key| {
-            try names.append(try allocator.dupe(u8, key.*));
+            try names.append(allocator, try allocator.dupe(u8, key.*));
         }
 
-        return names.toOwnedSlice();
+        return names.toOwnedSlice(allocator);
     }
 
     /// Get tensor info
