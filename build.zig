@@ -74,6 +74,53 @@ pub fn build(b: *std.Build) !void {
     });
     exe.root_module.addImport("backends", backends_mod);
 
+    // llama.cpp build integration (PHASE-14-02)
+    // Build llama.cpp as static library using CMake
+    const llama_cpp_path = "src/llama.cpp";
+    const llama_build_path = b.pathJoin(&.{ llama_cpp_path, "build" });
+
+    // CMake configuration step
+    const cmake_cmd = b.addSystemCommand(&.{
+        "cmake",
+        "-B",
+        llama_build_path,
+        "-S",
+        llama_cpp_path,
+        "-DLLAMA_METAL=ON",
+        "-DLLAMA_METAL_EMBED_LIBRARY=ON",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DLLAMA_STANDALONE=OFF",
+        "-DLLAMA_BUILD_TESTS=OFF",
+        "-DLLAMA_BUILD_EXAMPLES=OFF",
+    });
+
+    // CMake build step
+    const build_cmd = b.addSystemCommand(&.{
+        "cmake",
+        "--build",
+        llama_build_path,
+        "--config",
+        "Release",
+        "--parallel",
+    });
+    build_cmd.step.dependOn(&cmake_cmd.step);
+
+    // Make main executable depend on llama.cpp build
+    exe.step.dependOn(&build_cmd.step);
+
+    // Add include paths for llama.cpp headers
+    exe.addIncludePath(.{ .path = b.pathJoin(&.{ llama_cpp_path, "include" }) });
+    exe.addIncludePath(.{ .path = b.pathJoin(&.{ llama_cpp_path, "ggml", "include" }) });
+
+    // Link llama.cpp static library
+    exe.addLibraryPath(.{ .path = b.pathJoin(&.{ llama_build_path, "bin" }) });
+    exe.linkSystemLibrary("llama");
+
+    // Add llama.cpp-only build step
+    const llama_step = b.step("llama", "Build llama.cpp library only");
+    llama_step.dependOn(&build_cmd.step);
+
     // Wire MLX-C + frameworks + pcre2 (BUILD-02)
     configureExecutable(exe, b, deps);
 
@@ -138,6 +185,19 @@ pub fn build(b: *std.Build) !void {
 
     const run_cache_test = b.addRunArtifact(cache_test);
     test_step.dependOn(&run_cache_test.step);
+
+    // Test backends module (PHASE-14-02)
+    const backends_test = b.addTest(.{
+        .name = "backends_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/backends/mod.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_backends_test = b.addRunArtifact(backends_test);
+    test_step.dependOn(&run_backends_test.step);
 
     // Test turboquant integration (PHASE-07-02)
     const turboquant_test_mod = b.createModule(.{
