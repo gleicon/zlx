@@ -101,6 +101,18 @@ parse_args() {
                 ;;
             --gptoss|--gpt-oss)
                 TEST_GPTOSS=true
+                GPTOSS_BACKEND="mlx"
+                shift
+                ;;
+            --gptoss-llama|--gpt-oss-llama)
+                TEST_GPTOSS=true
+                GPTOSS_BACKEND="llama"
+                shift
+                ;;
+            --gptoss-download)
+                TEST_GPTOSS=true
+                GPTOSS_DOWNLOAD=true
+                GPTOSS_BACKEND="llama"
                 shift
                 ;;
             --auto-download)
@@ -124,8 +136,10 @@ parse_args() {
                 echo "  --test-memory    Test for memory leaks"
                 echo "  --deepseek       Test DeepSeek-Coder-V2-Lite via MLX (default)"
                 echo "  --deepseek-llama Test DeepSeek via llama.cpp backend (requires GGUF)"
-                echo "  --gptoss         Test GPT-OSS-20B only"
-                echo "  --auto-download  Auto-download missing models (GPT-OSS)"
+                echo "  --gptoss         Test GPT-OSS-20B via MLX (default)"
+                echo "  --gptoss-llama   Test GPT-OSS via llama.cpp backend (requires GGUF)"
+                echo "  --gptoss-download Download and test GPT-OSS GGUF (~11GB)"
+                echo "  --auto-download  Auto-download missing models"
                 echo "  --all-moe        Test all MoE models (DeepSeek + GPT-OSS)"
                 echo "  --help           Show this help"
                 exit 0
@@ -659,6 +673,125 @@ test_deepseek_llama() {
     return 0
 }
 
+# Test GPT-OSS via llama.cpp backend with GGUF model
+test_gptoss_llama() {
+    local model_name="GPT-OSS-20B-Q4_K_M"
+    local port=8084
+    local model_path="./models/${model_name}.gguf"
+    
+    log_info "Testing GPT-OSS-20B via llama.cpp backend..."
+    
+    # Check if GGUF model exists or needs download
+    if [[ ! -f "${model_path}" ]]; then
+        if [[ "${GPTOSS_DOWNLOAD:-false}" = true ]]; then
+            log_info "  Downloading GPT-OSS GGUF model (~11GB)..."
+            mkdir -p ./models
+            
+            # Download using curl with resume
+            curl -L -C - --progress-bar -o "${model_path}.tmp" \
+                "https://huggingface.co/bartowski/GPT-OSS-20B-GGUF/resolve/main/GPT-OSS-20B-Q4_K_M.gguf" || {
+                log_fail "Failed to download GPT-OSS GGUF model"
+                return 1
+            }
+            
+            mv "${model_path}.tmp" "${model_path}"
+            log_pass "  Download complete"
+        else
+            log_warn "GGUF model not found at ${model_path}"
+            log_info "  Use --gptoss-download to download (~11GB)"
+            return 1
+        fi
+    fi
+    
+    # Verify file size (should be ~11GB)
+    local file_size=$(stat -f%z "${model_path}" 2>/dev/null || stat -c%s "${model_path}" 2>/dev/null || echo "0")
+    if [[ $file_size -lt 10000000000 ]]; then
+        log_warn "File seems small ({file_size} bytes), may be incomplete"
+    fi
+    
+    # Verify GGUF magic
+    local magic=$(xxd -l 4 "${model_path}" | grep -o 'GGUF')
+    if [[ "$magic" != "GGUF" ]]; then
+        log_warn "File may not be a valid GGUF model"
+    fi
+    
+    # Kill any existing server
+    pkill -9 -f "zlx --model" 2>/dev/null || true
+    sleep 2
+    
+    # Test with llama.cpp backend
+    log_info "  - Starting zlx with llama.cpp backend..."
+    timeout 120 $ZLX_BIN --model "${model_path}" --backend llama_cpp --port ${port} --turboquant > /tmp/zlx_gptoss_llama.log 2>&1 &
+    local server_pid=$!
+    
+    # Wait for server to be ready (GPT-OSS is large, needs more time)
+    local wait_time=0
+    while [[ $wait_time -lt 90 ]]; do
+        sleep 10
+        wait_time=$((wait_time + 10))
+        
+        if curl -s http://localhost:${port}/v1/models > /dev/null 2>&1; then
+            break
+        fi
+        
+        if ! kill -0 $server_pid 2>/dev/null; then
+            log_fail "    Server failed to start"
+            if [ "$VERBOSE" = true ]; then
+                tail -50 /tmp/zlx_gptoss_llama.log
+            fi
+            return 1
+        fi
+        
+        log_info "    Waiting for GPT-OSS to load... (${wait_time}s)"
+    done
+    
+    log_pass "    Server started (llama.cpp backend)"
+    
+    # Test /v1/models endpoint
+    log_info "  - Testing /v1/models..."
+    local models_response=$(curl -s http://localhost:${port}/v1/models)
+    if [[ ! $models_response == *"gpt"* ]]; then
+        log_fail "    Model not listed in /v1/models"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Model listed"
+    
+    # Test chat completion
+    log_info "  - Testing chat completion..."
+    local response=$(curl -s -X POST http://localhost:${port}/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -d "{\"model\": \"gpt-oss-20b\", \"messages\": [{\"role\": \"user\", \"content\": \"Write a Python hello world\"}], \"max_tokens\": 30}")
+    
+    if [[ ! $response == *"choices"* ]]; then
+        log_fail "    No choices in response"
+        [ "$VERBOSE" = true ] && echo "Response: $response"
+        kill $server_pid 2>/dev/null
+        return 1
+    fi
+    log_pass "    Chat completion works"
+    
+    # Test memory usage (GPT-OSS is large, check it's reasonable)
+    log_info "  - Checking memory usage..."
+    local mem_usage=$(ps -o rss= -p $server_pid 2>/dev/null | awk '{print $1/1024}')
+    if [[ -n $mem_usage ]]; then
+        if [[ $(echo "$mem_usage < 16384" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+            log_pass "    Memory under 16GB (${mem_usage}MB) - TurboQuant working"
+        else
+            log_warn "    Memory high (${mem_usage}MB) - may need TurboQuant tuning"
+        fi
+    fi
+    
+    # Cleanup
+    kill $server_pid 2>/dev/null
+    wait $server_pid 2>/dev/null
+    
+    log_pass "  GPT-OSS llama.cpp tests passed"
+    RESULTS["gptoss-llama"]="passed"
+    ((PASSED++))
+    return 0
+}
+
 # Download GPT-OSS model from HuggingFace
 download_gptoss_model() {
     local model_id="mlx-community/gpt-oss-20b-MXFP4-Q4"
@@ -852,7 +985,11 @@ main() {
     fi
     
     if [ "${TEST_GPTOSS:-false}" = true ]; then
-        test_gptoss
+        if [ "${GPTOSS_BACKEND:-mlx}" = "llama" ]; then
+            test_gptoss_llama
+        else
+            test_gptoss
+        fi
     fi
     
     # If MoE-specific tests were run, don't run regular tests
