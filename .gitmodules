@@ -4,3 +4,6 @@
 [submodule "deps/turboquant"]
 	path = deps/turboquant
 	url = https://github.com/botirk38/turboquant.git
+[submodule "src/llama.cpp"]
+	path = src/llama.cpp
+	url = https://github.com/ggml-org/llama.cpp.git
