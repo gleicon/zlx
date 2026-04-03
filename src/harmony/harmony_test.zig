@@ -2,8 +2,8 @@
 
 const std = @import("std");
 const harmony = @import("harmony.zig");
-const parser = @import("parser.zig");
-const template = @import("template.zig");
+const parser_mod = @import("parser.zig");
+const template_mod = @import("template.zig");
 
 const HarmonyMessage = harmony.HarmonyMessage;
 const HarmonyConversation = harmony.HarmonyConversation;
@@ -12,8 +12,8 @@ const ToolCall = harmony.ToolCall;
 const ToolDefinition = harmony.ToolDefinition;
 const OpenAIMessage = harmony.OpenAIMessage;
 const ReasoningEffort = harmony.ReasoningEffort;
-const HarmonyTemplate = template.HarmonyTemplate;
-const HarmonyParser = parser.HarmonyParser;
+const HarmonyTemplate = template_mod.HarmonyTemplate;
+const HarmonyParser = parser_mod.HarmonyParser;
 
 // ============================================================================
 // Harmony Types Tests
@@ -51,10 +51,10 @@ test "HarmonyConversation memory management" {
     var conv = HarmonyConversation.init(allocator);
     defer conv.deinit();
 
-    var msg1 = try HarmonyMessage.initText(allocator, .user, "Hello!");
+    const msg1 = try HarmonyMessage.initText(allocator, .user, "Hello!");
     try conv.addMessage(msg1);
 
-    var msg2 = try HarmonyMessage.initText(allocator, .assistant, "Hi there!");
+    const msg2 = try HarmonyMessage.initText(allocator, .assistant, "Hi there!");
     try conv.addMessage(msg2);
 
     try std.testing.expectEqual(@as(usize, 2), conv.messages.items.len);
@@ -67,13 +67,13 @@ test "HarmonyConversation hasToolCalls detection" {
     defer conv.deinit();
 
     // Add regular message
-    var msg1 = try HarmonyMessage.initText(allocator, .user, "Hello!");
+    const msg1 = try HarmonyMessage.initText(allocator, .user, "Hello!");
     try conv.addMessage(msg1);
 
     try std.testing.expect(!conv.hasToolCalls());
 
     // Add tool call
-    var msg2 = try HarmonyMessage.initToolCall(
+    const msg2 = try HarmonyMessage.initToolCall(
         allocator,
         "browser",
         "{}",
@@ -82,6 +82,17 @@ test "HarmonyConversation hasToolCalls detection" {
     try conv.addMessage(msg2);
 
     try std.testing.expect(conv.hasToolCalls());
+}
+
+test "HarmonyMessage tool result creation" {
+    const allocator = std.testing.allocator;
+
+    var msg = try HarmonyMessage.initToolResult(allocator, "browser", "Result text");
+    defer msg.deinit(allocator);
+
+    try std.testing.expectEqual(.tool, msg.role);
+    try std.testing.expectEqualStrings("browser", msg.content.tool_result.tool_name);
+    try std.testing.expectEqualStrings("Result text", msg.content.tool_result.result);
 }
 
 // ============================================================================
@@ -157,6 +168,20 @@ test "Extract tool calls from text" {
     try std.testing.expectEqualStrings("browser", tool_calls[0].name);
 }
 
+test "Parse system message" {
+    const allocator = std.testing.allocator;
+
+    const harmony_text = "<|system|>\nYou are helpful.\n<|/system|>";
+
+    var p = HarmonyParser.init(allocator);
+    var conv = try p.parse(harmony_text);
+    defer conv.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), conv.messages.items.len);
+    try std.testing.expectEqual(.system, conv.messages.items[0].role);
+    try std.testing.expectEqualStrings("You are helpful.", conv.messages.items[0].content.text);
+}
+
 // ============================================================================
 // Template Tests
 // ============================================================================
@@ -179,12 +204,12 @@ test "Format simple user message to Harmony" {
         null,
     );
 
-    const harmony = try tmpl.formatHarmonyChat(messages, null);
-    defer allocator.free(harmony);
+    const formatted = try tmpl.formatHarmonyChat(messages, null);
+    defer allocator.free(formatted);
 
-    try std.testing.expect(std.mem.contains(u8, harmony, "<|user|>"));
-    try std.testing.expect(std.mem.contains(u8, harmony, "Hello!"));
-    try std.testing.expect(std.mem.contains(u8, harmony, "<|/user|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, formatted, 1, "<|user|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, formatted, 1, "Hello!"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, formatted, 1, "<|/user|>"));
 }
 
 test "Format conversation with system prompt" {
@@ -209,17 +234,17 @@ test "Format conversation with system prompt" {
         null,
     );
 
-    const harmony = try tmpl.formatHarmonyChat(messages, null);
-    defer allocator.free(harmony);
+    const formatted = try tmpl.formatHarmonyChat(messages, null);
+    defer allocator.free(formatted);
 
-    try std.testing.expect(std.mem.contains(u8, harmony, "<|system|>"));
-    try std.testing.expect(std.mem.contains(u8, harmony, "You are helpful."));
+    try std.testing.expect(std.mem.containsAtLeast(u8, formatted, 1, "<|system|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, formatted, 1, "You are helpful."));
 }
 
 test "Format with tool definitions" {
     const allocator = std.testing.allocator;
 
-    const tool_schema = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+    var tool_schema = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
     defer tool_schema.object.deinit();
 
     const tools = &[_]ToolDefinition{
@@ -239,11 +264,11 @@ test "Format with tool definitions" {
     );
 
     const messages = &[_]OpenAIMessage{};
-    const harmony = try tmpl.formatHarmonyChat(messages, tools);
-    defer allocator.free(harmony);
+    const formatted = try tmpl.formatHarmonyChat(messages, tools);
+    defer allocator.free(formatted);
 
-    try std.testing.expect(std.mem.contains(u8, harmony, "browser"));
-    try std.testing.expect(std.mem.contains(u8, harmony, "Search and browse the web"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, formatted, 1, "browser"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, formatted, 1, "Search and browse the web"));
 }
 
 test "Format tool result" {
@@ -257,12 +282,12 @@ test "Format tool result" {
         null,
     );
 
-    const result = try tmpl.formatToolResult("browser", "San Francisco: 72°F, sunny", false);
+    const result = try tmpl.formatToolResult("browser", "San Francisco: 72 degrees, sunny", false);
     defer allocator.free(result);
 
-    try std.testing.expect(std.mem.contains(u8, result, "<|recipient|>browser<|/recipient|>"));
-    try std.testing.expect(std.mem.contains(u8, result, "<|tool_result|>"));
-    try std.testing.expect(std.mem.contains(u8, result, "San Francisco: 72°F, sunny"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "<|recipient|>browser<|/recipient|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "<|tool_result|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "San Francisco: 72 degrees, sunny"));
 }
 
 test "Format error tool result" {
@@ -279,7 +304,7 @@ test "Format error tool result" {
     const result = try tmpl.formatToolResult("python", "Syntax error", true);
     defer allocator.free(result);
 
-    try std.testing.expect(std.mem.contains(u8, result, "Error:"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "Error:"));
 }
 
 test "Reasoning markers - low effort" {
@@ -315,8 +340,8 @@ test "Reasoning markers - medium effort" {
     const result = try tmpl.addReasoningMarkers(content);
     defer allocator.free(result);
 
-    try std.testing.expect(std.mem.contains(u8, result, "<|reasoning|>"));
-    try std.testing.expect(std.mem.contains(u8, result, "<|/reasoning|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "<|reasoning|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "<|/reasoning|>"));
 }
 
 test "Format assistant with tool calls" {
@@ -346,8 +371,8 @@ test "Format assistant with tool calls" {
     const harmony_text = try tmpl.formatHarmonyChat(messages, null);
     defer allocator.free(harmony_text);
 
-    try std.testing.expect(std.mem.contains(u8, harmony_text, "<|tool_call|>"));
-    try std.testing.expect(std.mem.contains(u8, harmony_text, "browser"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, harmony_text, 1, "<|tool_call|>"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, harmony_text, 1, "browser"));
 }
 
 // ============================================================================
@@ -386,16 +411,60 @@ test "Round-trip: OpenAI -> Harmony -> Parse" {
     var conv = try p.parse(harmony_text);
     defer conv.deinit();
 
-    // Verify we have the messages
+    // Verify we have the messages (system + user; open assistant tag produces no content)
     try std.testing.expect(conv.messages.items.len >= 2);
 }
 
 test "Special token constants exist" {
     // Verify all expected tokens are defined
-    try std.testing.expect(parser.SpecialTokens.startoftext.len > 0);
-    try std.testing.expect(parser.SpecialTokens.endoftext.len > 0);
-    try std.testing.expect(parser.SpecialTokens.tool_call_start.len > 0);
-    try std.testing.expect(parser.SpecialTokens.tool_call_end.len > 0);
-    try std.testing.expect(parser.SpecialTokens.recipient_start.len > 0);
-    try std.testing.expect(parser.SpecialTokens.recipient_end.len > 0);
+    try std.testing.expect(parser_mod.SpecialTokens.startoftext.len > 0);
+    try std.testing.expect(parser_mod.SpecialTokens.endoftext.len > 0);
+    try std.testing.expect(parser_mod.SpecialTokens.tool_call_start.len > 0);
+    try std.testing.expect(parser_mod.SpecialTokens.tool_call_end.len > 0);
+    try std.testing.expect(parser_mod.SpecialTokens.recipient_start.len > 0);
+    try std.testing.expect(parser_mod.SpecialTokens.recipient_end.len > 0);
+}
+
+test "Parse multiple tool calls" {
+    const allocator = std.testing.allocator;
+
+    const harmony_text =
+        "<|recipient|>browser<|/recipient|>\n" ++
+        "<|tool_call|>{\"url\": \"https://a.com\"}<|/tool_call|>\n" ++
+        "<|recipient|>python<|/recipient|>\n" ++
+        "<|tool_call|>{\"code\": \"print(1)\"}<|/tool_call|>";
+
+    var p = HarmonyParser.init(allocator);
+    const tool_calls = try p.extractToolCalls(harmony_text);
+    defer {
+        for (tool_calls) |*tc| tc.deinit(allocator);
+        allocator.free(tool_calls);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), tool_calls.len);
+    try std.testing.expectEqualStrings("browser", tool_calls[0].name);
+    try std.testing.expectEqualStrings("python", tool_calls[1].name);
+}
+
+test "HarmonyEncoding constants" {
+    try std.testing.expectEqualStrings("harmony_gpt_oss", harmony.HarmonyEncoding.gpt_oss);
+    try std.testing.expectEqualStrings("harmony_v1", harmony.HarmonyEncoding.default);
+}
+
+test "countByRole" {
+    const allocator = std.testing.allocator;
+
+    var conv = HarmonyConversation.init(allocator);
+    defer conv.deinit();
+
+    const m1 = try HarmonyMessage.initText(allocator, .user, "Hello");
+    try conv.addMessage(m1);
+    const m2 = try HarmonyMessage.initText(allocator, .assistant, "Hi");
+    try conv.addMessage(m2);
+    const m3 = try HarmonyMessage.initText(allocator, .user, "Bye");
+    try conv.addMessage(m3);
+
+    try std.testing.expectEqual(@as(usize, 2), conv.countByRole(.user));
+    try std.testing.expectEqual(@as(usize, 1), conv.countByRole(.assistant));
+    try std.testing.expectEqual(@as(usize, 0), conv.countByRole(.system));
 }
