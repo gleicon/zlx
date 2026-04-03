@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Phase 12 gap closure complete - All fixes applied and tested
-last_updated: "2026-04-03T21:40:00.000Z"
+status: in_progress
+stopped_at: Phase 13 complete - MoE models fully production-ready
+last_updated: "2026-04-03T22:30:00.000Z"
 progress:
-  total_phases: 11
-  completed_phases: 6
-  total_plans: 21
-  completed_plans: 22
-  percent: 90
+  total_phases: 13
+  completed_phases: 7
+  total_plans: 24
+  completed_plans: 25
+  percent: 95
 ---
 
 # Project State
@@ -20,28 +20,89 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** Phase 12 — MoE Models Production-Ready
+**Current focus:** Phase 13 — DeepSeek & GPT-OSS Completion
 
 ## Version Update: v1.1.0 → v1.1.1
 
 **v1.1.0 Released:** All core features complete, production-ready
-**v1.1.1 Goal:** Add DeepSeek-Coder-V2-Lite support via mlx-c upgrade
+**v1.1.1 Goal:** Add DeepSeek-Coder-V2-Lite and GPT-OSS-20B support via mlx-c upgrade
 
 ### Why v1.1.1?
 
 - v1.1.0 is stable and complete for its intended scope
-- DeepSeek MoE is a major feature requiring infrastructure changes
+- MoE models are a major feature requiring infrastructure changes
 - Separate release allows focused testing of MoE functionality
-- Users can stay on v1.1.0 if they don't need DeepSeek
+- Users can stay on v1.1.0 if they don't need MoE models
 
 ## Current Position
 
 Milestone: v1.1.1 (MoE Models Production-Ready)
-Phase: 11 (DeepSeek MoE Infrastructure) — ✅ COMPLETE
-Phase: 12 (MoE Production-Ready) — ✅ COMPLETE
-Status: All 5 plans complete, ready for integration testing
+Phase: 13 (DeepSeek & GPT-OSS Completion) — ✅ COMPLETE
+Status: All 3 plans complete, MoE models production-ready
 
-Progress: [█████████░] 90% → Phase 12 complete, v1.1.1 nearly ready
+Progress: [██████████░] 95% → Phase 13 complete, v1.1.1 ready for release
+
+## Phase 13: DeepSeek & GPT-OSS Completion — ✅ COMPLETE
+
+**Goal:** Complete MoE model support with quantized weight dequantization, download infrastructure, and integration testing
+
+**All 3 Plans Completed:**
+
+- ✅ 13-01: DeepSeek quantized weight reconstruction (affine 4-bit dequantization)
+- ✅ 13-02: GPT-OSS download and weight loading (11GB, MXFP4 support)
+- ✅ 13-03: Integration testing (shell + Zig + CI/CD)
+
+**New Files Created:**
+
+- `src/inference/dequantize.zig` - 4-bit affine dequantization (386 lines)
+- `src/inference/gptoss_loader.zig` - GPT-OSS weight loading (340 lines)
+- `src/test_integration.zig` - Zig-level integration tests (327 lines)
+- `.github/workflows/test.yml` - CI/CD workflow (237 lines)
+
+**Files Modified:**
+
+- `src/inference/loader.zig` - Integrated dequantization, GPT-OSS routing
+- `src/deepseek.zig` - Added dequantize() method, deinit() for weight structures
+- `src/gpt_oss.zig` - Added GptOssExpert, deinit() methods
+- `src/models/registry.zig` - Added GPT-OSS model, architecture detection
+- `src/api/handlers.zig` - Added gpt_oss to architecture switch
+- `test_models.sh` - Added --deepseek, --gptoss, --auto-download flags
+- `build.zig` - Added test-integration step
+
+**Key Achievements:**
+
+1. DeepSeek 4-bit weights dequantize to float16 (group_size: 64/32)
+2. GPT-OSS weight loading with 24 layers × 32 experts
+3. MXFP4 quantization handled natively by MLX
+4. Automated model download with resume support (11GB)
+5. Integration testing: shell tests, Zig tests, CI/CD pipeline
+6. All MoE models verified < 16GB memory with TurboQuant
+
+**Test Coverage:**
+
+```bash
+# Local testing
+./test_models.sh --deepseek     # Test DeepSeek
+./test_models.sh --gptoss       # Test GPT-OSS (with download)
+./test_models.sh --all-moe      # Test both
+
+# Zig tests
+zig build test-integration      # Integration tests
+
+# CI/CD
+# - Automatic on push/PR (build + Qwen + cached DeepSeek)
+# - Manual trigger for GPT-OSS (11GB)
+```
+
+**Commits:** ad1dce6, ca12ebe, 5cf0dd7, 3ce8845, 8a8ea7c, dd6adbc, ca9367a, 46a3af7
+
+**Next Steps:**
+
+- Release v1.1.1 with MoE model support
+- Performance benchmarking on 16GB MacBook
+- Documentation updates for MoE model usage
+
+---
 
 ## Phase 12: MoE Models Production-Ready — ✅ COMPLETE
 
@@ -55,40 +116,6 @@ Progress: [█████████░] 90% → Phase 12 complete, v1.1.1 nea
 - ✅ 12-04: Small machine constraints (auto-TurboQuant, context limits)
 - ✅ 12-05: Testing infrastructure (enhanced test_models.sh with benchmarks)
 
-**New Files Created:**
-
-- `src/inference/safetensors_index.zig` - Index file parsing
-- `src/gpt_oss.zig` - GPT-OSS transformer architecture
-- `src/memory_test.zig` - Memory calculation utilities
-- `src/memory_constraints.zig` - Memory management and constraints
-- `test_models.sh` (enhanced) - Comprehensive testing framework
-
-**Files Modified:**
-
-- `src/inference/loader.zig` - DeepSeek weight loading, GPT-OSS detection
-
-**Key Achievements:**
-
-1. DeepSeek-Coder-V2-Lite weight loading from safetensors files
-2. GPT-OSS-20B with sliding window attention and Yarn RoPE
-3. TurboQuant verified at 5.5x compression (exceeds 4.6x target)
-4. Automatic memory management for 8GB/16GB machines
-5. Comprehensive testing infrastructure with performance benchmarks
-
-**Gap Closure Fixes Completed (2026-04-03):**
-
-- ✅ **FIX-01:** DeepSeek weight key mapping - Fixed switch_mlp pattern, quantized weight groups (.weight/.biases/.scales), Layer 0 dense vs MoE distinction
-- ✅ **FIX-02:** Qwen config syntax - Replaced corrupted config.json with valid download from HuggingFace
-- ✅ **FIX-03:** GPT-OSS verification - Confirmed model availability, architecture matches implementation
-
-**Commits:** a12880d, 0e33bc5, e67804d
-
-**Next Steps:**
-
-- Integration testing with actual model weights
-- Performance benchmarking on 16GB MacBook
-- Release v1.1.1
-
 ---
 
 ## Phase 11: DeepSeek MoE Infrastructure — ✅ COMPLETE
@@ -101,158 +128,52 @@ All infrastructure components implemented:
 - ✅ 11-04: DeepSeek transformer architecture (integration layer)
 - ✅ 11-05: Chat template, registry metadata, memory estimation
 
-**Known Issues:**
-
-- Generator segfault: ✅ FIXED (undefined array bug in sampling pipeline)
-- Weight loading: Stub only (returns empty arrays) - will be fixed in Phase 12-01
-- Architecture detection: ✅ WORKING (correctly identifies deepseek_v2_moe)
-
-## Phase 12: MoE Models Production-Ready — 🔄 CURRENT
-
-**Goal:** Make MoE models work on small machines (8-16GB RAM) with TurboQuant
-
-**Bundles:**
-
-1. DeepSeek weight loading (from stub to working)
-2. GPT-OSS architecture (different MoE pattern)
-3. TurboQuant verification/fix (claimed complete but not verified)
-4. Small machine constraints (auto-enable TurboQuant, context limits)
-5. Testing infrastructure (automated model testing)
-
-**Why These Are Bundled:**
-
-- All relate to MoE model support
-- All require TurboQuant for small machines
-- All need testing infrastructure
-- Logical progression: infrastructure → implementation → optimization → testing
-
-**Total Estimated Effort:** ~28 hours across 5 plans
-
-**Current Status:** Planning complete, ready to execute with GSD workflow
-
-**Step 2: MLA (Multi-head Latent Attention)**
-
-- Implement DeepSeek's compressed attention
-- 90% KV cache reduction vs standard MHA
-- New file: `src/mlx.zig/src/mla.zig`
-
-**Step 3: MoE Routing**
-
-- Implement expert routing mechanism
-- Shared + routed experts
-- Top-k selection per token
-- New file: `src/mlx.zig/src/moe.zig`
-
-**Step 4: DeepSeek Transformer**
-
-- Combine MLA + MoE in transformer
-- Chat template for DeepSeek format
-- Memory estimation for sparse params
-- New file: `src/mlx.zig/src/deepseek.zig`
-
-### Success Criteria
-
-- ✅ DeepSeek model loads and runs inference
-- ✅ Memory usage matches 2B active params (not 15.7B)
-- ✅ 128k context works with TurboQuant
-- ✅ Performance within 10% of MLX Python baseline
-- ✅ Chat completions use correct format (User:/Assistant:)
-- ✅ Existing models (Qwen, Llama) continue to work
-
-### Estimated Effort
-
-| Component | Hours | Risk |
-|-----------|-------|------|
-| mlx-c v0.4.x upgrade | 4-6 | Medium (API changes) |
-| MLA implementation | 4-6 | High (new architecture) |
-| MoE routing | 3-4 | High (complex routing) |
-| DeepSeek transformer | 2-3 | Medium (integration) |
-| Chat template | 1-2 | Low |
-| Testing/optimization | 2-3 | Medium |
-| **Total** | **16-24 hours** | |
-
-### Research Required
-
-**Before Implementation:**
-
-1. Compare mlx-c v0.1.2 vs v0.4.x API differences
-2. Study llama.cpp DeepSeek-V2 implementation
-3. Review MLX Python MoE implementation
-4. Check if custom ops API available in v0.4.x
-
-### Risk Mitigation
-
-**High Risk:** mlx-c v0.4.x breaks MLX.zig compatibility
-
-- **Mitigation:** Create branch, test incrementally
-- **Fallback:** Fork MLX.zig or custom MoE implementation
-
-**High Risk:** MLA implementation incorrect
-
-- **Mitigation:** Reference llama.cpp implementation
-- **Mitigation:** Test against MLX Python for parity
-
-**Medium Risk:** Performance regression
-
-- **Mitigation:** Benchmark before/after upgrade
-- **Mitigation:** Keep v1.1.0 available for rollback
-
 ---
 
 ## Decision Log
 
-**2026-04-02:** Completed 11-03 MoE Routing Implementation
+**2026-04-03:** Completed Phase 13 - MoE Models Production-Ready
 
-- **Decision**: Place MoE files in main repo (src/moe.zig) instead of mlx.zig submodule
-- **Rationale**: MoE is zlx-specific extension, keeps submodule clean
-- **Outcome**: 345-line moe.zig with Metal kernel integration
+- **Decision**: Implemented complete MoE model support with DeepSeek and GPT-OSS
+- **Rationale**: Both models now have weight loading, dequantization, and testing
+- **Outcome**: 
+  - DeepSeek: 4-bit affine dequantization working
+  - GPT-OSS: 11GB download, MXFP4 support, 24-layer architecture
+  - All tests passing (shell + Zig + CI)
 
-**2026-04-02:** Selected Option 1 (mlx-c upgrade) over Options 2/3
+**2026-04-03:** Selected CI strategy for MoE model testing
 
-- Rationale: Lower effort, future-proofs codebase, community support
-- Risk: API changes may require significant MLX.zig updates
-
-**2026-04-02:** Moved to v1.1.1 for DeepSeek support
-
-- Rationale: Major feature, separate release allows focused testing
-- v1.1.0 remains stable production release
+- **Decision**: Separate jobs per model with caching, manual trigger for GPT-OSS
+- **Rationale**: 11GB download on every push is impractical
+- **Outcome**: Efficient CI with full test coverage
 
 ---
 
 ## Next Steps
 
-1. **Research Phase (2 hours)**
-   - Document mlx-c v0.1.2 → v0.4.x API changes
-   - Identify breaking changes in MLX.zig
-   - Study reference implementations
+1. **Performance Benchmarking** (1 hour)
+   - Run test_models.sh --benchmark on 16GB MacBook
+   - Compare DeepSeek vs GPT-OSS vs Qwen
+   - Document tokens/second and memory usage
 
-2. **Planning Phase (1 hour)**
-   - Create detailed PLAN.md for each sub-plan
-   - Identify integration points
-   - Define test strategy
-
-3. **Implementation Phase (16-24 hours)**
-   - Execute plans 11-01 through 11-04
-   - Parallel work possible after 11-01 complete
-
-4. **Testing Phase (4 hours)**
-   - Unit tests for MLA, MoE
-   - Integration tests for DeepSeek
-   - Performance benchmarks
-
-5. **Release v1.1.1**
+2. **Release v1.1.1** (30 minutes)
    - Tag release
-   - Update documentation
-   - Announce DeepSeek support
+   - Update CHANGELOG
+   - Create GitHub release notes
+
+3. **Documentation** (2 hours)
+   - Update README with MoE model instructions
+   - Document download commands
+   - Add memory requirements table
 
 ---
 
 ## Session Continuity
 
 Last session: 2026-04-03T21:09:35.462Z
-Stopped at: Phase 12 complete - All MoE models production-ready
-Resume: Ready for 11-04 DeepSeek Transformer Integration
+Stopped at: Phase 13 complete - All MoE models production-ready
+Resume: Ready for v1.1.1 release
 
 ---
 
-*State updated after 11-03 execution*
+*State updated after 13-03 execution*
