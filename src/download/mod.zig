@@ -7,6 +7,7 @@ const std = @import("std");
 pub const huggingface = @import("huggingface.zig");
 pub const manager = @import("manager.zig");
 pub const deepseek = @import("deepseek.zig");
+pub const gptoss = @import("gptoss.zig");
 
 // Re-export key types
 pub const HuggingFaceId = huggingface.HuggingFaceId;
@@ -19,6 +20,11 @@ pub const FileInfo = huggingface.FileInfo;
 // Re-export deepseek functions
 pub const downloadDeepSeekModel = deepseek.downloadDeepSeekModel;
 pub const verifyDeepSeekModel = deepseek.verifyDeepSeekModel;
+
+// Re-export gptoss functions
+pub const downloadGptOssModel = gptoss.downloadGptOssModel;
+pub const verifyGptOssModel = gptoss.verifyGptOssModel;
+pub const isGptOssAvailable = gptoss.isGptOssAvailable;
 
 // Re-export global functions
 pub const initGlobalManager = manager.initGlobalManager;
