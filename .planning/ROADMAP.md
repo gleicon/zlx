@@ -32,6 +32,7 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 
 **v1.1.2 (PLANNED):**
 - [ ] **Phase 14: DeepSeek & GPT-OSS llama.cpp Integration** - Backend abstraction, llama.cpp build integration, unified multi-backend generation pipeline (PLANNED)
+- [ ] **Phase 15: Native MLX GPT-OSS** - High-performance native MLX implementation with Metal kernels, Harmony format, and tools (PLANNED)
 
 ## Phase Details
 
@@ -254,6 +255,27 @@ Plans:
 - [ ] 14-04-PLAN.md — GPT-OSS download and llama.cpp integration (MOE-14)
 - [ ] 14-05-PLAN.md — Unified generation pipeline (MOE-15)
 
+### Phase 15: Native MLX GPT-OSS
+**Goal**: Implement high-performance GPT-OSS support using native MLX (like openharmony-mlx), replacing the llama.cpp approach with a native Zig/MLX implementation that achieves 40 tokens/sec on Apple Silicon
+**Depends on**: Phase 11 (mlx-c v0.4.x), Phase 14 architecture decisions
+**Requirements**: GPTOSS-01, GPTOSS-02, GPTOSS-03, GPTOSS-04, GPTOSS-05
+**Success Criteria** (what must be TRUE):
+  1. GPT-OSS-20B runs at 30+ tokens/sec via native MLX (not llama.cpp)
+  2. Harmony chat format is correctly parsed and formatted
+  3. Browser and Python tools work end-to-end
+  4. MXFP4 weights load and decompress correctly
+  5. `./test_models.sh gptoss` passes
+  6. OpenCode integration works with native MLX backend
+**Plans**: 5 plans (15-01 through 15-05) + MASTER
+
+Plans:
+- [ ] 15-MASTER-PLAN.md — Overview and architecture (GPTOSS-01 through GPTOSS-05)
+- [ ] 15-01-PLAN.md — MLX GPT-OSS transformer with Metal kernels (GPTOSS-01)
+- [ ] 15-02-PLAN.md — Harmony format parser and chat template (GPTOSS-02)
+- [ ] 15-03-PLAN.md — Browser and Python tool implementation (GPTOSS-03)
+- [ ] 15-04-PLAN.md — Weight loading and MXFP4 support (GPTOSS-04)
+- [ ] 15-05-PLAN.md — Integration with zlx server (GPTOSS-05)
+
 ## Progress
 
 **Execution Order:**
@@ -284,6 +306,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 12. MoE Production-Ready | 8/8 | ✅ Complete | 2026-04-03 |
 | 13. DeepSeek & GPT-OSS Completion | 0/3 | 🔄 Planned | In Progress |
 | 14. llama.cpp Backend Integration | 0/5 | 📋 Planned | Not Started |
+| 15. Native MLX GPT-OSS | 6/6 | 📋 Planned | Phase 15 Planning Complete |
 
 **v1.1.0 Progress:** 9/9 phases complete | All phases COMPLETE | v1.1.0 Released
 
