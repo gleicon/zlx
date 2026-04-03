@@ -24,10 +24,10 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 - [x] **Phase 8: Speculative Decoding** - Draft model speculation for 1.5-2.8x throughput increase
 - [x] **Phase 9: Model Management** - Auto-download, configuration, and Open WebUI integration (COMPLETE)
 
-**v1.1.1 (IN PROGRESS):**
+**v1.1.1 (COMPLETE):**
 - [x] **Phase 11: DeepSeek MoE Infrastructure** - MLA attention, MoE routing, mlx-c v0.4.x upgrade (COMPLETED)
 - [x] **Phase 12: MoE Models Production-Ready** - Infrastructure: safetensors loading, GPT-OSS architecture, memory constraints, testing (COMPLETED)
-- [ ] **Phase 13: DeepSeek & GPT-OSS Completion** - Quantized weight dequantization, model download, integration testing (CURRENT)
+- [x] **Phase 13: DeepSeek & GPT-OSS Completion** - Quantized weight dequantization, model download, integration testing (COMPLETED)
 
 ## Phase Details
 
