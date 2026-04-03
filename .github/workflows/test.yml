@@ -1,0 +1,237 @@
+name: Model Integration Tests
+
+on:
+  push:
+    branches: [main, master, 'gsd/**']
+    paths:
+      - 'src/**'
+      - 'test_models.sh'
+      - '.github/workflows/test.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'test_models.sh'
+      - '.github/workflows/test.yml'
+  workflow_dispatch:
+    inputs:
+      test_deepseek:
+        description: 'Test DeepSeek model'
+        required: false
+        default: 'true'
+      test_gptoss:
+        description: 'Test GPT-OSS model (requires 11GB download)'
+        required: false
+        default: 'false'
+
+env:
+  ZIG_VERSION: 0.13.0
+
+jobs:
+  # Job 1: Build and basic tests
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Cache Zig dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/zig
+            zig-cache
+          key: ${{ runner.os }}-zig-${{ env.ZIG_VERSION }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-${{ env.ZIG_VERSION }}-
+
+      - name: Build zlx
+        run: |
+          echo "Building zlx..."
+          zig build 2>&1 | tail -20
+
+      - name: Run unit tests
+        run: |
+          echo "Running unit tests..."
+          zig build test 2>&1 | tail -30
+        timeout-minutes: 10
+
+      - name: Run integration tests
+        run: |
+          echo "Running integration tests..."
+          zig build test-integration 2>&1 | tail -30
+        timeout-minutes: 5
+
+  # Job 2: Test Qwen (baseline model, ~600MB)
+  test-qwen:
+    runs-on: macos-latest
+    needs: build-and-test
+    if: github.event.inputs.test_deepseek != 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Cache models
+        uses: actions/cache@v3
+        with:
+          path: ./models
+          key: ${{ runner.os }}-models-qwen-${{ hashFiles('**/test_models.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-models-qwen-
+
+      - name: Build zlx
+        run: zig build
+
+      - name: Download Qwen model if not cached
+        run: |
+          if [ ! -d "./models/Qwen2.5-Coder-1.5B-4bitq" ]; then
+            echo "Downloading Qwen model..."
+            mkdir -p ./models/Qwen2.5-Coder-1.5B-4bitq
+            # Download minimal files for testing
+            curl -L -o ./models/Qwen2.5-Coder-1.5B-4bitq/config.json \
+              "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct/raw/main/config.json" || true
+          fi
+        continue-on-error: true
+
+      - name: Test Qwen model
+        run: |
+          if [ -d "./models/Qwen2.5-Coder-1.5B-4bitq" ] && [ -f "./models/Qwen2.5-Coder-1.5B-4bitq/config.json" ]; then
+            ./test_models.sh --model Qwen2.5-Coder-1.5B-4bitq --ci
+          else
+            echo "Qwen model not available, skipping test"
+          fi
+        timeout-minutes: 5
+
+  # Job 3: Test DeepSeek (if cached, ~2.5GB)
+  test-deepseek:
+    runs-on: macos-latest
+    needs: build-and-test
+    if: github.event.inputs.test_deepseek != 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Cache models
+        uses: actions/cache@v3
+        with:
+          path: ./models
+          key: ${{ runner.os }}-models-deepseek-${{ hashFiles('**/test_models.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-models-deepseek-
+
+      - name: Build zlx
+        run: zig build
+
+      - name: Test DeepSeek model (if cached)
+        run: |
+          if [ -d "./models/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx" ] && [ -f "./models/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx/config.json" ]; then
+            ./test_models.sh --deepseek --ci
+          else
+            echo "DeepSeek model not cached, skipping test"
+            echo "To test DeepSeek, download it manually to ./models/"
+          fi
+        timeout-minutes: 10
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: deepseek-test-logs
+          path: /tmp/zlx_deepseek.log
+          if-no-files-found: ignore
+
+  # Job 4: Test GPT-OSS (if cached or requested, ~11GB)
+  test-gptoss:
+    runs-on: macos-latest
+    needs: build-and-test
+    if: github.event.inputs.test_gptoss == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Cache models
+        uses: actions/cache@v3
+        with:
+          path: ./models
+          key: ${{ runner.os }}-models-gptoss-${{ hashFiles('**/test_models.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-models-gptoss-
+
+      - name: Build zlx
+        run: zig build
+
+      - name: Test GPT-OSS model (auto-download)
+        run: |
+          ./test_models.sh --gptoss --auto-download --ci
+        timeout-minutes: 30
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: gptoss-test-logs
+          path: /tmp/zlx_gptoss.log
+          if-no-files-found: ignore
+
+  # Job 5: Generate and upload test report
+  test-report:
+    runs-on: macos-latest
+    needs: [build-and-test, test-qwen, test-deepseek]
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Generate test report
+        run: |
+          echo "# Test Report" > test_report.md
+          echo "" >> test_report.md
+          echo "## Build Status" >> test_report.md
+          echo "- Build: ${{ needs.build-and-test.result }}" >> test_report.md
+          echo "- Qwen: ${{ needs.test-qwen.result }}" >> test_report.md
+          echo "- DeepSeek: ${{ needs.test-deepseek.result }}" >> test_report.md
+          echo "" >> test_report.md
+          echo "## System Info" >> test_report.md
+          echo "- OS: $(uname -s)" >> test_report.md
+          echo "- Arch: $(uname -m)" >> test_report.md
+          echo "- RAM: $(($(sysctl -n hw.memsize) / 1024 / 1024 / 1024))GB" >> test_report.md
+          cat test_report.md
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-report
+          path: test_report.md
