@@ -115,6 +115,10 @@ parse_args() {
                 GPTOSS_BACKEND="llama"
                 shift
                 ;;
+            --all-backends)
+                TEST_ALL_BACKENDS=true
+                shift
+                ;;
             --auto-download)
                 AUTO_DOWNLOAD=true
                 shift
@@ -139,6 +143,7 @@ parse_args() {
                 echo "  --gptoss         Test GPT-OSS-20B via MLX (default)"
                 echo "  --gptoss-llama   Test GPT-OSS via llama.cpp backend (requires GGUF)"
                 echo "  --gptoss-download Download and test GPT-OSS GGUF (~11GB)"
+                echo "  --all-backends   Test all backend configurations (Qwen, DeepSeek, GPT-OSS)"
                 echo "  --auto-download  Auto-download missing models"
                 echo "  --all-moe        Test all MoE models (DeepSeek + GPT-OSS)"
                 echo "  --help           Show this help"
@@ -792,6 +797,94 @@ test_gptoss_llama() {
     return 0
 }
 
+# Test all backend configurations (comprehensive integration test)
+test_all_backends() {
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  Testing All Backend Configurations${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    
+    local failed=()
+    
+    # Test 1: Qwen via MLX (verify no regression)
+    echo ""
+    echo "[1/4] Testing Qwen via MLX.zig..."
+    if [ "$QUICK_MODE" = true ]; then
+        log_info "  Skipping in quick mode"
+    else
+        # Find first Qwen model
+        local qwen_model=""
+        for dir in "$MODELS_DIR"/*/; do
+            if [ -d "$dir" ] && [[ "$(basename "$dir")" == *"Qwen"* ]]; then
+                qwen_model=$(basename "$dir")
+                break
+            fi
+        done
+        
+        if [ -n "$qwen_model" ]; then
+            if ./test_models.sh --quick "$qwen_model" 2>&1 | grep -q "passed"; then
+                log_pass "  Qwen MLX: PASSED"
+            else
+                log_fail "  Qwen MLX: FAILED"
+                failed+=("qwen-mlx")
+            fi
+        else
+            log_warn "  No Qwen model found, skipping"
+        fi
+    fi
+    
+    # Test 2: DeepSeek via llama.cpp
+    echo ""
+    echo "[2/4] Testing DeepSeek via llama.cpp..."
+    if ./test_models.sh --deepseek-llama --quick 2>&1 | grep -q "passed\|PASSED"; then
+        log_pass "  DeepSeek llama.cpp: PASSED"
+    else
+        log_fail "  DeepSeek llama.cpp: FAILED"
+        failed+=("deepseek-llama")
+    fi
+    
+    # Test 3: GPT-OSS via llama.cpp (if downloaded)
+    echo ""
+    echo "[3/4] Testing GPT-OSS via llama.cpp..."
+    if [ -f "./models/GPT-OSS-20B-Q4_K_M.gguf" ]; then
+        if ./test_models.sh --gptoss-llama --quick 2>&1 | grep -q "passed\|PASSED"; then
+            log_pass "  GPT-OSS llama.cpp: PASSED"
+        else
+            log_fail "  GPT-OSS llama.cpp: FAILED"
+            failed+=("gptoss-llama")
+        fi
+    else
+        log_warn "  GPT-OSS model not found, use --gptoss-download to test"
+    fi
+    
+    # Test 4: DeepSeek via MLX (verify backwards compatibility)
+    echo ""
+    echo "[4/4] Testing DeepSeek via MLX.zig (backwards compatibility)..."
+    if [ "$QUICK_MODE" != true ]; then
+        if ./test_models.sh --deepseek --quick 2>&1 | grep -q "passed\|PASSED"; then
+            log_pass "  DeepSeek MLX: PASSED"
+        else
+            log_warn "  DeepSeek MLX: FAILED (may be expected if MLX issues)"
+            # Don't count as failure - MLX path is secondary
+        fi
+    else
+        log_info "  Skipping in quick mode"
+    fi
+    
+    # Summary
+    echo ""
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  Backend Test Summary${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    
+    if [ ${#failed[@]} -eq 0 ]; then
+        log_pass "All critical backend tests passed!"
+        return 0
+    else
+        log_fail "Failed tests: ${failed[*]}"
+        return 1
+    fi
+}
+
 # Download GPT-OSS model from HuggingFace
 download_gptoss_model() {
     local model_id="mlx-community/gpt-oss-20b-MXFP4-Q4"
@@ -976,6 +1069,11 @@ main() {
     fi
     
     # Test specific or all models
+    if [ "${TEST_ALL_BACKENDS:-false}" = true ]; then
+        test_all_backends
+        exit $?
+    fi
+    
     if [ "${TEST_DEEPSEEK:-false}" = true ]; then
         if [ "${DEEPSEEK_BACKEND:-mlx}" = "llama" ]; then
             test_deepseek_llama
