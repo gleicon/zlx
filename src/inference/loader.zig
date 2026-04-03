@@ -94,6 +94,14 @@ fn loadConfigInfo(allocator: std.mem.Allocator, config_path: []const u8) !Config
 
 /// Detect architecture from config info
 pub fn detectArchitecture(config: ConfigInfo) ModelType {
+    // Check for GPT-OSS models first
+    if (std.mem.indexOf(u8, config.model_type, "gpt_oss") != null or
+        std.mem.indexOf(u8, config.raw_json, "\"model_type\": \"gpt_oss\"") != null or
+        (config.hasKey("num_experts") and config.hasKey("sliding_window")))
+    {
+        return .gpt_oss;
+    }
+
     // Check for DeepSeek models
     if (std.mem.indexOf(u8, config.model_type, "deepseek")) |_| {
         // Check if V2 with MLA/MoE
@@ -123,6 +131,14 @@ fn detectModelType(config_path: []const u8) !ModelType {
 
     const content = try file.readToEndAlloc(std.heap.page_allocator, 1024 * 1024);
     defer std.heap.page_allocator.free(content);
+
+    // Check for GPT-OSS first (sliding_window + num_experts is unique signature)
+    if (std.mem.indexOf(u8, content, "gpt_oss") != null or
+        (std.mem.indexOf(u8, content, "sliding_window") != null and
+            std.mem.indexOf(u8, content, "num_experts") != null))
+    {
+        return .gpt_oss;
+    }
 
     // Simple string-based detection
     if (std.mem.indexOf(u8, content, "Qwen") != null) return .qwen;
@@ -407,4 +423,17 @@ test "loader - detect DeepSeek V2 MoE" {
 
     const arch = detectArchitecture(config);
     try std.testing.expectEqual(ModelType.deepseek_v2_moe, arch);
+}
+
+test "loader - detect GPT-OSS" {
+    // Test that we can detect GPT-OSS architecture
+    const json_gpt_oss = "{\"model_type\": \"gpt_oss\", \"num_experts\": 32, \"sliding_window\": 128}";
+    const config = ConfigInfo{
+        .model_type = "gpt_oss",
+        .raw_json = json_gpt_oss,
+        .allocator = std.testing.allocator,
+    };
+
+    const arch = detectArchitecture(config);
+    try std.testing.expectEqual(ModelType.gpt_oss, arch);
 }
