@@ -12,6 +12,7 @@ pub const ModelArchitecture = enum {
     phi,
     deepseek_v2_moe,
     deepseek_v1,
+    gpt_oss,
     unknown,
 };
 
@@ -44,18 +45,64 @@ pub const KNOWN_MODELS = &[_]KnownModelInfo{
         .recommended = true,
         .description = "DeepSeek-Coder-V2-Lite 15.7B MoE (2B active) - Code generation",
     },
+    // GPT-OSS-20B (20B total, ~5B active MoE)
+    .{
+        .id = "gpt-oss-20b",
+        .aliases = &.{ "gpt-oss", "gptoss", "gpt-oss-20b-mxfp4" },
+        .architecture = .gpt_oss,
+        .total_params = 20_000_000_000,
+        .active_params = 5_000_000_000,
+        .memory_required_gb = 11.0,
+        .max_context = 131_072,
+        .quantization = "mxfp4",
+        .recommended = true,
+        .description = "GPT-OSS-20B MoE (5B active) with sliding window + Yarn RoPE",
+    },
 };
 
 /// Detect architecture from model configuration
 pub fn detectArchitecture(config: *const ConfigInfo) ModelArchitecture {
+    // First check model_type field from config.json
+    if (config.model_type.len > 0) {
+        // Check for DeepSeek models
+        if (std.mem.indexOf(u8, config.model_type, "deepseek")) |_| {
+            // Check if V2 with MLA/MoE
+            if (std.mem.indexOf(u8, config.model_type, "v2")) |_| {
+                return .deepseek_v2_moe;
+            }
+            return .deepseek_v1;
+        }
+
+        // Check for other known model types
+        if (std.mem.indexOf(u8, config.model_type, "qwen")) |_| {
+            return .qwen;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "llama")) |_| {
+            return .llama;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "phi")) |_| {
+            return .phi;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "gpt_oss")) |_| {
+            return .gpt_oss;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "gpt-oss")) |_| {
+            return .gpt_oss;
+        }
+    }
+
+    // Check for GPT-OSS heuristics: MoE with sliding window
+    if (config.num_experts > 0 and config.sliding_window != null) {
+        if (config.sliding_window.? > 0) {
+            return .gpt_oss;
+        }
+    }
+
+    // Fallback: use heuristics based on architecture characteristics
     // Check for DeepSeek-V2 MoE indicators
-    // MoE models typically have num_experts or kv_lora_rank fields
-    // We detect this by looking for very large hidden_size relative to attention heads
-    // (DeepSeek uses GQA with compressed KV)
     const gqa_ratio = @as(f32, @floatFromInt(config.num_attention_heads)) / @as(f32, @floatFromInt(config.hidden_size)) * 4096.0;
 
     // DeepSeek has 128 attention heads with 4096 hidden = 32:1 ratio
-    // Standard models have lower ratios
     if (gqa_ratio > 20.0 and config.num_layers >= 20) {
         return .deepseek_v2_moe;
     }
@@ -134,6 +181,7 @@ pub fn architectureToString(arch: ModelArchitecture) []const u8 {
         .phi => "phi",
         .deepseek_v2_moe => "deepseek_v2_moe",
         .deepseek_v1 => "deepseek_v1",
+        .gpt_oss => "gpt_oss",
         .unknown => "unknown",
     };
 }
@@ -154,6 +202,9 @@ pub const ConfigInfo = struct {
     max_position_embeddings: u32 = 8192, // Default context length
     vocab_size: u32 = 32000, // Default vocab size
     quantization_bits: u8 = 16, // Default to FP16
+    model_type: []const u8 = "", // Model type from config (e.g., "deepseek_v2", "qwen2")
+    num_experts: u32 = 0, // For MoE models (0 = not MoE)
+    sliding_window: ?u32 = null, // For sliding window attention (null = not used)
 
     /// Calculate total parameter count (rough estimate)
     pub fn estimateParameterCount(self: ConfigInfo) u64 {
@@ -302,8 +353,6 @@ pub const ModelRegistry = struct {
 
     /// Validate a model directory has required files
     fn validateModelDirectory(self: *Self, path: []const u8) !ConfigInfo {
-        _ = self;
-
         var dir = try std.fs.cwd().openDir(path, .{});
         defer dir.close();
 
@@ -329,19 +378,19 @@ pub const ModelRegistry = struct {
         // Parse config.json
         var buf: [1024]u8 = undefined;
         const config_path = try std.fmt.bufPrint(&buf, "{s}/config.json", .{path});
-        return parseConfigFile(config_path);
+        return parseConfigFile(self.allocator, config_path);
     }
 
     /// Parse config.json to extract model configuration
-    fn parseConfigFile(config_path: []const u8) !ConfigInfo {
+    fn parseConfigFile(allocator: std.mem.Allocator, config_path: []const u8) !ConfigInfo {
         const file = try std.fs.cwd().openFile(config_path, .{});
         defer file.close();
 
-        const content = try file.readToEndAlloc(std.heap.page_allocator, 1024 * 1024);
-        defer std.heap.page_allocator.free(content);
+        const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+        defer allocator.free(content);
 
         // Parse JSON
-        const parsed = try std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, content, .{});
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, content, .{});
         defer parsed.deinit();
 
         const root = parsed.value;
@@ -351,7 +400,15 @@ pub const ModelRegistry = struct {
             .hidden_size = 0,
             .num_layers = 0,
             .num_attention_heads = 0,
+            .model_type = "", // Will be set below if present
         };
+
+        // Extract model_type
+        if (root.object.get("model_type")) |v| {
+            if (v == .string) {
+                config.model_type = try allocator.dupe(u8, v.string);
+            }
+        }
 
         // Extract hidden_size
         if (root.object.get("hidden_size")) |v| {
