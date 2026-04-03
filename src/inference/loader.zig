@@ -6,10 +6,12 @@ const std = @import("std");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
 const deepseek = @import("../deepseek.zig");
+const gpt_oss = @import("../gpt_oss.zig");
 const mla = @import("../mlx.zig/src/mla.zig");
 const moe = @import("../moe.zig");
 const safetensors_index = @import("safetensors_index.zig");
 const dequantize = @import("dequantize.zig");
+const gptoss_loader = @import("gptoss_loader.zig");
 
 pub const ModelType = enum {
     qwen,
@@ -267,6 +269,25 @@ pub fn loadDeepSeekWeights(
 
     _ = config_info;
     return weights;
+}
+
+/// Load GPT-OSS weights from model directory
+pub fn loadGptOssWeights(
+    allocator: std.mem.Allocator,
+    config_info: ConfigInfo,
+    model_path: []const u8,
+) !gpt_oss.GptOssWeights {
+    // Parse GPT-OSS configuration
+    const config = gpt_oss.GptOssConfig{};
+
+    // Detect quantization format from config
+    const quant_config = gptoss_loader.QuantizationConfig.detectFromConfig(config_info.raw_json);
+
+    std.log.info("Loading GPT-OSS model from: {s}", .{model_path});
+    std.log.info("Quantization format: {s}", .{@tagName(quant_config.format)});
+
+    // Delegate to GPT-OSS loader
+    return gptoss_loader.loadGptOssWeights(allocator, config, model_path, quant_config);
 }
 
 /// Register all expected DeepSeek weight keys
