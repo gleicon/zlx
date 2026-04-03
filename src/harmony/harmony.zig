@@ -4,8 +4,14 @@
 //! - Tool calls and results
 //! - Recipient routing
 //! - Reasoning chains
+//!
+//! Contains all core types and the HarmonyConversation container.
+//! Types are also available individually from types.zig.
 
 const std = @import("std");
+
+// Also include types.zig for the separate-types pattern
+const types = @import("types.zig");
 
 /// Role in a Harmony conversation
 pub const HarmonyRole = enum {
@@ -13,23 +19,6 @@ pub const HarmonyRole = enum {
     assistant,
     system,
     tool,
-};
-
-/// Content type in Harmony messages
-pub const HarmonyContent = union(enum) {
-    text: []const u8,
-    tool_call: ToolCall,
-    tool_result: ToolResult,
-    reasoning: []const u8,
-
-    pub fn deinit(self: *HarmonyContent, allocator: std.mem.Allocator) void {
-        switch (self.*) {
-            .text => |text| allocator.free(text),
-            .tool_call => |*tc| tc.deinit(allocator),
-            .tool_result => |*tr| tr.deinit(allocator),
-            .reasoning => |r| allocator.free(r),
-        }
-    }
 };
 
 /// Tool call specification
@@ -55,6 +44,57 @@ pub const ToolResult = struct {
         allocator.free(self.tool_name);
         allocator.free(self.result);
     }
+};
+
+/// Content type in Harmony messages
+pub const HarmonyContent = union(enum) {
+    text: []const u8,
+    tool_call: ToolCall,
+    tool_result: ToolResult,
+    reasoning: []const u8, // Chain of thought
+
+    pub fn deinit(self: *HarmonyContent, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .text => |text| allocator.free(text),
+            .tool_call => |*tc| tc.deinit(allocator),
+            .tool_result => |*tr| tr.deinit(allocator),
+            .reasoning => |r| allocator.free(r),
+        }
+    }
+};
+
+/// Harmony encoding name constants
+pub const HarmonyEncoding = struct {
+    pub const gpt_oss = "harmony_gpt_oss";
+    pub const default = "harmony_v1";
+};
+
+/// Reasoning effort level for the model
+pub const ReasoningEffort = enum {
+    low,
+    medium,
+    high,
+};
+
+/// Tool definition for system prompts
+pub const ToolDefinition = struct {
+    name: []const u8,
+    description: []const u8,
+    parameters: std.json.Value,
+
+    pub fn deinit(self: *ToolDefinition, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.description);
+        // json.Value cleanup is caller's responsibility
+    }
+};
+
+/// OpenAI message format for conversion to Harmony
+pub const OpenAIMessage = struct {
+    role: []const u8,
+    content: []const u8,
+    tool_calls: ?[]const ToolCall = null,
+    tool_call_id: ?[]const u8 = null,
 };
 
 /// Single message in a Harmony conversation
@@ -110,25 +150,25 @@ pub const HarmonyMessage = struct {
     }
 };
 
-/// Complete Harmony conversation
+/// Complete Harmony conversation (ordered list of messages)
 pub const HarmonyConversation = struct {
-    messages: std.ArrayList(HarmonyMessage),
+    messages: std.ArrayListUnmanaged(HarmonyMessage),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) HarmonyConversation {
         return .{
-            .messages = std.ArrayList(HarmonyMessage).init(allocator),
+            .messages = .empty,
             .allocator = allocator,
         };
     }
 
     pub fn addMessage(self: *HarmonyConversation, message: HarmonyMessage) !void {
-        try self.messages.append(message);
+        try self.messages.append(self.allocator, message);
     }
 
     pub fn deinit(self: *HarmonyConversation) void {
         for (self.messages.items) |*m| m.deinit(self.allocator);
-        self.messages.deinit();
+        self.messages.deinit(self.allocator);
     }
 
     /// Check if conversation has tool calls pending
@@ -150,33 +190,18 @@ pub const HarmonyConversation = struct {
         }
         return null;
     }
-};
 
-/// Tool definition for system prompts
-pub const ToolDefinition = struct {
-    name: []const u8,
-    description: []const u8,
-    parameters: std.json.Value,
-
-    pub fn deinit(self: *ToolDefinition, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
-        allocator.free(self.description);
-        // JSON value cleanup handled by parsed document
-        _ = allocator;
+    /// Count messages by role
+    pub fn countByRole(self: *const HarmonyConversation, role: HarmonyRole) usize {
+        var count: usize = 0;
+        for (self.messages.items) |msg| {
+            if (msg.role == role) count += 1;
+        }
+        return count;
     }
 };
 
-/// Reasoning effort level for model
-pub const ReasoningEffort = enum {
-    low,
-    medium,
-    high,
-};
-
-/// OpenAI message format for conversion
-pub const OpenAIMessage = struct {
-    role: []const u8,
-    content: []const u8,
-    tool_calls: ?[]ToolCall = null,
-    tool_call_id: ?[]const u8 = null,
-};
+// Verify types.zig is still importable for the types sub-module pattern
+comptime {
+    _ = types;
+}
