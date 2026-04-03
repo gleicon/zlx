@@ -407,19 +407,17 @@ pub fn handleListModels(req: anytype, res: anytype) !void {
 
 /// Determine architecture string from model configuration
 fn determineArchitecture(config: *const @import("../models/registry.zig").ConfigInfo) []const u8 {
-    // Estimate parameters to guess architecture
-    const params = config.estimateParameterCount();
-
-    // Rough parameter-based detection (config would be better but we don't have model type here)
-    if (params < 3_000_000_000) {
-        // Small models often use Qwen architecture
-        return "qwen";
-    } else if (params < 10_000_000_000) {
-        // Medium models could be Qwen, Llama, or Phi
-        return "qwen"; // Default guess
-    } else {
-        return "qwen";
-    }
+    // Use the registry's architecture detection which properly checks model_type
+    const arch = @import("../models/registry.zig").detectArchitecture(config);
+    return switch (arch) {
+        .deepseek_v2_moe => "deepseek_v2_moe",
+        .deepseek_v1 => "deepseek_v1",
+        .qwen => "qwen",
+        .llama => "llama",
+        .phi => "phi",
+        .gpt_oss => "gpt_oss",
+        .unknown => "unknown",
+    };
 }
 
 /// Detect model architecture from model name
