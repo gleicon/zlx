@@ -453,18 +453,23 @@ fn configureExecutable(
     exe.step.dependOn(deps.install_step);
     exe.step.dependOn(deps.install_v4_step);
 
+    // Get absolute paths for C imports
+    const cwd = std.fs.cwd();
+    const mlx_c_absolute = cwd.realpathAlloc(b.allocator, deps.mlx_c_path) catch deps.mlx_c_path;
+    const mlx_c_v4_absolute = cwd.realpathAlloc(b.allocator, deps.mlx_c_v4_path) catch deps.mlx_c_v4_path;
+
     // macOS SDK framework path — required on macOS 26 / Xcode 21 where Zig doesn't auto-detect it
     exe.addFrameworkPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks" });
     // macOS SDK library path — needed for libobjc and other system libraries
     exe.addLibraryPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib" });
 
     // v0.1.2 includes and library
-    exe.addIncludePath(.{ .cwd_relative = deps.mlx_c_path });
+    exe.addIncludePath(.{ .cwd_relative = mlx_c_absolute });
     exe.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_build_path, "libmlxc.a" }) });
     exe.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_build_path, "_deps/mlx-build/libmlx.a" }) });
 
     // v0.4.x includes and library (separate to avoid conflicts)
-    exe.addIncludePath(.{ .cwd_relative = deps.mlx_c_v4_path });
+    exe.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
     exe.addLibraryPath(.{ .cwd_relative = deps.mlx_c_v4_build_path });
     exe.linkSystemLibrary("mlxc-v4");
 

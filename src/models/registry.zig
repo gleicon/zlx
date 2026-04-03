@@ -94,6 +94,7 @@ pub fn getKnownModel(id: []const u8) ?KnownModelInfo {
 pub fn estimateDeepSeekMemory(config: ConfigInfo, _total_params: u64, active_params: u64) u32 {
     // For DeepSeek MoE: memory is based on active params, not total
     // Note: total_params is provided for reference but not used in calculation
+    _ = _total_params; // Silence unused parameter warning
     // Formula: embeddings + active_params + compressed_KV + overhead
 
     const bytes_per_param: u8 = switch (config.quantization_bits) {

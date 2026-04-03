@@ -68,7 +68,6 @@ pub const ModelUnion = union(enum) {
 
                 // Extract values from MLX array
                 for (0..result_len) |i| {
-                    _ = i;
                     var token: i32 = 0;
                     try mlx.item(&token, result);
                     tokens[i] = @intCast(token);

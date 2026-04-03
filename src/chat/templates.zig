@@ -19,83 +19,83 @@ pub const ModelArchitecture = enum {
 /// Format: System prompt at top, then "User: " and "Assistant: " prefixes
 /// Adds trailing "Assistant: " for generation
 pub fn formatDeepSeekChat(allocator: std.mem.Allocator, messages: []const types.Message) ![]const u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    defer result.deinit();
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
 
     for (messages) |msg| {
         switch (msg.role) {
             .system, .developer => {
                 // System prompt at top, no special marker
-                try result.appendSlice(msg.content.text);
-                try result.append('\n');
+                try result.appendSlice(allocator, msg.content.text);
+                try result.append(allocator, '\n');
             },
             .user => {
-                try result.appendSlice("User: ");
-                try result.appendSlice(msg.content.text);
-                try result.append('\n');
+                try result.appendSlice(allocator, "User: ");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.append(allocator, '\n');
             },
             .assistant => {
-                try result.appendSlice("Assistant: ");
-                try result.appendSlice(msg.content.text);
-                try result.append('\n');
+                try result.appendSlice(allocator, "Assistant: ");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.append(allocator, '\n');
             },
             .tool => {
                 // Tool messages treated as system context
-                try result.appendSlice("System: Tool result: ");
-                try result.appendSlice(msg.content.text);
-                try result.append('\n');
+                try result.appendSlice(allocator, "System: Tool result: ");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.append(allocator, '\n');
             },
         }
     }
 
     // Add assistant prefix for generation
-    try result.appendSlice("Assistant: ");
+    try result.appendSlice(allocator, "Assistant: ");
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Format messages using Qwen chat template (ChatML format)
 /// Uses <|im_start|>system/user/assistant<|im_end|> markers
 pub fn formatQwenChat(allocator: std.mem.Allocator, messages: []const types.Message) ![]const u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    defer result.deinit();
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
 
     for (messages) |msg| {
         switch (msg.role) {
             .system, .developer => {
-                try result.appendSlice("<|im_start|>system\n");
-                try result.appendSlice(msg.content.text);
-                try result.appendSlice("<|im_end|>\n");
+                try result.appendSlice(allocator, "<|im_start|>system\n");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "<|im_end|>\n");
             },
             .user => {
-                try result.appendSlice("<|im_start|>user\n");
-                try result.appendSlice(msg.content.text);
-                try result.appendSlice("<|im_end|>\n");
+                try result.appendSlice(allocator, "<|im_start|>user\n");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "<|im_end|>\n");
             },
             .assistant => {
-                try result.appendSlice("<|im_start|>assistant\n");
-                try result.appendSlice(msg.content.text);
-                try result.appendSlice("<|im_end|>\n");
+                try result.appendSlice(allocator, "<|im_start|>assistant\n");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "<|im_end|>\n");
             },
             .tool => {
-                try result.appendSlice("<|im_start|>system\nTool result: ");
-                try result.appendSlice(msg.content.text);
-                try result.appendSlice("<|im_end|>\n");
+                try result.appendSlice(allocator, "<|im_start|>system\nTool result: ");
+                try result.appendSlice(allocator, msg.content.text);
+                try result.appendSlice(allocator, "<|im_end|>\n");
             },
         }
     }
 
     // Add final assistant prefix
-    try result.appendSlice("<|im_start|>assistant\n");
+    try result.appendSlice(allocator, "<|im_start|>assistant\n");
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Format messages using Llama chat template
 /// Uses [INST] and <<SYS>> markers
 pub fn formatLlamaChat(allocator: std.mem.Allocator, messages: []const types.Message) ![]const u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    defer result.deinit();
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
 
     // Find system message if present
     var system_prompt: ?[]const u8 = null;
@@ -117,25 +117,25 @@ pub fn formatLlamaChat(allocator: std.mem.Allocator, messages: []const types.Mes
             .user => {
                 if (first_user and system_prompt != null) {
                     // First user message with system prompt
-                    try result.appendSlice("[INST] <<SYS>>\n");
-                    try result.appendSlice(system_prompt.?);
-                    try result.appendSlice("\n<</SYS>>\n\n");
-                    try result.appendSlice(msg.content.text);
-                    try result.appendSlice(" [/INST]");
+                    try result.appendSlice(allocator, "[INST] <<SYS>>\n");
+                    try result.appendSlice(allocator, system_prompt.?);
+                    try result.appendSlice(allocator, "\n<</SYS>>\n\n");
+                    try result.appendSlice(allocator, msg.content.text);
+                    try result.appendSlice(allocator, " [/INST]");
                     first_user = false;
                 } else {
-                    try result.appendSlice("[INST] ");
-                    try result.appendSlice(msg.content.text);
-                    try result.appendSlice(" [/INST]");
+                    try result.appendSlice(allocator, "[INST] ");
+                    try result.appendSlice(allocator, msg.content.text);
+                    try result.appendSlice(allocator, " [/INST]");
                 }
             },
             .assistant => {
-                try result.appendSlice(msg.content.text);
+                try result.appendSlice(allocator, msg.content.text);
             },
             .tool => {
                 // Tool results appended to context
-                try result.appendSlice("\n[TOOL RESULT] ");
-                try result.appendSlice(msg.content.text);
+                try result.appendSlice(allocator, "\n[TOOL RESULT] ");
+                try result.appendSlice(allocator, msg.content.text);
             },
         }
     }
@@ -143,10 +143,10 @@ pub fn formatLlamaChat(allocator: std.mem.Allocator, messages: []const types.Mes
     // Add assistant marker for generation if last message was from user
     const last_was_user = messages.len > 0 and messages[messages.len - 1].role == .user;
     if (last_was_user) {
-        try result.appendSlice(" ");
+        try result.appendSlice(allocator, " ");
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Select and apply appropriate template based on model architecture

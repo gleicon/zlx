@@ -180,7 +180,7 @@ pub const DeepSeekTransformer = struct {
         defer mlx.arrayFree(scaled);
 
         if (temperature != 1.0) {
-            var temp_array = mlx.arrayNewFloat(temperature);
+            const temp_array = mlx.arrayNewFloat(temperature);
             defer mlx.arrayFree(temp_array);
             try mlx.divide(&scaled, logits, temp_array, null);
         } else {
