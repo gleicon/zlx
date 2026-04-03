@@ -9,7 +9,8 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 **Phase Numbering:**
 - Integer phases (1, 2, 3): v1.0 — COMPLETE
 - Integer phases (4, 5, 6, 7, 8, 9): v1.1 — COMPLETE
-- Phase 11: v1.1.1 — DeepSeek MoE Support (IN PROGRESS)
+- Phase 11-13: v1.1.1 — DeepSeek MoE Support (IN PROGRESS)
+- Phase 14: v1.1.2 — llama.cpp Backend Integration (PLANNED)
 
 **v1.0 (COMPLETE):**
 - [x] **Phase 1: Foundation & Build** - Resolve build blockers so `zig build` succeeds on macOS aarch64
@@ -28,6 +29,9 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 - [x] **Phase 11: DeepSeek MoE Infrastructure** - MLA attention, MoE routing, mlx-c v0.4.x upgrade (COMPLETED)
 - [x] **Phase 12: MoE Models Production-Ready** - Infrastructure: safetensors loading, GPT-OSS architecture, memory constraints, testing (COMPLETED)
 - [x] **Phase 13: DeepSeek & GPT-OSS Completion** - Quantized weight dequantization, model download, integration testing (COMPLETED)
+
+**v1.1.2 (PLANNED):**
+- [ ] **Phase 14: DeepSeek & GPT-OSS llama.cpp Integration** - Backend abstraction, llama.cpp build integration, unified multi-backend generation pipeline (PLANNED)
 
 ## Phase Details
 
@@ -227,6 +231,29 @@ Plans:
 - [ ] 13-02-PLAN.md — GPT-OSS download and weight loading (MXFP4 support)
 - [ ] 13-03-PLAN.md — Integration testing and verification (test_models.sh, CI/CD)
 
+### Phase 14: DeepSeek & GPT-OSS llama.cpp Integration
+**Goal**: Make DeepSeek-Coder-V2-Lite and GPT-OSS-20B fully functional using llama.cpp as the primary backend for MoE models
+**Depends on**: Phase 13 (MLX-based implementation complete)
+**Requirements**: MOE-11, MOE-12, MOE-13, MOE-14, MOE-15
+**Success Criteria** (what must be TRUE):
+  1. Unified Backend interface abstracts both MLX.zig and llama.cpp implementations
+  2. llama.cpp builds and links as static library via CMake integration
+  3. DeepSeek-Coder-V2-Lite loads and generates via llama.cpp using GGUF format
+  4. GPT-OSS-20B downloads and runs via llama.cpp backend
+  5. Backend selection is automatic: Qwen→MLX.zig, DeepSeek/GPT-OSS→llama.cpp
+  6. TurboQuant works with both backends through unified KV cache interface
+  7. `./test_models.sh --all-backends` passes for all 4 model configurations
+  8. No regression in Qwen MLX.zig performance
+**Plans**: 5 plans (14-01 through 14-05) + MASTER
+
+Plans:
+- [ ] 14-MASTER-PLAN.md — Overview and architecture (MOE-11 through MOE-15)
+- [ ] 14-01-PLAN.md — Backend abstraction layer (MOE-11)
+- [ ] 14-02-PLAN.md — llama.cpp build integration and C bindings (MOE-12)
+- [ ] 14-03-PLAN.md — DeepSeek end-to-end via llama.cpp (MOE-13)
+- [ ] 14-04-PLAN.md — GPT-OSS download and llama.cpp integration (MOE-14)
+- [ ] 14-05-PLAN.md — Unified generation pipeline (MOE-15)
+
 ## Progress
 
 **Execution Order:**
@@ -256,7 +283,10 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 11. DeepSeek MoE Infrastructure | 6/6 | ✅ Complete | 2026-04-03 |
 | 12. MoE Production-Ready | 8/8 | ✅ Complete | 2026-04-03 |
 | 13. DeepSeek & GPT-OSS Completion | 0/3 | 🔄 Planned | In Progress |
+| 14. llama.cpp Backend Integration | 0/5 | 📋 Planned | Not Started |
 
 **v1.1.0 Progress:** 9/9 phases complete | All phases COMPLETE | v1.1.0 Released
 
 **v1.1.1 Target:** MoE Models Production-Ready | Phase 13 Planning Complete | DeepSeek + GPT-OSS Weight Loading
+
+**v1.1.2 Target:** llama.cpp Backend Support | Phase 14 Planning Complete | Multi-Backend Architecture
