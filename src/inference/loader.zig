@@ -75,7 +75,7 @@ pub const ModelInfo = struct {
 };
 
 /// Load and parse config.json
-fn loadConfigInfo(allocator: std.mem.Allocator, config_path: []const u8) !ConfigInfo {
+pub fn loadConfigInfo(allocator: std.mem.Allocator, config_path: []const u8) !ConfigInfo {
     const file = try std.fs.cwd().openFile(config_path, .{});
     defer file.close();
 
@@ -240,7 +240,7 @@ pub fn loadDeepSeekWeights(
     defer {
         var iter = weights_hash.iterator();
         while (iter.next()) |entry| {
-            mlx.arrayFree(entry.value_ptr.*);
+            mlx.arrayFree(entry.value_ptr.*.*);
             allocator.destroy(entry.value_ptr.*);
         }
         weights_hash.deinit();
@@ -263,6 +263,9 @@ pub fn loadDeepSeekWeights(
         std.log.info("Loading weights from: {s}", .{shard_path});
         try mlx.loadSafetensors(&weights_hash, shard_path, stream);
     }
+
+    // Log how many weights were loaded
+    std.log.info("Loaded {d} weight tensors", .{weights_hash.count()});
 
     // Step 5: Map loaded weights to DeepSeekWeights structure
     const weights = try mapWeightsToDeepSeek(allocator, &weights_hash, config);
@@ -614,11 +617,13 @@ fn mapQuantizedWeight(
     base_key: []const u8,
     group_size: usize,
 ) !mlx.Array {
-    var buf: [256]u8 = undefined;
+    var buf_weight: [256]u8 = undefined;
+    var buf_biases: [256]u8 = undefined;
+    var buf_scales: [256]u8 = undefined;
 
-    const weight_key = try std.fmt.bufPrint(&buf, "{s}.weight", .{base_key});
-    const biases_key = try std.fmt.bufPrint(&buf, "{s}.biases", .{base_key});
-    const scales_key = try std.fmt.bufPrint(&buf, "{s}.scales", .{base_key});
+    const weight_key = try std.fmt.bufPrint(&buf_weight, "{s}.weight", .{base_key});
+    const biases_key = try std.fmt.bufPrint(&buf_biases, "{s}.biases", .{base_key});
+    const scales_key = try std.fmt.bufPrint(&buf_scales, "{s}.scales", .{base_key});
 
     // Get quantized components
     var weight = mlx.arrayNew();
