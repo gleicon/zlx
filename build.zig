@@ -444,6 +444,173 @@ pub fn build(b: *std.Build) !void {
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
     // due to cross-module dependencies
+
+    // ── GPT-OSS integration tests (Phase 15-05) ─────────────────────────────
+    //
+    // Creates sub-modules for all GPT-OSS dependencies so the test file can
+    // import them with bare @import() paths.
+
+    const gptoss_mod = b.createModule(.{
+        .root_source_file = b.path("src/gptoss_mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // gptoss_mlx.zig imports mlx.zig — wire it in
+    gptoss_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+
+    const harmony_mod = b.createModule(.{
+        .root_source_file = b.path("src/harmony/harmony.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const harmony_template_mod = b.createModule(.{
+        .root_source_file = b.path("src/harmony/template.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    harmony_template_mod.addImport("harmony.zig", harmony_mod);
+
+    const harmony_parser_mod = b.createModule(.{
+        .root_source_file = b.path("src/harmony/parser.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    harmony_parser_mod.addImport("harmony.zig", harmony_mod);
+
+    // Tools modules
+    const tools_types_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/types.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const browser_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/browser.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    browser_mod.addImport("types.zig", tools_types_mod);
+
+    const python_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/python.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    python_mod.addImport("types.zig", tools_types_mod);
+
+    const tool_executor_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/tool_executor.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tool_executor_mod.addImport("types.zig", tools_types_mod);
+    tool_executor_mod.addImport("browser.zig", browser_mod);
+    tool_executor_mod.addImport("python.zig", python_mod);
+
+    // Weight loading modules
+    const mxfp4_mod = b.createModule(.{
+        .root_source_file = b.path("src/mxfp4.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mxfp4_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+
+    const safetensors_mod = b.createModule(.{
+        .root_source_file = b.path("src/weight/safetensors.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const gptoss_loader_mod = b.createModule(.{
+        .root_source_file = b.path("src/weight/gptoss_loader.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_loader_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    gptoss_loader_mod.addImport("safetensors.zig", safetensors_mod);
+    gptoss_loader_mod.addImport("../mxfp4.zig", mxfp4_mod);
+
+    // Backend module
+    const backend_base_mod = b.createModule(.{
+        .root_source_file = b.path("src/backends/backend.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const mlx_gptoss_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backends/mlx_gptoss_backend.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mlx_gptoss_backend_mod.addImport("backend.zig", backend_base_mod);
+    mlx_gptoss_backend_mod.addImport("../gptoss_mlx.zig", gptoss_mod);
+    mlx_gptoss_backend_mod.addImport("../harmony/harmony.zig", harmony_mod);
+    mlx_gptoss_backend_mod.addImport("../harmony/template.zig", harmony_template_mod);
+    mlx_gptoss_backend_mod.addImport("../tools/tool_executor.zig", tool_executor_mod);
+    mlx_gptoss_backend_mod.addImport("../tools/browser.zig", browser_mod);
+    mlx_gptoss_backend_mod.addImport("../tools/python.zig", python_mod);
+    mlx_gptoss_backend_mod.addImport("../weight/gptoss_loader.zig", gptoss_loader_mod);
+
+    // Model manager module
+    const gptoss_manager_mod = b.createModule(.{
+        .root_source_file = b.path("src/model/gptoss_manager.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_manager_mod.addImport("../backends/mlx_gptoss_backend.zig", mlx_gptoss_backend_mod);
+
+    // GPT-OSS integration test module
+    const gptoss_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/test_models_gptoss.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_test_mod.addImport("gptoss_mlx.zig", gptoss_mod);
+    gptoss_test_mod.addImport("harmony/harmony.zig", harmony_mod);
+    gptoss_test_mod.addImport("harmony/template.zig", harmony_template_mod);
+    gptoss_test_mod.addImport("harmony/parser.zig", harmony_parser_mod);
+    gptoss_test_mod.addImport("backends/backend.zig", backend_base_mod);
+    gptoss_test_mod.addImport("backends/mlx_gptoss_backend.zig", mlx_gptoss_backend_mod);
+    gptoss_test_mod.addImport("model/gptoss_manager.zig", gptoss_manager_mod);
+
+    const gptoss_test = b.addTest(.{
+        .name = "gptoss_test",
+        .root_module = gptoss_test_mod,
+    });
+
+    const run_gptoss_test = b.addRunArtifact(gptoss_test);
+    const test_gptoss_step = b.step("test-gptoss", "Run GPT-OSS integration tests (Phase 15)");
+    test_gptoss_step.dependOn(&run_gptoss_test.step);
+    test_step.dependOn(&run_gptoss_test.step);
+
+    // GPT-OSS model manager standalone test
+    const gptoss_manager_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/model/gptoss_manager.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_manager_test_mod.addImport("../backends/mlx_gptoss_backend.zig", mlx_gptoss_backend_mod);
+
+    const gptoss_manager_test = b.addTest(.{
+        .name = "gptoss_manager_test",
+        .root_module = gptoss_manager_test_mod,
+    });
+
+    const run_gptoss_manager_test = b.addRunArtifact(gptoss_manager_test);
+    test_step.dependOn(&run_gptoss_manager_test.step);
 }
 
 // ── Inlined from src/mlx.zig/build.zig ────────────────────────────────────────
