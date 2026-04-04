@@ -7,6 +7,8 @@ const harmony = @import("../harmony/harmony.zig");
 const harmony_template = @import("../harmony/template.zig");
 const tool_executor = @import("../tools/tool_executor.zig");
 const weight_loader = @import("../weight/gptoss_loader.zig");
+const tokenizer_mod = @import("../mlx.zig/src/tokenizer.zig");
+const mlx_api = @import("../mlx.zig/src/mlx.zig");
 
 const GenerationParams = backend.GenerationParams;
 const GenerationResult = backend.GenerationResult;
@@ -86,7 +88,11 @@ pub const MLXGPTOSSBackend = struct {
     pub fn deinit(self: *MLXGPTOSSBackend) void {
         self.allocator.free(self.model_path);
 
-        if (self.transformer) |*t| t.deinit();
+        // Free GPU stream before deiniting transformer (GPTOSSTransformer.deinit does not free it)
+        if (self.transformer) |*t| {
+            mlx_api.streamFree(t.stream);
+            t.deinit();
+        }
         if (self.weight_loader_inst) |*wl| wl.deinit();
         if (self.tool_executor_inst) |*te| te.deinit();
     }
@@ -116,11 +122,12 @@ pub const MLXGPTOSSBackend = struct {
             .gptoss_120b => GPTOSSConfig.gptoss120b(),
         };
 
-        // Initialize transformer (uses dummy stream for now — full MLX stream in production)
+        // Initialize transformer with a real MLX GPU stream
+        const gpu_stream = mlx_api.defaultGpuStreamNew();
         self.transformer = try GPTOSSTransformer.init(
             self.allocator,
             gptoss_config,
-            undefined, // stream — placeholder until full MLX integration
+            gpu_stream,
         );
 
         // Load weights into transformer
@@ -196,6 +203,7 @@ pub const MLXGPTOSSBackend = struct {
     /// Unload model
     pub fn unload(self: *MLXGPTOSSBackend) void {
         if (self.transformer) |*t| {
+            mlx_api.streamFree(t.stream);
             t.deinit();
             self.transformer = null;
         }
@@ -272,11 +280,21 @@ pub fn destroyBackend(backend_ptr: *anyopaque, allocator: std.mem.Allocator) voi
     allocator.destroy(self);
 }
 
-/// Tokenize text (stub — GPT-OSS tokenizer not yet wired)
+/// Tokenize text using the GPT-OSS tokenizer (tokenizer.json in model_path directory)
 pub fn tokenize(ptr: *anyopaque, text: []const u8, allocator: std.mem.Allocator) ![]u32 {
-    _ = ptr;
-    _ = text;
-    return allocator.alloc(u32, 0);
+    const self = @as(*MLXGPTOSSBackend, @ptrCast(@alignCast(ptr)));
+
+    // Initialize tokenizer from model directory (expects tokenizer.json in model_path)
+    var tokenizer = tokenizer_mod.Tokenizer.init(allocator, self.model_path) catch |err| {
+        std.log.err("GPT-OSS tokenizer load failed from {s}: {}", .{ self.model_path, err });
+        return err;
+    };
+    defer tokenizer.deinit();
+
+    // encode() returns []const u32 via toOwnedSlice(allocator) — already owned by allocator.
+    // Cast to mutable []u32 to match return type. No dupe needed.
+    const tokens: []const u32 = try tokenizer.encode(text);
+    return @constCast(tokens);
 }
 
 /// Generate tokens via vtable

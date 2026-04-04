@@ -96,10 +96,14 @@ pub const GPTOSSTransformer = struct {
     }
 
     pub fn forward(self: *GPTOSSTransformer, input_ids: []const u32) !mlx.Array {
-        // Placeholder implementation
+        // NOTE: No weight fields in GPTOSSTransformer yet (weights wired in future phase).
+        // Returns zero logits with correct [1, 1, vocab_size] shape using real mlx API.
+        // argmax on zeros deterministically returns 0 (EOS), giving correct termination.
         _ = input_ids;
-        const shape = &[_]i32{ 1, 1, @intCast(self.config.vocab_size) };
-        return mlx.arrayZeros(3, shape, mlx.Float32);
+        var logits = mlx.arrayNew();
+        const shape = [_]c_int{ 1, 1, @intCast(self.config.vocab_size) };
+        try mlx.zeros(&logits, &shape, mlx.FLOAT32, self.stream);
+        return logits;
     }
 
     pub fn generate(
@@ -108,17 +112,41 @@ pub const GPTOSSTransformer = struct {
         max_tokens: usize,
         temperature: f32,
     ) ![]u32 {
-        var output = try self.allocator.alloc(u32, max_tokens);
-        errdefer self.allocator.free(output);
+        _ = temperature; // reserved for sampling; argmax (greedy) used for now
 
-        for (0..max_tokens) |i| {
-            output[i] = @intCast(i % self.config.vocab_size);
-            if (output[i] == 0) break;
+        var output = std.ArrayList(u32).init(self.allocator);
+        errdefer output.deinit();
+
+        // Build context from prompt, then extend one token at a time
+        var context = std.ArrayList(u32).init(self.allocator);
+        defer context.deinit();
+        try context.appendSlice(prompt_tokens);
+
+        var i: usize = 0;
+        while (i < max_tokens) : (i += 1) {
+            // Forward pass: [1, 1, vocab_size] logits
+            const logits = try self.forward(context.items);
+            defer mlx.arrayFree(logits);
+
+            // Argmax over vocab dimension (axis=2) to get next token index
+            var token_arr = mlx.arrayNew();
+            defer mlx.arrayFree(token_arr);
+            try mlx.argmax(&token_arr, logits, 2, false, self.stream);
+
+            // Extract scalar u32 from result
+            var next_token: u32 = 0;
+            try mlx.item(&next_token, token_arr);
+
+            try output.append(next_token);
+
+            // EOS check (token 0 = EOS for zero-logit forward)
+            if (next_token == 0) break;
+
+            // Extend context for next iteration
+            try context.append(next_token);
         }
 
-        _ = prompt_tokens;
-        _ = temperature;
-        return output;
+        return output.toOwnedSlice();
     }
 };
 
