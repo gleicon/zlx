@@ -130,7 +130,7 @@ pub fn selectBackend(model_name: []const u8) BackendType {
 
 /// Backend union - holds MLX, llama.cpp, or mlx_gptoss backend
 pub const Backend = union(BackendType) {
-    mlx: *anyopaque,       // Pointer to MlxBackend
+    mlx: *anyopaque, // Pointer to MlxBackend
     llama_cpp: *anyopaque, // Pointer to LlamaBackend
     mlx_gptoss: *anyopaque, // Pointer to MLXGPTOSSBackend
 
