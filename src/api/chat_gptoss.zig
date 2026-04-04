@@ -339,10 +339,8 @@ pub const ChatGPTOSSHandler = struct {
         defer self.allocator.free(id);
 
         // Send content chunk
-        const chunk_json = try std.fmt.allocPrint(self.allocator,
-            "{{\"id\":\"{s}\",\"object\":\"chat.completion.chunk\",\"created\":{d},\"model\":\"{s}\"," ++
-            "\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{s}\"}},\"finish_reason\":null}}]}}",
-            .{ id, std.time.timestamp(), model, content });
+        const chunk_json = try std.fmt.allocPrint(self.allocator, "{{\"id\":\"{s}\",\"object\":\"chat.completion.chunk\",\"created\":{d},\"model\":\"{s}\"," ++
+            "\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{s}\"}},\"finish_reason\":null}}]}}", .{ id, std.time.timestamp(), model, content });
         defer self.allocator.free(chunk_json);
 
         const chunk_line = try std.fmt.allocPrint(self.allocator, "data: {s}\n\n", .{chunk_json});
@@ -351,10 +349,8 @@ pub const ChatGPTOSSHandler = struct {
         try res.writeChunk(chunk_line);
 
         // Send finish chunk
-        const finish_json = try std.fmt.allocPrint(self.allocator,
-            "{{\"id\":\"{s}\",\"object\":\"chat.completion.chunk\",\"created\":{d},\"model\":\"{s}\"," ++
-            "\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}",
-            .{ id, std.time.timestamp(), model });
+        const finish_json = try std.fmt.allocPrint(self.allocator, "{{\"id\":\"{s}\",\"object\":\"chat.completion.chunk\",\"created\":{d},\"model\":\"{s}\"," ++
+            "\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}", .{ id, std.time.timestamp(), model });
         defer self.allocator.free(finish_json);
 
         const finish_line = try std.fmt.allocPrint(self.allocator, "data: {s}\n\n", .{finish_json});
