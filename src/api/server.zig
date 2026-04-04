@@ -5,6 +5,10 @@
 const std = @import("std");
 const httpz = @import("httpz");
 const handlers = @import("handlers.zig");
+const chat_gptoss = @import("chat_gptoss.zig");
+const tools_api_mod = @import("tools.zig");
+const tool_executor_mod = @import("../tools/tool_executor.zig");
+const mlx_gptoss_backend_mod = @import("../backends/mlx_gptoss_backend.zig");
 
 /// Server configuration
 pub const ServerConfig = struct {
@@ -22,6 +26,15 @@ pub const ServerConfig = struct {
 
 /// Global server instance for cleanup
 var g_server: ?httpz.Server(void) = null;
+
+/// Module-level MLXGPTOSSBackend — initialized in Server.init
+var g_gptoss_backend: ?mlx_gptoss_backend_mod.MLXGPTOSSBackend = null;
+/// Module-level ChatGPTOSSHandler — requires g_gptoss_backend to be initialized first
+var g_chat_gptoss_handler: ?chat_gptoss.ChatGPTOSSHandler = null;
+/// Module-level ToolsAPI instance for /v1/tools/* route dispatch
+var g_tools_api: ?tools_api_mod.ToolsAPI = null;
+/// Module-level ToolExecutor backing g_tools_api
+var g_tool_executor: ?tool_executor_mod.ToolExecutor = null;
 
 /// HTTP server state
 pub const Server = struct {
@@ -42,6 +55,18 @@ pub const Server = struct {
 
         // Create httpz server
         var server = try httpz.Server(void).init(allocator, httpz_config, {});
+
+        // Initialize GPT-OSS backend and handler (model loaded lazily on first request)
+        g_gptoss_backend = try mlx_gptoss_backend_mod.MLXGPTOSSBackend.init(
+            allocator,
+            "", // model_path — empty placeholder; real path set at load time via /v1/models/switch
+            .{},
+        );
+        g_chat_gptoss_handler = chat_gptoss.ChatGPTOSSHandler.init(allocator, &g_gptoss_backend.?);
+
+        // Initialize tool executor and ToolsAPI for /v1/tools/* routes
+        g_tool_executor = tool_executor_mod.ToolExecutor.init(allocator);
+        g_tools_api = tools_api_mod.ToolsAPI.init(allocator, &g_tool_executor.?);
 
         // Configure router
         var router = try server.router(.{});
@@ -79,6 +104,14 @@ pub const Server = struct {
         router.options("/v1/chat/completions", handleOptions, .{});
         router.options("/v1/models", handleOptions, .{});
 
+        // POST /v1/tools/browser - Browser tool endpoint
+        router.post("/v1/tools/browser", handleBrowserTool, .{});
+        router.options("/v1/tools/browser", handleOptions, .{});
+
+        // POST /v1/tools/python - Python tool endpoint
+        router.post("/v1/tools/python", handlePythonTool, .{});
+        router.options("/v1/tools/python", handleOptions, .{});
+
         // Store for cleanup
         g_server = server;
 
@@ -100,13 +133,46 @@ pub const Server = struct {
     pub fn stop(self: *Server) void {
         std.log.info("Stopping HTTP server...", .{});
         self.http_server.stop();
+        if (g_gptoss_backend) |*b| b.deinit();
+        g_gptoss_backend = null;
+        g_chat_gptoss_handler = null;
+        if (g_tool_executor) |*te| te.deinit();
+        g_tools_api = null;
+        g_tool_executor = null;
         g_server = null;
     }
 };
 
 /// Wrapper for chat completions handler
+/// Peeks at the model field and dispatches to ChatGPTOSSHandler for gpt-oss models.
 fn handleChatCompletions(req: *httpz.Request, res: *httpz.Response) !void {
-    try handlers.handleChatCompletions(req, res);
+    // Peek at model field to dispatch GPT-OSS requests to dedicated handler
+    const body = req.body() orelse {
+        try handlers.handleChatCompletions(req, res);
+        return;
+    };
+
+    const ModelPeek = struct { model: []const u8 = "" };
+    const peek = std.json.parseFromSlice(ModelPeek, req.arena, body, .{ .ignore_unknown_fields = true }) catch {
+        // Parse failed — fall through to generic handler which will return proper error
+        try handlers.handleChatCompletions(req, res);
+        return;
+    };
+    defer peek.deinit();
+
+    if (std.mem.startsWith(u8, peek.value.model, "gpt-oss") or
+        std.mem.startsWith(u8, peek.value.model, "gptoss"))
+    {
+        if (g_chat_gptoss_handler) |*handler| {
+            // ChatGPTOSSHandler.handle is an instance method — must call on *handler
+            try handler.handle(req, res);
+        } else {
+            res.status = 503;
+            try res.json(.{ .@"error" = "GPT-OSS handler not initialized" }, .{});
+        }
+    } else {
+        try handlers.handleChatCompletions(req, res);
+    }
 }
 
 /// Wrapper for list models handler
@@ -154,6 +220,26 @@ fn handleOptions(req: *httpz.Request, res: *httpz.Response) !void {
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     res.status = 204; // No content
+}
+
+/// Browser tool endpoint wrapper
+fn handleBrowserTool(req: *httpz.Request, res: *httpz.Response) !void {
+    if (g_tools_api) |*api| {
+        try api.browserToolHandler(req, res);
+    } else {
+        res.status = 503;
+        try res.json(.{ .@"error" = "Tools not initialized" }, .{});
+    }
+}
+
+/// Python tool endpoint wrapper
+fn handlePythonTool(req: *httpz.Request, res: *httpz.Response) !void {
+    if (g_tools_api) |*api| {
+        try api.pythonToolHandler(req, res);
+    } else {
+        res.status = 503;
+        try res.json(.{ .@"error" = "Tools not initialized" }, .{});
+    }
 }
 
 /// Run the server with the given configuration
