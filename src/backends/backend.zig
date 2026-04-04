@@ -8,6 +8,7 @@ const std = @import("std");
 pub const BackendType = enum {
     mlx,
     llama_cpp,
+    mlx_gptoss, // Native MLX GPT-OSS backend (Phase 15)
 };
 
 /// Backend preference for factory creation
@@ -111,16 +112,34 @@ pub const ModelLoadResult = struct {
     layers: u32,
 };
 
-/// Backend union - holds either MLX or llama.cpp backend
+/// Select backend type based on model name
+/// GPT-OSS models → mlx_gptoss, GGUF models → llama_cpp, others → mlx
+pub fn selectBackend(model_name: []const u8) BackendType {
+    if (std.mem.startsWith(u8, model_name, "gpt-oss") or
+        std.mem.startsWith(u8, model_name, "gptoss"))
+    {
+        return .mlx_gptoss;
+    }
+    if (std.mem.endsWith(u8, model_name, ".gguf") or
+        std.mem.startsWith(u8, model_name, "deepseek"))
+    {
+        return .llama_cpp;
+    }
+    return .mlx;
+}
+
+/// Backend union - holds MLX, llama.cpp, or mlx_gptoss backend
 pub const Backend = union(BackendType) {
-    mlx: *anyopaque, // Pointer to MlxBackend
+    mlx: *anyopaque,       // Pointer to MlxBackend
     llama_cpp: *anyopaque, // Pointer to LlamaBackend
+    mlx_gptoss: *anyopaque, // Pointer to MLXGPTOSSBackend
 
     /// Get backend type
     pub fn getType(self: Backend) BackendType {
         return switch (self) {
             .mlx => .mlx,
             .llama_cpp => .llama_cpp,
+            .mlx_gptoss => .mlx_gptoss,
         };
     }
 
@@ -130,10 +149,10 @@ pub const Backend = union(BackendType) {
         text: []const u8,
         allocator: std.mem.Allocator,
     ) anyerror![]u32 {
-        // Delegate to concrete implementation via vtable pattern
         return switch (self) {
             .mlx => |ptr| mlxTokenize(ptr, text, allocator),
             .llama_cpp => |ptr| llamaTokenize(ptr, text, allocator),
+            .mlx_gptoss => |ptr| gptossTokenize(ptr, text, allocator),
         };
     }
 
@@ -147,6 +166,7 @@ pub const Backend = union(BackendType) {
         return switch (self) {
             .mlx => |ptr| mlxGenerate(ptr, tokens, params, allocator),
             .llama_cpp => |ptr| llamaGenerate(ptr, tokens, params, allocator),
+            .mlx_gptoss => |ptr| gptossGenerate(ptr, tokens, params, allocator),
         };
     }
 
@@ -155,6 +175,7 @@ pub const Backend = union(BackendType) {
         switch (self) {
             .mlx => |ptr| mlxDeinit(ptr, allocator),
             .llama_cpp => |ptr| llamaDeinit(ptr, allocator),
+            .mlx_gptoss => |ptr| gptosDeinit(ptr, allocator),
         }
     }
 
@@ -163,6 +184,7 @@ pub const Backend = union(BackendType) {
         return switch (self) {
             .mlx => |ptr| mlxGetVocabSize(ptr),
             .llama_cpp => |ptr| llamaGetVocabSize(ptr),
+            .mlx_gptoss => |ptr| gptossGetVocabSize(ptr),
         };
     }
 
@@ -171,6 +193,7 @@ pub const Backend = union(BackendType) {
         return switch (self) {
             .mlx => |ptr| mlxEosToken(ptr),
             .llama_cpp => |ptr| llamaEosToken(ptr),
+            .mlx_gptoss => |ptr| gptossEosToken(ptr),
         };
     }
 
@@ -179,6 +202,7 @@ pub const Backend = union(BackendType) {
         return switch (self) {
             .mlx => |ptr| mlxBosToken(ptr),
             .llama_cpp => |ptr| llamaBosToken(ptr),
+            .mlx_gptoss => |ptr| gptosBosToken(ptr),
         };
     }
 
@@ -187,6 +211,7 @@ pub const Backend = union(BackendType) {
         return switch (self) {
             .mlx => |ptr| mlxGetKvCache(ptr),
             .llama_cpp => |ptr| llamaGetKvCache(ptr),
+            .mlx_gptoss => null, // GPT-OSS KV cache not yet integrated with TurboQuant
         };
     }
 
@@ -200,22 +225,29 @@ pub const Backend = union(BackendType) {
         return switch (self) {
             .mlx => |ptr| mlxApplyCompression(ptr, params),
             .llama_cpp => |ptr| llamaApplyCompression(ptr, params),
+            .mlx_gptoss => {}, // GPT-OSS compression not yet implemented
         };
     }
 
     // VTable function declarations - implemented in respective backend modules
     extern fn mlxTokenize(*anyopaque, []const u8, std.mem.Allocator) anyerror![]u32;
     extern fn llamaTokenize(*anyopaque, []const u8, std.mem.Allocator) anyerror![]u32;
+    extern fn gptossTokenize(*anyopaque, []const u8, std.mem.Allocator) anyerror![]u32;
     extern fn mlxGenerate(*anyopaque, []const u32, GenerationParams, std.mem.Allocator) anyerror!GenerationResult;
     extern fn llamaGenerate(*anyopaque, []const u32, GenerationParams, std.mem.Allocator) anyerror!GenerationResult;
+    extern fn gptossGenerate(*anyopaque, []const u32, GenerationParams, std.mem.Allocator) anyerror!GenerationResult;
     extern fn mlxDeinit(*anyopaque, std.mem.Allocator) void;
     extern fn llamaDeinit(*anyopaque, std.mem.Allocator) void;
+    extern fn gptosDeinit(*anyopaque, std.mem.Allocator) void;
     extern fn mlxGetVocabSize(*anyopaque) u32;
     extern fn llamaGetVocabSize(*anyopaque) u32;
+    extern fn gptossGetVocabSize(*anyopaque) u32;
     extern fn mlxEosToken(*anyopaque) u32;
     extern fn llamaEosToken(*anyopaque) u32;
+    extern fn gptossEosToken(*anyopaque) u32;
     extern fn mlxBosToken(*anyopaque) u32;
     extern fn llamaBosToken(*anyopaque) u32;
+    extern fn gptosBosToken(*anyopaque) u32;
     extern fn mlxGetKvCache(*anyopaque) ?KvCacheHandle;
     extern fn llamaGetKvCache(*anyopaque) ?KvCacheHandle;
     extern fn mlxApplyCompression(*anyopaque, CompressionParams) anyerror!void;
