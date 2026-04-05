@@ -168,7 +168,7 @@ DeepSeek-Coder-V2-Lite requires MoE (Mixture of Experts) support which is not ye
 ## Dependencies
 
 ### Build Dependencies
-- Zig 0.13.0 (not 0.14+ — MLX.zig targets 0.13.0 specifically)
+- Zig 0.15.2
 - CMake 3.20+ (for mlx-c build)
 - Xcode Command Line Tools (Metal SDK)
 - curl (for downloading mlx-c)
