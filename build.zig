@@ -110,11 +110,11 @@ pub fn build(b: *std.Build) !void {
     exe.step.dependOn(&build_cmd.step);
 
     // Add include paths for llama.cpp headers
-    exe.addIncludePath(.{ .path = b.pathJoin(&.{ llama_cpp_path, "include" }) });
-    exe.addIncludePath(.{ .path = b.pathJoin(&.{ llama_cpp_path, "ggml", "include" }) });
+    exe.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ llama_cpp_path, "include" }) });
+    exe.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ llama_cpp_path, "ggml", "include" }) });
 
     // Link llama.cpp static library
-    exe.addLibraryPath(.{ .path = b.pathJoin(&.{ llama_build_path, "bin" }) });
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "src" }) });
     exe.linkSystemLibrary("llama");
 
     // Add llama.cpp-only build step
