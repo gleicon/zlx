@@ -35,7 +35,7 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 - [ ] **Phase 15: Native MLX GPT-OSS** - High-performance native MLX implementation with Metal kernels, Harmony format, and tools (PLANNED)
 
 **v2.0 "It Just Works":**
-- [ ] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean
+- [x] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean (completed 2026-04-05)
 - [ ] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end
 - [ ] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B
 - [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression
@@ -312,7 +312,7 @@ Plans:
 Plans:
 - [x] 16-01-PLAN.md — Build system fix: audit and correct all b.pathJoin call sites in src/mlx.zig/build.zig and build.zig
 - [x] 16-02-PLAN.md — arrayIsEmpty wrapper: add pub fn arrayIsEmpty to src/mlx.zig/src/mlx.zig
-- [ ] 16-03-PLAN.md — MLA struct fix: replace broken struct-literal init at loader.zig:499
+- [x] 16-03-PLAN.md — MLA struct fix: replace broken struct-literal init at loader.zig:499
 
 ### Phase 17: Inference Gap Closure
 **Goal**: Every claimed inference path produces real output — no `error.NotImplemented`, no hardcoded mocks, no empty token slices
@@ -402,7 +402,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 13. DeepSeek & GPT-OSS Completion | 0/3 | Planned | In Progress |
 | 14. llama.cpp Backend Integration | 0/5 | Planned | Not Started |
 | 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
-| 16. Build & Gap Closure | 2/3 | In Progress|  |
+| 16. Build & Gap Closure | 3/3 | Complete   | 2026-04-05 |
 | 17. Inference Gap Closure | 0/TBD | Not started | — |
 | 18. Gemma 4 E4B | 0/TBD | Not started | — |
 | 19. TurboQuant Metal | 0/TBD | Not started | — |
