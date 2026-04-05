@@ -261,7 +261,9 @@ pub fn loadDeepSeekWeights(
 
     for (shard_files.items) |shard_path| {
         std.log.info("Loading weights from: {s}", .{shard_path});
-        try mlx.loadSafetensors(&weights_hash, shard_path, stream);
+        const shard_path_z = try allocator.dupeZ(u8, shard_path);
+        defer allocator.free(shard_path_z);
+        try mlx.loadSafetensors(&weights_hash, shard_path_z, stream);
     }
 
     // Log how many weights were loaded
@@ -484,8 +486,11 @@ fn mapWeightsToDeepSeek(
             kv_a_layernorm = ptr.*;
         }
 
-        // Create MLA weights
-        const mla_weights = deepseek.MLAWeights{
+        // Stub: MLAWeights captured but stored separately (not part of mla.MultiHeadLatentAttention)
+        // mla.MultiHeadLatentAttention has fields: base, config, w_dq, w_dkv, w_up, w_kr, rope
+        // The actual projection weights (q_proj, kv_a_proj, kv_b_proj, o_proj) are kept in
+        // the mla_weights struct below for future use but mla_layer uses the real field layout.
+        _ = deepseek.MLAWeights{
             .q_proj = q_proj,
             .kv_a_proj_with_mqa = kv_a_proj,
             .kv_b_proj = kv_b_proj,
@@ -493,14 +498,25 @@ fn mapWeightsToDeepSeek(
             .kv_a_layernorm = kv_a_layernorm,
         };
 
-        // Initialize MLA (will be completed separately)
+        // Stub MLA value: populate struct fields matching actual mla.MultiHeadLatentAttention definition.
+        // DeepSeekConfig has no head_dim field — compute from hidden_size / num_attention_heads.
+        // DeepSeekLayer.mla is a VALUE type; mla.init() returns *Self (heap pointer), so we
+        // construct the value directly to avoid a deinit() double-free (D-05 stub, per plan).
+        const mla_head_dim = config.hidden_size / config.num_attention_heads;
+        const mla_config = mla.MLAConfig{
+            .hidden_size = config.hidden_size,
+            .num_attention_heads = config.num_attention_heads,
+            .latent_dim = config.latent_dim,
+            .head_dim = mla_head_dim,
+        };
         const mla_layer = mla.MultiHeadLatentAttention{
-            .weights = mla_weights,
-            .config = mla.MLAConfig{
-                .hidden_size = config.hidden_size,
-                .num_heads = config.num_attention_heads,
-                .latent_dim = config.latent_dim,
-            },
+            .base = mlx.Module.init(allocator, mlx.C.mlx_default_gpu_stream_new()),
+            .config = mla_config,
+            .w_dq = mlx.arrayNew(),
+            .w_dkv = mlx.arrayNew(),
+            .w_up = mlx.arrayNew(),
+            .w_kr = null,
+            .rope = null,
         };
 
         // Map MLP/MoE weights based on layer index
