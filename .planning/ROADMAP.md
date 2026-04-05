@@ -34,6 +34,14 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 - [ ] **Phase 14: DeepSeek & GPT-OSS llama.cpp Integration** - Backend abstraction, llama.cpp build integration, unified multi-backend generation pipeline (PLANNED)
 - [ ] **Phase 15: Native MLX GPT-OSS** - High-performance native MLX implementation with Metal kernels, Harmony format, and tools (PLANNED)
 
+**v2.0 "It Just Works":**
+- [ ] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean
+- [ ] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end
+- [ ] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B
+- [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression
+- [ ] **Phase 20: Tools API** - Fix Zig 0.15.2 API breaks, register HTTP routes, verify browser and Python tools end-to-end
+- [ ] **Phase 21: Project Documentation** - Write project history, extraction candidates, and working model setup guide
+
 ## Phase Details
 
 ### Phase 1: Foundation & Build
@@ -276,6 +284,88 @@ Plans:
 - [x] 15-04-PLAN.md — Weight loading and MXFP4 support (GPTOSS-04)
 - [x] 15-05-PLAN.md — Integration with zlx server (GPTOSS-05)
 
+---
+
+## v2.0 "It Just Works"
+
+**Milestone goal:** Close every stub, mock, and orphaned route; ship verified inference for all claimed models; add Gemma 4 E4B; implement TurboQuant Metal kernels; wire tool APIs end-to-end; produce project documentation.
+
+**v2.0 Phases:**
+- [ ] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean
+- [ ] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end
+- [ ] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B
+- [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression
+- [ ] **Phase 20: Tools API** - Fix Zig 0.15.2 API breaks, register HTTP routes, verify browser and Python tools end-to-end
+- [ ] **Phase 21: Project Documentation** - Write project history, extraction candidates, and working model setup guide
+
+### Phase 16: Build & Gap Closure
+**Goal**: The project compiles cleanly on Zig 0.15.2 with no deprecated API calls, no undefined symbols, and no struct field mismatches
+**Depends on**: Phase 15
+**Requirements**: GAP-08, GAP-09, GAP-10
+**Success Criteria** (what must be TRUE):
+  1. `zig build` completes without errors or warnings on Zig 0.15.2 — no `b.pathJoin` deprecations, no `@compileError` paths triggered
+  2. `zig build test` runs without undefined symbol errors — `mlx.arrayIsEmpty()` is gone or replaced with a valid API call
+  3. `loader.zig` initializes `MultiHeadLatentAttention` without field mismatch — struct definition and init site agree on field names and types
+  4. The binary produced by `zig build` starts, loads a model, and responds to a curl health check without crashing
+**Plans**: TBD
+
+### Phase 17: Inference Gap Closure
+**Goal**: Every claimed inference path produces real output — no `error.NotImplemented`, no hardcoded mocks, no empty token slices
+**Depends on**: Phase 16 (clean build required)
+**Requirements**: GAP-01, GAP-02, GAP-03, GAP-04, GAP-05, GAP-06, GAP-07, MODEL-01, MODEL-02, MODEL-03
+**Success Criteria** (what must be TRUE):
+  1. A curl request to `/v1/chat/completions` with model=gptoss returns real generated tokens — not token ID 1 repeated, not an error
+  2. GPT-OSS tokenizer produces a non-empty token slice for any non-empty prompt string
+  3. `GET /v1/models` lists Qwen, DeepSeek, and GPT-OSS; each can be selected and produces a completion without returning `error.NotImplemented`
+  4. Vocab size, EOS token, and BOS token values in logs match the values in the loaded model's `config.json` — not hardcoded 32000/2/1
+  5. `zig build test` passes Qwen integration test with a real model on disk
+  6. `zig build test` passes DeepSeek integration test via llama.cpp backend
+**Plans**: TBD
+
+### Phase 18: Gemma 4 E4B
+**Goal**: Users can load Gemma 4 E4B 4-bit and receive completions via the standard `/v1/chat/completions` endpoint
+**Depends on**: Phase 17 (inference layer must be stable and stub-free)
+**Requirements**: MODEL-04, MODEL-05, MODEL-06, MODEL-07
+**Success Criteria** (what must be TRUE):
+  1. `zlx --model gemma4-e4b` loads the 4-bit MLX quantized weights (~5GB) without crash and reports model loaded in logs
+  2. A chat completion request using the Gemma 4 E4B chat template (with `<|turn>` / `<turn|>` control tokens) produces a coherent response
+  3. Setting `temperature=0.3` in the request and including the no-think system prompt produces a measurably shorter response than default temperature — verbosity reduction is observable
+  4. OpenCode pointed at `http://localhost:8080/v1` with Gemma 4 E4B loaded produces inline completions without errors
+**Plans**: TBD
+**UI hint**: no
+
+### Phase 19: TurboQuant Metal
+**Goal**: Walsh-Hadamard KV compression is implemented in real Metal/Zig code and achieves a verified 4x+ memory reduction on Qwen
+**Depends on**: Phase 16 (clean build required)
+**Requirements**: TURBO-01, TURBO-02, TURBO-03, TURBO-04
+**Success Criteria** (what must be TRUE):
+  1. `zig build` succeeds with the TurboQuant Metal kernel compiled — no Python runtime involved
+  2. Running Qwen with `--turboquant` and without it back-to-back shows KV cache memory in logs reduced by at least 4x
+  3. The compressed+decompressed KV values match reference values from the Python implementation within acceptable tolerance (spot-checked on 10 sample vectors)
+  4. `--turboquant` flag enables compression; if the Metal kernel fails at runtime, the server falls back to standard cache and logs a warning — it does not crash
+**Plans**: TBD
+
+### Phase 20: Tools API
+**Goal**: Browser search and Python execution are reachable, working HTTP endpoints that compile cleanly on Zig 0.15.2
+**Depends on**: Phase 16 (clean build required)
+**Requirements**: TOOLS-01, TOOLS-02, TOOLS-03, TOOLS-04
+**Success Criteria** (what must be TRUE):
+  1. `zig build` succeeds with `browser.zig` and `python.zig` included — no `parseFree` or other removed Zig 0.15.2 API calls
+  2. `curl -X POST http://localhost:8080/v1/tools/browser -d '{"query":"zig lang"}'` returns search results from DuckDuckGo (non-empty JSON)
+  3. `curl -X POST http://localhost:8080/v1/tools/python -d '{"code":"print(1+1)"}'` returns `{"stdout":"2\n","stderr":""}` or equivalent
+  4. Both tool endpoints appear in server startup logs confirming routes are registered
+**Plans**: TBD
+
+### Phase 21: Project Documentation
+**Goal**: A developer picking up the project can understand its history, run any supported model, and identify what could be extracted as reusable Zig libraries
+**Depends on**: Phase 17, Phase 18, Phase 20 (must document what actually works)
+**Requirements**: DOCS-01, DOCS-02, DOCS-03
+**Success Criteria** (what must be TRUE):
+  1. `docs/HISTORY.md` exists and covers: milestone timeline, model inventory with working/stubbed/deferred status for each, and key design decisions with rationale
+  2. `docs/ECOSYSTEM_CANDIDATES.md` exists listing at least 4 extraction candidates (MLX C bindings, safetensors parser, BPE tokenizer, httpz SSE helper) each with a scope estimate and contribution path
+  3. `docs/MODEL_SETUP.md` exists with download commands, directory layout, and a test invocation for each supported model (Qwen, DeepSeek, GPT-OSS, Gemma 4 E4B) that a fresh developer can follow without guessing
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -304,12 +394,14 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 9. Model Management | 3/3 | ✅ Complete | 2026-04-02 |
 | 11. DeepSeek MoE Infrastructure | 6/6 | ✅ Complete | 2026-04-03 |
 | 12. MoE Production-Ready | 8/8 | ✅ Complete | 2026-04-03 |
-| 13. DeepSeek & GPT-OSS Completion | 0/3 | 🔄 Planned | In Progress |
-| 14. llama.cpp Backend Integration | 0/5 | 📋 Planned | Not Started |
-| 15. Native MLX GPT-OSS | 8/9 | In Progress|  |
+| 13. DeepSeek & GPT-OSS Completion | 0/3 | Planned | In Progress |
+| 14. llama.cpp Backend Integration | 0/5 | Planned | Not Started |
+| 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
+| 16. Build & Gap Closure | 0/TBD | Not started | — |
+| 17. Inference Gap Closure | 0/TBD | Not started | — |
+| 18. Gemma 4 E4B | 0/TBD | Not started | — |
+| 19. TurboQuant Metal | 0/TBD | Not started | — |
+| 20. Tools API | 0/TBD | Not started | — |
+| 21. Project Documentation | 0/TBD | Not started | — |
 
-**v1.1.0 Progress:** 9/9 phases complete | All phases COMPLETE | v1.1.0 Released
-
-**v1.1.1 Target:** MoE Models Production-Ready | Phase 13 Planning Complete | DeepSeek + GPT-OSS Weight Loading
-
-**v1.1.2 Target:** llama.cpp Backend Support | Phase 14 Planning Complete | Multi-Backend Architecture
+**v2.0 Progress:** 0/6 phases complete | Roadmap defined 2026-04-05
