@@ -88,7 +88,7 @@ A single `zig build` binary that lets OpenCode connect to local coding models wi
 
 ## Context
 
-- **Current state (v1.1.2)**: Multi-backend server with Qwen (MLX) + llama.cpp for DeepSeek/GPT-OSS, Harmony format, MXFP4 dequantization — but GPT-OSS forward() is a stub, tools API is orphaned, TurboQuant is error.NotImplemented
+- **Current state (v1.1.2, Phase 16 complete)**: Multi-backend server with Qwen (MLX) + llama.cpp for DeepSeek/GPT-OSS, Harmony format, MXFP4 dequantization — GPT-OSS forward() is a stub, tools API is orphaned, TurboQuant is error.NotImplemented. Build gaps closed: `zig build` reaches source compilation, `arrayIsEmpty` defined in MLX bindings, MLA struct init fixed. 2 remaining errors (`dequantize.zig:101`, `loader.zig:542`) tracked for Phase 17.
 - **Verified working**: Qwen2.5-Coder via MLX.zig; Llama/DeepSeek via llama.cpp C bindings
 - **MLX.zig**: Provides working LLM runtime for Qwen; submodule at src/mlx.zig/
 - **Stub inventory (v2.0 target)**: 31 stub functions, 12 hardcoded mocks, 12 claimed-but-broken features documented in audit
@@ -142,4 +142,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-05 — Milestone v2.0 "It Just Works" initialized*
+*Last updated: 2026-04-05 — Phase 16 complete: build gap closure (GAP-08, GAP-09, GAP-10)*
