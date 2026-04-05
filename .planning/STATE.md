@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: verifying
-stopped_at: Completed 15-mlx-gptoss-08-PLAN.md
-last_updated: "2026-04-04T23:59:50.855Z"
+milestone: v2.0
+milestone_name: It Just Works
+status: planning
+stopped_at: —
+last_updated: "2026-04-05T11:30:00.000Z"
 progress:
-  total_phases: 14
-  completed_phases: 7
-  total_plans: 40
-  completed_plans: 39
-  percent: 98
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -36,12 +36,13 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 
 ## Current Position
 
-Milestone: v1.1.2 (MoE Models with llama.cpp)
-Phase: 15 (mlx-gptoss) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
+Milestone: v2.0 "It Just Works"
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-05 — Milestone v2.0 started
 
-Progress: [███████████] 98% → Phase 14 complete, ready for model testing
+Progress: [░░░░░░░░░░░] 0% → Requirements and roadmap in progress
 
 ## Phase 14: DeepSeek & GPT-OSS Integration — ✅ COMPLETE
 

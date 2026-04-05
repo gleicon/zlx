@@ -29,7 +29,19 @@ A single `zig build` binary that lets OpenCode connect to local coding models wi
 - [x] **INT-01** — OpenCode compatibility (field types, arrays, stop tokens)
 - [x] **INT-02** — Metrics logging (tokens/sec, TTFT, active generations)
 
-### Current Milestone: v1.1 Production-Ready
+### Current Milestone: v2.0 "It Just Works"
+
+**Goal:** Close every stub, mock, and orphaned route; ship working inference for all claimed models; add Gemma 4 E4B; implement TurboQuant KV compression; wire browser/Python tools end-to-end; produce a project history document.
+
+**Target features:**
+- Gap audit & closure — 31 stub functions, 12 mocks, 12 orphaned features resolved or honestly removed
+- All claimed models actually work: Qwen (already done), Llama/DeepSeek via llama.cpp, GPT-OSS real forward pass, Gemma 4 E4B (new)
+- Gemma 4 E4B: 4.5B-parameter hybrid attention model, 128K context, Q4 4-bit MLX, verbosity-reduction prompt template
+- TurboQuant KV compression: Metal kernel implementation (not stub), 4.6x memory reduction for long-context
+- Browser + Python tools: fix Zig 0.15.2 API, register HTTP routes, working end-to-end
+- Project history document: model inventory, implementation story, potential Zig ecosystem library extractions
+
+### Previous Milestone: v1.1 Production-Ready (COMPLETE)
 
 **Goal:** Transform zlx into a production-ready local LLM server with advanced performance, multi-model support, and complete API compatibility.
 
@@ -76,14 +88,13 @@ A single `zig build` binary that lets OpenCode connect to local coding models wi
 
 ## Context
 
-- **Current state (v1.0)**: Single-model HTTP server operational with OpenCode compatibility
-- **MLX.zig**: Provides working LLM runtime with Llama/Phi/Qwen configs, tokenizer, generation loop
-- **Research findings (v1.1)**:
-  - TurboQuant: Extract Metal kernel source from Python, compile via `xcrun metal`
-  - Web UI: Integrate Open WebUI (46K stars), don't build custom
-  - Architecture: 7 new components following llama.cpp/mlx-lm patterns
+- **Current state (v1.1.2)**: Multi-backend server with Qwen (MLX) + llama.cpp for DeepSeek/GPT-OSS, Harmony format, MXFP4 dequantization — but GPT-OSS forward() is a stub, tools API is orphaned, TurboQuant is error.NotImplemented
+- **Verified working**: Qwen2.5-Coder via MLX.zig; Llama/DeepSeek via llama.cpp C bindings
+- **MLX.zig**: Provides working LLM runtime for Qwen; submodule at src/mlx.zig/
+- **Stub inventory (v2.0 target)**: 31 stub functions, 12 hardcoded mocks, 12 claimed-but-broken features documented in audit
+- **Gemma 4 E4B specs**: 4.5B params (8B with PLE), 42 layers, 128K context, hybrid sliding-window+global attention, Q4_K_M ~5GB VRAM; MLX 4-bit available as `unsloth/gemma-4-E4B-it-UD-MLX-4bit`; chat template uses `<|turn>` / `<turn|>` control tokens; verbosity reduced via temperature=0.3 and suppressing `<|think|>` blocks
 - **Target hardware**: MacBook Apple Silicon (M1/M2/M3/M4), 32k+ context on 7B-14B 4-bit models
-- **Primary test models**: Qwen2.5-Coder-1.5B-4bit, Qwen2.5-Coder-7B-4bit
+- **Primary test models**: Qwen2.5-Coder-7B-4bit (working), Gemma4-E4B-4bit (new), DeepSeek-Coder-V2-Lite (via llama.cpp)
 
 ## Constraints
 
@@ -103,11 +114,15 @@ A single `zig build` binary that lets OpenCode connect to local coding models wi
 | httpz for HTTP | Zero deps, matches minimal goal | ✅ v1.0 — Working |
 | MessageContent custom parser | Handles string + array content | ✅ v1.0 — Fixes OpenCode compatibility |
 | JsonFloat for numeric fields | Accepts int or float (OpenCode sends `1` not `1.0`) | ✅ v1.0 — Fixes parse errors |
-| TurboQuant deferred to v1.1 | Metal kernel extraction needs research phase | 🔄 v1.1 — In progress |
+| TurboQuant deferred to v1.1 | Metal kernel extraction needs research phase | 🔄 v1.1 — stubbed; v2.0 will implement |
 | Integrate Open WebUI | 46K stars, already OpenAI-compatible | 🔄 v1.1 — Planned |
-| Skip custom Web UI | Saves 1000+ lines frontend code | 🔄 v1.1 — Planned |
-| MLX `mlx_save`/`mlx_load` for caching | Native KV persistence, no external deps | 🔄 v1.1 — Planned |
-| Speculative decoding with draft model | 1.5-2.8x speedup, compatible pairs exist | 🔄 v1.1 — Planned |
+| Skip custom Web UI | Saves 1000+ lines frontend code | ✅ v1.1 — Adopted |
+| MLX `mlx_save`/`mlx_load` for caching | Native KV persistence, no external deps | 🔄 v1.1 — partial stub |
+| Speculative decoding with draft model | 1.5-2.8x speedup, compatible pairs exist | 🔄 v1.1 — partial; factory returns false |
+| GPT-OSS via native MLX | Phase 15 goal; faster than llama.cpp path | ⚠️ v1.1.2 — forward() stub; v2.0 target |
+| Gemma 4 E4B via MLX | 4.5B hybrid attention, coding-focused, Q4 | 🆕 v2.0 — new model addition |
+| TurboQuant implement (not stub) | User confirmed: scope as v2.0 phase | 🆕 v2.0 — Metal kernel port from Python |
+| Wire browser+python tools | Tools exist but no HTTP routes registered | 🆕 v2.0 — fix Zig APIs + register routes |
 
 ## Evolution
 
@@ -127,4 +142,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-01 — Milestone v1.1 initialized*
+*Last updated: 2026-04-05 — Milestone v2.0 "It Just Works" initialized*
