@@ -291,7 +291,7 @@ Plans:
 **Milestone goal:** Close every stub, mock, and orphaned route; ship verified inference for all claimed models; add Gemma 4 E4B; implement TurboQuant Metal kernels; wire tool APIs end-to-end; produce project documentation.
 
 **v2.0 Phases:**
-- [ ] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean
+- [x] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean (completed 2026-04-05)
 - [ ] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end
 - [ ] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B
 - [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression
@@ -402,7 +402,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 13. DeepSeek & GPT-OSS Completion | 0/3 | Planned | In Progress |
 | 14. llama.cpp Backend Integration | 0/5 | Planned | Not Started |
 | 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
-| 16. Build & Gap Closure | 3/3 | Complete   | 2026-04-05 |
+| 16. Build & Gap Closure | 3/3 | Complete    | 2026-04-05 |
 | 17. Inference Gap Closure | 0/TBD | Not started | — |
 | 18. Gemma 4 E4B | 0/TBD | Not started | — |
 | 19. TurboQuant Metal | 0/TBD | Not started | — |
