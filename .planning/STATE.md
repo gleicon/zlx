@@ -1,15 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v2.0
-milestone_name: It Just Works
-status: planning
-stopped_at: —
-last_updated: "2026-04-05T12:00:00.000Z"
+milestone_name: "It Just Works"
+status: executing
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-04-05T18:45:10.770Z"
+last_activity: 2026-04-05
 progress:
-  total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_phases: 20
+  completed_phases: 7
+  total_plans: 43
+  completed_plans: 40
   percent: 0
 ---
 
@@ -20,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-05)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** v2.0 roadmap defined — Phase 16 is next
+**Current focus:** Phase 16 — build-gap-closure
 
 ## Milestone: v2.0 "It Just Works"
 
@@ -31,10 +32,10 @@ See: .planning/PROJECT.md (updated 2026-04-05)
 ## Current Position
 
 Milestone: v2.0 "It Just Works"
-Phase: Not started (roadmap just defined)
-Plan: —
-Status: Ready to begin Phase 16
-Last activity: 2026-04-05 — v2.0 roadmap created
+Phase: 16 (build-gap-closure) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-04-05
 
 Progress: [░░░░░░░░░░░] 0% (0/6 phases complete)
 
@@ -54,6 +55,7 @@ Progress: [░░░░░░░░░░░] 0% (0/6 phases complete)
 **Goal:** High-performance GPT-OSS via native MLX with Metal kernels, Harmony format, and tools
 
 **Plans Completed:**
+
 - ✅ 15-01: MLX GPT-OSS transformer with Metal kernels
 - ✅ 15-02: Harmony format parser and chat template
 - ✅ 15-03: Browser and Python tool implementation
@@ -108,6 +110,6 @@ Progress: [░░░░░░░░░░░] 0% (0/6 phases complete)
 ## Session Continuity
 
 Last activity: 2026-04-05 - v2.0 roadmap defined (Phases 16-21)
-Last session: 2026-04-05
-Stopped at: Roadmap creation complete
+Last session: 2026-04-05T18:45:10.765Z
+Stopped at: Completed 16-01-PLAN.md
 Resume: Begin Phase 16 with `/gsd:plan-phase 16`
