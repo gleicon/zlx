@@ -307,7 +307,12 @@ Plans:
   2. `zig build test` runs without undefined symbol errors — `mlx.arrayIsEmpty()` is gone or replaced with a valid API call
   3. `loader.zig` initializes `MultiHeadLatentAttention` without field mismatch — struct definition and init site agree on field names and types
   4. The binary produced by `zig build` starts, loads a model, and responds to a curl health check without crashing
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 16-01-PLAN.md — Build system fix: audit and correct all b.pathJoin call sites in src/mlx.zig/build.zig and build.zig
+- [ ] 16-02-PLAN.md — arrayIsEmpty wrapper: add pub fn arrayIsEmpty to src/mlx.zig/src/mlx.zig
+- [ ] 16-03-PLAN.md — MLA struct fix: replace broken struct-literal init at loader.zig:499
 
 ### Phase 17: Inference Gap Closure
 **Goal**: Every claimed inference path produces real output — no `error.NotImplemented`, no hardcoded mocks, no empty token slices
