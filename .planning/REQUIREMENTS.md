@@ -224,7 +224,7 @@ These requirements improve reliability, monitoring, and operations.
 - [ ] **GAP-06**: Prompt cache `parseIndex()` reads actual cache index entries from disk — not returning empty
 - [ ] **GAP-07**: Speculative decoding wired to main generation path (or explicitly removed with clear documentation if deferred)
 - [x] **GAP-08**: Build system compiles without deprecation errors on Zig 0.15.2 (`b.pathJoin` → correct API, all `@compileError` and deprecated paths resolved)
-- [ ] **GAP-09**: `mlx.arrayIsEmpty()` calls removed or replaced with a valid MLX.zig API call — no undefined symbol at link time
+- [x] **GAP-09**: `mlx.arrayIsEmpty()` calls removed or replaced with a valid MLX.zig API call — no undefined symbol at link time
 - [ ] **GAP-10**: `MultiHeadLatentAttention` struct field mismatch in `loader.zig` resolved — struct definition and initialization agree
 
 ### Model Verification & Gemma 4 E4B
