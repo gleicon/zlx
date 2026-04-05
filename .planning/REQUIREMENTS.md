@@ -43,7 +43,7 @@
 
 ## v1.1 Requirements — Production-Ready Inference Server
 
-**Status:** Active (defining)  
+**Status:** Active (defining)
 **Goal:** Transform zlx into a production-ready local LLM server with advanced performance, multi-model support, and complete API compatibility.
 
 ### Priority 1 — API Completeness (Table Stakes)
@@ -345,17 +345,46 @@ These requirements improve reliability, monitoring, and operations.
 - Mapped to phases: 19 ✓
 - Unmapped: 0
 
-### v2.0 Traceability (filled by roadmapper)
+### v2.0 Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GAP-01 through GAP-10 | TBD | Not started |
-| MODEL-01 through MODEL-07 | TBD | Not started |
-| TURBO-01 through TURBO-04 | TBD | Not started |
-| TOOLS-01 through TOOLS-04 | TBD | Not started |
-| DOCS-01 through DOCS-03 | TBD | Not started |
+| GAP-08 | Phase 16 | Not started |
+| GAP-09 | Phase 16 | Not started |
+| GAP-10 | Phase 16 | Not started |
+| GAP-01 | Phase 17 | Not started |
+| GAP-02 | Phase 17 | Not started |
+| GAP-03 | Phase 17 | Not started |
+| GAP-04 | Phase 17 | Not started |
+| GAP-05 | Phase 17 | Not started |
+| GAP-06 | Phase 17 | Not started |
+| GAP-07 | Phase 17 | Not started |
+| MODEL-01 | Phase 17 | Not started |
+| MODEL-02 | Phase 17 | Not started |
+| MODEL-03 | Phase 17 | Not started |
+| MODEL-04 | Phase 18 | Not started |
+| MODEL-05 | Phase 18 | Not started |
+| MODEL-06 | Phase 18 | Not started |
+| MODEL-07 | Phase 18 | Not started |
+| TURBO-01 | Phase 19 | Not started |
+| TURBO-02 | Phase 19 | Not started |
+| TURBO-03 | Phase 19 | Not started |
+| TURBO-04 | Phase 19 | Not started |
+| TOOLS-01 | Phase 20 | Not started |
+| TOOLS-02 | Phase 20 | Not started |
+| TOOLS-03 | Phase 20 | Not started |
+| TOOLS-04 | Phase 20 | Not started |
+| DOCS-01 | Phase 21 | Not started |
+| DOCS-02 | Phase 21 | Not started |
+| DOCS-03 | Phase 21 | Not started |
+
+**Coverage:**
+- v2.0 requirements: 28 total
+- Mapped to phases: 28 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-30 (v1.0)*
 *Updated: 2026-04-01 (v1.1 requirements added)*
-*Updated: 2026-04-05 (v2.0 requirements added — 24 requirements across 5 categories)*
+*Updated: 2026-04-05 (v2.0 requirements added — 28 requirements across 5 categories)*
+*Updated: 2026-04-05 (v2.0 traceability filled — Phases 16-21)*
