@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "It Just Works"
-status: verifying
-stopped_at: Completed 16-03-PLAN.md
-last_updated: "2026-04-05T18:52:59.456Z"
+status: ready_to_plan
+stopped_at: Phase 16 complete — ready to plan Phase 17
+last_updated: "2026-04-05T19:10:00.000Z"
 last_activity: 2026-04-05
 progress:
   total_phases: 20
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-05)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** Phase 16 — build-gap-closure
+**Current focus:** Phase 17 — inference-gap-closure
 
 ## Milestone: v2.0 "It Just Works"
 
@@ -37,13 +37,13 @@ Plan: Not started
 Status: Phase complete — ready for verification
 Last activity: 2026-04-05
 
-Progress: [░░░░░░░░░░░] 0% (0/6 phases complete)
+Progress: [████████████████░░░░] 46/56 plans (82%)
 
 ## v2.0 Phase Summary
 
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
-| 16. Build & Gap Closure | Zig 0.15.2 clean build | GAP-08, GAP-09, GAP-10 | Not started |
+| 16. Build & Gap Closure | Zig 0.15.2 clean build | GAP-08, GAP-09, GAP-10 | ✅ Complete (2026-04-05) |
 | 17. Inference Gap Closure | Real forward pass, no stubs | GAP-01..07, MODEL-01..03 | Not started |
 | 18. Gemma 4 E4B | New model end-to-end | MODEL-04..07 | Not started |
 | 19. TurboQuant Metal | Metal kernels, 4x compression | TURBO-01..04 | Not started |
@@ -87,6 +87,12 @@ Progress: [░░░░░░░░░░░] 0% (0/6 phases complete)
 
 ## Decision Log
 
+**2026-04-05:** Phase 16 complete — build gap closure
+
+- **Decision**: MLA stub (Approach B) used for `MultiHeadLatentAttention` init — `init()` returns `!*Self` (heap pointer) but `DeepSeekLayer.mla` is a value type; dereferencing heap-allocated struct while `deinit()` calls `allocator.destroy(self)` would cause use-after-free
+- **Decision**: `arrayIsEmpty` added to `src/mlx.zig/src/mlx.zig` wrapping `C.mlx_array_size(arr) == 0` — 20 call sites unblocked
+- **Remaining**: 2 pre-existing errors (`dequantize.zig:101` type mismatch, `loader.zig:542` missing `num_shared_experts`) tracked for Phase 17
+
 **2026-04-05:** v2.0 roadmap created
 
 - **Decision**: Phase 16 must come before all other v2.0 phases — Zig 0.15.2 build errors block compilation
@@ -109,7 +115,7 @@ Progress: [░░░░░░░░░░░] 0% (0/6 phases complete)
 
 ## Session Continuity
 
-Last activity: 2026-04-05 - v2.0 roadmap defined (Phases 16-21)
-Last session: 2026-04-05T18:49:00.331Z
-Stopped at: Completed 16-03-PLAN.md
-Resume: Begin Phase 16 with `/gsd:plan-phase 16`
+Last activity: 2026-04-05 - Phase 16 complete (build gap closure)
+Last session: 2026-04-05T19:10:00.000Z
+Stopped at: Phase 16 complete — ready to plan Phase 17 (inference-gap-closure)
+Resume: `/gsd:plan-phase 17`
