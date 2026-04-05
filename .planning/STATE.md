@@ -130,7 +130,15 @@ Phase 13 completed with MLX-based MoE support:
   - GPT-OSS: 11GB GGUF via llama.cpp
   - Qwen: Still uses optimized MLX.zig path
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260405-bev | Fix Zig version references update to 0.15.2 and pin in CLAUDE.md | 2026-04-05 | d784f23 | [260405-bev-fix-zig-version-references-update-to-0-1](./quick/260405-bev-fix-zig-version-references-update-to-0-1/) |
+
 ## Session Continuity
+
+Last activity: 2026-04-05 - Completed quick task 260405-bev: Fix Zig version references update to 0.15.2 and pin in CLAUDE.md
 
 Last session: 2026-04-04T23:59:50.853Z
 Stopped at: Completed 15-mlx-gptoss-08-PLAN.md
