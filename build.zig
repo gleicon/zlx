@@ -375,6 +375,38 @@ pub fn build(b: *std.Build) !void {
     });
     mla_mod.addImport("mlx.zig", shared_mlx_mod);
 
+    // tokenizer.zig imports @import("regex.zig") and @import("utils.zig") — NOT mlx.zig
+    // regex.zig uses @cImport(pcre2.h) — no module dep needed, configureExecutable provides include path
+    const shared_utils_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/utils.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const shared_regex_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/regex.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // Shared tokenizer module — mlx_gptoss_backend.zig:10 imports "../mlx.zig/src/tokenizer.zig"
+    // tokenizer.zig imports regex.zig and utils.zig (verified from source lines 6-8)
+    const shared_tokenizer_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/tokenizer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    shared_tokenizer_mod.addImport("regex.zig", shared_regex_mod);
+    shared_tokenizer_mod.addImport("utils.zig", shared_utils_mod);
+
+    // Shared qwen module — inference/loader.zig:7 imports "../mlx.zig/src/qwen.zig"
+    // qwen.zig imports @import("mlx.zig") and @import("utils.zig") (verified from source lines 6-7)
+    const shared_qwen_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/qwen.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    shared_qwen_mod.addImport("mlx.zig", shared_mlx_mod); // qwen.zig:6 uses @import("mlx.zig")
+    shared_qwen_mod.addImport("utils.zig", shared_utils_mod); // qwen.zig:7 uses @import("utils.zig")
+
     // Shared dequantize_module — prevents dequantize.zig from being in two compilation units:
     // deepseek.zig imports it as "inference/dequantize.zig" (file-relative from src/)
     // loader.zig imports it as "dequantize.zig" (file-relative from src/inference/)
@@ -418,6 +450,7 @@ pub fn build(b: *std.Build) !void {
     deepseek_test_mod.addImport("mlx.zig/src/mla.zig", mla_mod);
     deepseek_test_mod.addImport("moe.zig", moe_mod);
     deepseek_test_mod.addImport("deepseek.zig", deepseek_mod);
+    deepseek_test_mod.addImport("../deepseek.zig", deepseek_mod);
     // inference sub-modules: wire shared_mlx_mod to prevent "file exists" collision.
     // Other transitive deps (tokenizer, qwen, generator) are not fully wired here —
     // their failures will be semantic (module not found), not collision errors.
@@ -435,6 +468,7 @@ pub fn build(b: *std.Build) !void {
     // deepseek.zig uses it as "inference/dequantize.zig". Register as named module so
     // both paths point to the same compilation unit, preventing collision.
     inference_loader_mod.addImport("dequantize.zig", dequantize_module);
+    inference_loader_mod.addImport("../mlx.zig/src/qwen.zig", shared_qwen_mod);
 
     const inference_mod_module = b.createModule(.{
         .root_source_file = b.path("src/inference/mod.zig"),
@@ -443,6 +477,27 @@ pub fn build(b: *std.Build) !void {
     });
     inference_mod_module.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
     inference_mod_module.addImport("loader.zig", inference_loader_mod);
+    inference_mod_module.addImport("../mlx.zig/src/tokenizer.zig", shared_tokenizer_mod);
+    inference_mod_module.addImport("../mlx.zig/src/qwen.zig", shared_qwen_mod);
+    inference_mod_module.addImport("../deepseek.zig", deepseek_mod);
+
+    // shared_registry_mod — named to avoid "file exists in modules" collision
+    const shared_registry_mod = b.createModule(.{
+        .root_source_file = b.path("src/models/registry.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const inference_generator_mod = b.createModule(.{
+        .root_source_file = b.path("src/inference/generator.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    inference_generator_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    inference_generator_mod.addImport("../mlx.zig/src/qwen.zig", shared_qwen_mod);
+    inference_generator_mod.addImport("../mlx.zig/src/tokenizer.zig", shared_tokenizer_mod);
+    inference_generator_mod.addImport("../backends/mod.zig", backends_mod);
+    inference_generator_mod.addImport("../models/registry.zig", shared_registry_mod);
+    inference_mod_module.addImport("generator.zig", inference_generator_mod);
 
     deepseek_test_mod.addImport("inference/mod.zig", inference_mod_module);
     deepseek_test_mod.addImport("inference/loader.zig", inference_loader_mod);
@@ -596,6 +651,7 @@ pub fn build(b: *std.Build) !void {
     mlx_gptoss_backend_mod.addImport("../tools/python.zig", python_mod);
     mlx_gptoss_backend_mod.addImport("../weight/gptoss_loader.zig", gptoss_loader_mod);
     mlx_gptoss_backend_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    mlx_gptoss_backend_mod.addImport("../mlx.zig/src/tokenizer.zig", shared_tokenizer_mod);
 
     // Model manager module
     const gptoss_manager_mod = b.createModule(.{
