@@ -216,10 +216,10 @@ These requirements improve reliability, monitoring, and operations.
 
 ### Gap Closure & Honest Inventory
 
-- [ ] **GAP-01**: Every `error.NotImplemented` return in claimed production paths is either fully implemented or replaced by explicit removal with documentation — no silent stubs in the inference pipeline
+- [x] **GAP-01**: Every `error.NotImplemented` return in claimed production paths is either fully implemented or replaced by explicit removal with documentation — no silent stubs in the inference pipeline
 - [x] **GAP-02**: All hardcoded mock values (vocab_size=32000, EOS=2, BOS=1, disk space=100GB) replaced with values read from actual model config or system APIs
 - [x] **GAP-03**: GPT-OSS native MLX forward pass implemented with real tensor computation (layer embeddings, attention, FFN) — not returning `mlx.zeros()`
-- [ ] **GAP-04**: GPT-OSS tokenizer wired to real tokenizer (tiktoken or Qwen-compatible) — `tokenize()` does not return empty slice
+- [x] **GAP-04**: GPT-OSS tokenizer wired to real tokenizer (tiktoken or Qwen-compatible) — `tokenize()` does not return empty slice
 - [x] **GAP-05**: MLX backend factory (`createMlxBackend`) creates a real backend object, not a stub `u8` pointer
 - [x] **GAP-06**: Prompt cache `parseIndex()` reads actual cache index entries from disk — not returning empty
 - [x] **GAP-07**: Speculative decoding wired to main generation path (or explicitly removed with clear documentation if deferred)
@@ -229,7 +229,7 @@ These requirements improve reliability, monitoring, and operations.
 
 ### Model Verification & Gemma 4 E4B
 
-- [ ] **MODEL-01**: User can run Qwen2.5-Coder end-to-end with a verified passing integration test (`zig build test`)
+- [x] **MODEL-01**: User can run Qwen2.5-Coder end-to-end with a verified passing integration test (`zig build test`)
 - [x] **MODEL-02**: User can run DeepSeek-Coder-V2-Lite end-to-end via llama.cpp backend with a verified passing integration test
 - [x] **MODEL-03**: User can run GPT-OSS-20B end-to-end via native MLX — generates real output tokens (not hardcoded token 1)
 - [ ] **MODEL-04**: Gemma 4 E4B architecture implemented in Zig/MLX — 42 layers, hybrid sliding-window (512-token) + global attention with Proportional RoPE, 128K context, 262K-token vocabulary, Per-Layer Embeddings loading
