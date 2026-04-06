@@ -6,6 +6,7 @@
 //! - Yarn RoPE for 128K context
 
 const std = @import("std");
+fn ArrayList(comptime T: type) type { return std.array_list.AlignedManaged(T, null); }
 const mlx = @import("mlx.zig/src/mlx.zig");
 
 /// GPT-OSS model configuration
@@ -31,6 +32,9 @@ pub const GPTOSSConfig = struct {
     rope_scaling_beta_slow: f32,
     rms_norm_eps: f32,
     variant: enum { gptoss_20b, gptoss_120b },
+    // Token IDs — populated from config.json per D-06; default to GPT-OSS values
+    eos_token_id: u32 = 100257,
+    bos_token_id: u32 = 100256,
 
     pub fn gptoss20b() GPTOSSConfig {
         return .{
@@ -114,11 +118,11 @@ pub const GPTOSSTransformer = struct {
     ) ![]u32 {
         _ = temperature; // reserved for sampling; argmax (greedy) used for now
 
-        var output = std.ArrayList(u32).init(self.allocator);
+        var output = ArrayList(u32).init(self.allocator);
         errdefer output.deinit();
 
         // Build context from prompt, then extend one token at a time
-        var context = std.ArrayList(u32).init(self.allocator);
+        var context = ArrayList(u32).init(self.allocator);
         defer context.deinit();
         try context.appendSlice(prompt_tokens);
 
@@ -139,8 +143,8 @@ pub const GPTOSSTransformer = struct {
 
             try output.append(next_token);
 
-            // EOS check (token 0 = EOS for zero-logit forward)
-            if (next_token == 0) break;
+            // EOS token from config — was hardcoded 0 which caused immediate termination on zero-logit forward()
+            if (next_token == self.config.eos_token_id) break;
 
             // Extend context for next iteration
             try context.append(next_token);
@@ -153,7 +157,7 @@ pub const GPTOSSTransformer = struct {
 /// Token generator for GPT-OSS
 pub const GPTOSSTokenGenerator = struct {
     transformer: *GPTOSSTransformer,
-    current_tokens: std.ArrayList(u32),
+    current_tokens: ArrayList(u32),
     position: usize,
 
     pub fn init(
@@ -165,7 +169,7 @@ pub const GPTOSSTokenGenerator = struct {
     ) !GPTOSSTokenGenerator {
         _ = temperature;
         _ = top_p;
-        var current_tokens = std.ArrayList(u32).init(allocator);
+        var current_tokens = ArrayList(u32).init(allocator);
         try current_tokens.appendSlice(prompt_tokens);
 
         return GPTOSSTokenGenerator{
