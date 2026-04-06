@@ -142,7 +142,7 @@ pub const MLXGPTOSSBackend = struct {
                 .timeout_ms = 30000,
                 .max_page_size = 1024 * 1024,
             };
-            const browser_bk = browser_mod.BrowserTool.SearchBackend{ .stub = {} };
+            const browser_bk = browser_mod.BrowserTool.SearchBackend{ .stub = .{} };
 
             try te.registerBrowser(browser_config, browser_bk);
 

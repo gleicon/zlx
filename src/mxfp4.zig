@@ -69,22 +69,16 @@ pub const MXFP4Tensor = struct {
             mlx_shape[i] = @intCast(dim);
         }
 
-        // Copy to GPU if requested
-        const device = if (use_gpu) mlx.GPU else mlx.CPU;
-        const arr = mlx.arrayFromData(
+        // MLX arrays always run on Metal GPU on Apple Silicon — no explicit device transfer needed
+        _ = use_gpu;
+        // Use C API directly because shape is dynamic (unknown at compile time)
+        const arr = mlx.C.mlx_array_new_data(
             output.ptr,
-            self.total_elements,
-            @intCast(self.shape.len),
             mlx_shape.ptr,
-            mlx.Float32,
+            @intCast(self.shape.len),
+            mlx.FLOAT32,
         );
-
-        if (device == mlx.GPU) {
-            const gpu_arr = mlx.arrayToDevice(arr, mlx.GPU);
-            mlx.arrayFree(arr);
-            return gpu_arr;
-        }
-
+        if (arr.ctx == null) return error.InvalidArray;
         return arr;
     }
 };
@@ -133,14 +127,16 @@ pub fn dequantizeMXFP4GPU(
         }
     }
 
-    const shape = &[_]i32{@intCast(total_elements)};
-    return mlx.arrayFromData(
+    // Use C API directly because shape size is runtime-known
+    const shape = [_]i32{@intCast(total_elements)};
+    const arr = mlx.C.mlx_array_new_data(
         output.ptr,
-        total_elements,
+        &shape,
         1,
-        shape,
-        mlx.Float32,
+        mlx.FLOAT32,
     );
+    if (arr.ctx == null) return error.InvalidArray;
+    return arr;
 }
 
 /// Load MXFP4 tensor from raw data
