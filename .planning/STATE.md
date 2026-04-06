@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "It Just Works"
 status: executing
-stopped_at: Completed 17-05-PLAN.md
-last_updated: "2026-04-06T00:14:35.745Z"
+stopped_at: Completed 17-01-PLAN.md — speculation removal
+last_updated: "2026-04-06T00:17:19.602Z"
 last_activity: 2026-04-06
 progress:
   total_phases: 20
   completed_phases: 8
   total_plans: 48
-  completed_plans: 43
+  completed_plans: 44
   percent: 82
 ---
 
@@ -33,7 +33,7 @@ See: .planning/PROJECT.md (updated 2026-04-05)
 
 Milestone: v2.0 "It Just Works"
 Phase: 17 (inference-gap-closure) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-04-06
 
@@ -116,6 +116,6 @@ Progress: [████████████████░░░░] 46/56 p
 ## Session Continuity
 
 Last activity: 2026-04-05 - Phase 16 complete (build gap closure)
-Last session: 2026-04-06T00:14:35.743Z
-Stopped at: Completed 17-05-PLAN.md
+Last session: 2026-04-06T00:17:19.600Z
+Stopped at: Completed 17-01-PLAN.md — speculation removal
 Resume: `/gsd:plan-phase 17`
