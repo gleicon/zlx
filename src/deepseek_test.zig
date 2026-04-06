@@ -11,7 +11,7 @@ test "DeepSeek forward produces correct logits shape" {
     const allocator = std.testing.allocator;
 
     // Use small config for testing speed
-    var config = deepseek.DeepSeekConfig{
+    const config = deepseek.DeepSeekConfig{
         .vocab_size = 1024,
         .hidden_size = 256,
         .num_hidden_layers = 2,
@@ -27,7 +27,7 @@ test "DeepSeek forward produces correct logits shape" {
     };
 
     // Create minimal weights for testing
-    var layers = try allocator.alloc(deepseek.DeepSeekLayer, config.num_hidden_layers);
+    const layers = try allocator.alloc(deepseek.DeepSeekLayer, config.num_hidden_layers);
     defer allocator.free(layers);
 
     // For this test, we just verify the structure compiles
@@ -219,7 +219,7 @@ test "DeepSeek memory estimation" {
 test "DeepSeekTransformer lifecycle" {
     const allocator = std.testing.allocator;
 
-    var config = deepseek.DeepSeekConfig{
+    const config = deepseek.DeepSeekConfig{
         .vocab_size = 1000,
         .hidden_size = 128,
         .num_hidden_layers = 2,
@@ -232,7 +232,7 @@ test "DeepSeekTransformer lifecycle" {
         .latent_dim = 32,
     };
 
-    var layers = try allocator.alloc(deepseek.DeepSeekLayer, 2);
+    const layers = try allocator.alloc(deepseek.DeepSeekLayer, 2);
     defer allocator.free(layers);
 
     const weights = deepseek.DeepSeekWeights{
