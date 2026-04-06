@@ -1,21 +1,23 @@
-//! backend.zig - Unified Backend interface for MLX.zig and llama.cpp
+//! backend.zig - Unified Backend interface for llama.cpp and MLX GPT-OSS
 //!
 //! Provides backend-agnostic types for inference across different backends.
+//! mlx backend: removed stub — Qwen uses inference/mod.zig + MLX.zig directly
 
 const std = @import("std");
 
 /// Backend type enumeration
 pub const BackendType = enum {
-    mlx,
+    // mlx backend: removed stub — Qwen uses inference/mod.zig + MLX.zig directly
     llama_cpp,
     mlx_gptoss, // Native MLX GPT-OSS backend (Phase 15)
 };
 
-/// Backend preference for factory creation
+/// Backend preference for backend selection
 pub const BackendPreference = enum {
     auto, // Auto-select based on architecture
-    mlx, // Force MLX.zig backend
+    // mlx backend: removed stub — Qwen uses inference/mod.zig + MLX.zig directly
     llama_cpp, // Force llama.cpp backend
+    mlx_gptoss, // Force MLX GPT-OSS backend
 };
 
 /// Generation parameters (backend-agnostic)
@@ -113,31 +115,28 @@ pub const ModelLoadResult = struct {
 };
 
 /// Select backend type based on model name
-/// GPT-OSS models → mlx_gptoss, GGUF models → llama_cpp, others → mlx
+/// GPT-OSS models → mlx_gptoss, GGUF models → llama_cpp, others → llama_cpp
+/// mlx backend: removed stub — Qwen uses inference/mod.zig + MLX.zig directly
 pub fn selectBackend(model_name: []const u8) BackendType {
     if (std.mem.startsWith(u8, model_name, "gpt-oss") or
         std.mem.startsWith(u8, model_name, "gptoss"))
     {
         return .mlx_gptoss;
     }
-    if (std.mem.endsWith(u8, model_name, ".gguf") or
-        std.mem.startsWith(u8, model_name, "deepseek"))
-    {
-        return .llama_cpp;
-    }
-    return .mlx;
+    // All other models (including Qwen) handled by llama_cpp or inference/mod.zig directly
+    return .llama_cpp;
 }
 
-/// Backend union - holds MLX, llama.cpp, or mlx_gptoss backend
+/// Backend union - holds llama.cpp or mlx_gptoss backend
+/// mlx backend: removed stub — Qwen uses inference/mod.zig + MLX.zig directly
 pub const Backend = union(BackendType) {
-    mlx: *anyopaque, // Pointer to MlxBackend
+    // mlx backend: removed stub — Qwen uses inference/mod.zig + MLX.zig directly
     llama_cpp: *anyopaque, // Pointer to LlamaBackend
     mlx_gptoss: *anyopaque, // Pointer to MLXGPTOSSBackend
 
     /// Get backend type
     pub fn getType(self: Backend) BackendType {
         return switch (self) {
-            .mlx => .mlx,
             .llama_cpp => .llama_cpp,
             .mlx_gptoss => .mlx_gptoss,
         };
@@ -150,7 +149,6 @@ pub const Backend = union(BackendType) {
         allocator: std.mem.Allocator,
     ) anyerror![]u32 {
         return switch (self) {
-            .mlx => |ptr| mlxTokenize(ptr, text, allocator),
             .llama_cpp => |ptr| llamaTokenize(ptr, text, allocator),
             .mlx_gptoss => |ptr| gptossTokenize(ptr, text, allocator),
         };
@@ -164,7 +162,6 @@ pub const Backend = union(BackendType) {
         allocator: std.mem.Allocator,
     ) anyerror!GenerationResult {
         return switch (self) {
-            .mlx => |ptr| mlxGenerate(ptr, tokens, params, allocator),
             .llama_cpp => |ptr| llamaGenerate(ptr, tokens, params, allocator),
             .mlx_gptoss => |ptr| gptossGenerate(ptr, tokens, params, allocator),
         };
@@ -173,7 +170,6 @@ pub const Backend = union(BackendType) {
     /// Free backend resources
     pub fn deinit(self: Backend, allocator: std.mem.Allocator) void {
         switch (self) {
-            .mlx => |ptr| mlxDeinit(ptr, allocator),
             .llama_cpp => |ptr| llamaDeinit(ptr, allocator),
             .mlx_gptoss => |ptr| gptosDeinit(ptr, allocator),
         }
@@ -182,7 +178,6 @@ pub const Backend = union(BackendType) {
     /// Get vocabulary size
     pub fn getVocabSize(self: Backend) u32 {
         return switch (self) {
-            .mlx => |ptr| mlxGetVocabSize(ptr),
             .llama_cpp => |ptr| llamaGetVocabSize(ptr),
             .mlx_gptoss => |ptr| gptossGetVocabSize(ptr),
         };
@@ -191,7 +186,6 @@ pub const Backend = union(BackendType) {
     /// Get end-of-sequence token ID
     pub fn eosToken(self: Backend) u32 {
         return switch (self) {
-            .mlx => |ptr| mlxEosToken(ptr),
             .llama_cpp => |ptr| llamaEosToken(ptr),
             .mlx_gptoss => |ptr| gptossEosToken(ptr),
         };
@@ -200,7 +194,6 @@ pub const Backend = union(BackendType) {
     /// Get beginning-of-sequence token ID
     pub fn bosToken(self: Backend) u32 {
         return switch (self) {
-            .mlx => |ptr| mlxBosToken(ptr),
             .llama_cpp => |ptr| llamaBosToken(ptr),
             .mlx_gptoss => |ptr| gptosBosToken(ptr),
         };
@@ -209,7 +202,6 @@ pub const Backend = union(BackendType) {
     /// Get KV cache handle for TurboQuant
     pub fn getKvCache(self: Backend) ?KvCacheHandle {
         return switch (self) {
-            .mlx => |ptr| mlxGetKvCache(ptr),
             .llama_cpp => |ptr| llamaGetKvCache(ptr),
             .mlx_gptoss => null, // GPT-OSS KV cache not yet integrated with TurboQuant
         };
@@ -223,34 +215,26 @@ pub const Backend = union(BackendType) {
         if (!params.enabled) return;
 
         return switch (self) {
-            .mlx => |ptr| mlxApplyCompression(ptr, params),
             .llama_cpp => |ptr| llamaApplyCompression(ptr, params),
             .mlx_gptoss => {}, // GPT-OSS compression not yet implemented
         };
     }
 
     // VTable function declarations - implemented in respective backend modules
-    extern fn mlxTokenize(*anyopaque, []const u8, std.mem.Allocator) anyerror![]u32;
+    // mlx backend extern fns: removed stub — Qwen uses inference/mod.zig + MLX.zig directly
     extern fn llamaTokenize(*anyopaque, []const u8, std.mem.Allocator) anyerror![]u32;
     extern fn gptossTokenize(*anyopaque, []const u8, std.mem.Allocator) anyerror![]u32;
-    extern fn mlxGenerate(*anyopaque, []const u32, GenerationParams, std.mem.Allocator) anyerror!GenerationResult;
     extern fn llamaGenerate(*anyopaque, []const u32, GenerationParams, std.mem.Allocator) anyerror!GenerationResult;
     extern fn gptossGenerate(*anyopaque, []const u32, GenerationParams, std.mem.Allocator) anyerror!GenerationResult;
-    extern fn mlxDeinit(*anyopaque, std.mem.Allocator) void;
     extern fn llamaDeinit(*anyopaque, std.mem.Allocator) void;
     extern fn gptosDeinit(*anyopaque, std.mem.Allocator) void;
-    extern fn mlxGetVocabSize(*anyopaque) u32;
     extern fn llamaGetVocabSize(*anyopaque) u32;
     extern fn gptossGetVocabSize(*anyopaque) u32;
-    extern fn mlxEosToken(*anyopaque) u32;
     extern fn llamaEosToken(*anyopaque) u32;
     extern fn gptossEosToken(*anyopaque) u32;
-    extern fn mlxBosToken(*anyopaque) u32;
     extern fn llamaBosToken(*anyopaque) u32;
     extern fn gptosBosToken(*anyopaque) u32;
-    extern fn mlxGetKvCache(*anyopaque) ?KvCacheHandle;
     extern fn llamaGetKvCache(*anyopaque) ?KvCacheHandle;
-    extern fn mlxApplyCompression(*anyopaque, CompressionParams) anyerror!void;
     extern fn llamaApplyCompression(*anyopaque, CompressionParams) anyerror!void;
 };
 
