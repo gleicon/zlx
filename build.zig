@@ -329,6 +329,14 @@ pub fn build(b: *std.Build) !void {
     const run_mlx_v4_test = b.addRunArtifact(mlx_v4_test);
     test_step.dependOn(&run_mlx_v4_test.step);
 
+    // Shared MLX module — one instance reused across all test modules to prevent
+    // "file exists in modules" collision errors in zig build test.
+    const shared_mlx_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Test MoE module (PHASE-11-03)
     const moe_test_mod = b.createModule(.{
         .root_source_file = b.path("src/moe_test.zig"),
@@ -337,16 +345,14 @@ pub fn build(b: *std.Build) !void {
     });
 
     // Add dependencies for moe tests
-    moe_test_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    moe_test_mod.addImport("moe.zig", b.createModule(.{
+    moe_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    const moe_mod = b.createModule(.{
         .root_source_file = b.path("src/moe.zig"),
         .target = target,
         .optimize = optimize,
-    }));
+    });
+    moe_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    moe_test_mod.addImport("moe.zig", moe_mod);
     moe_test_mod.addImport("mlx_v4.zig", b.createModule(.{
         .root_source_file = b.path("src/mlx_v4.zig"),
         .target = target,
@@ -361,6 +367,45 @@ pub fn build(b: *std.Build) !void {
     const run_moe_test = b.addRunArtifact(moe_test);
     test_step.dependOn(&run_moe_test.step);
 
+    // Shared mla_mod — mla.zig imports @import("mlx.zig") (short path)
+    const mla_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mla.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mla_mod.addImport("mlx.zig", shared_mlx_mod);
+
+    // Shared dequantize_module — prevents dequantize.zig from being in two compilation units:
+    // deepseek.zig imports it as "inference/dequantize.zig" (file-relative from src/)
+    // loader.zig imports it as "dequantize.zig" (file-relative from src/inference/)
+    // By making it a named module, both can point to the same compilation unit.
+    const dequantize_module = b.createModule(.{
+        .root_source_file = b.path("src/inference/dequantize.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    dequantize_module.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+
+    // Shared deepseek_mod — deepseek.zig imports mlx, mla, moe, inference/dequantize.zig
+    const deepseek_mod = b.createModule(.{
+        .root_source_file = b.path("src/deepseek.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    deepseek_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    deepseek_mod.addImport("mlx.zig/src/mla.zig", mla_mod);
+    deepseek_mod.addImport("moe.zig", moe_mod);
+    deepseek_mod.addImport("inference/dequantize.zig", dequantize_module);
+
+    // Shared gpt_oss_mod — gpt_oss.zig imports mlx, moe
+    const gpt_oss_mod = b.createModule(.{
+        .root_source_file = b.path("src/gpt_oss.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gpt_oss_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    gpt_oss_mod.addImport("moe.zig", moe_mod);
+
     // Test DeepSeek module (PHASE-11-04)
     const deepseek_test_mod = b.createModule(.{
         .root_source_file = b.path("src/deepseek_test.zig"),
@@ -369,36 +414,38 @@ pub fn build(b: *std.Build) !void {
     });
 
     // Add dependencies for deepseek tests
-    deepseek_test_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    deepseek_test_mod.addImport("mlx.zig/src/mla.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/mla.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    deepseek_test_mod.addImport("moe.zig", b.createModule(.{
-        .root_source_file = b.path("src/moe.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    deepseek_test_mod.addImport("deepseek.zig", b.createModule(.{
-        .root_source_file = b.path("src/deepseek.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    deepseek_test_mod.addImport("inference/mod.zig", b.createModule(.{
-        .root_source_file = b.path("src/inference/mod.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    deepseek_test_mod.addImport("inference/loader.zig", b.createModule(.{
+    deepseek_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    deepseek_test_mod.addImport("mlx.zig/src/mla.zig", mla_mod);
+    deepseek_test_mod.addImport("moe.zig", moe_mod);
+    deepseek_test_mod.addImport("deepseek.zig", deepseek_mod);
+    // inference sub-modules: wire shared_mlx_mod to prevent "file exists" collision.
+    // Other transitive deps (tokenizer, qwen, generator) are not fully wired here —
+    // their failures will be semantic (module not found), not collision errors.
+    const inference_loader_mod = b.createModule(.{
         .root_source_file = b.path("src/inference/loader.zig"),
         .target = target,
         .optimize = optimize,
-    }));
+    });
+    inference_loader_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    inference_loader_mod.addImport("../mlx.zig/src/mla.zig", mla_mod);
+    inference_loader_mod.addImport("../moe.zig", moe_mod);
+    inference_loader_mod.addImport("../deepseek.zig", deepseek_mod);
+    inference_loader_mod.addImport("../gpt_oss.zig", gpt_oss_mod);
+    // dequantize.zig is used file-relatively in loader.zig as "dequantize.zig", and
+    // deepseek.zig uses it as "inference/dequantize.zig". Register as named module so
+    // both paths point to the same compilation unit, preventing collision.
+    inference_loader_mod.addImport("dequantize.zig", dequantize_module);
+
+    const inference_mod_module = b.createModule(.{
+        .root_source_file = b.path("src/inference/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    inference_mod_module.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    inference_mod_module.addImport("loader.zig", inference_loader_mod);
+
+    deepseek_test_mod.addImport("inference/mod.zig", inference_mod_module);
+    deepseek_test_mod.addImport("inference/loader.zig", inference_loader_mod);
 
     const deepseek_test = b.addTest(.{
         .name = "deepseek_test",
@@ -414,32 +461,19 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    // Add required imports
-    integration_test_mod.addImport("mlx.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    integration_test_mod.addImport("deepseek.zig", b.createModule(.{
-        .root_source_file = b.path("src/deepseek.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    integration_test_mod.addImport("gpt_oss.zig", b.createModule(.{
-        .root_source_file = b.path("src/gpt_oss.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    // Add required imports — use shared module objects to prevent collision
+    integration_test_mod.addImport("mlx.zig", shared_mlx_mod);
+    integration_test_mod.addImport("deepseek.zig", deepseek_mod);
+    integration_test_mod.addImport("gpt_oss.zig", gpt_oss_mod);
     integration_test_mod.addImport("models/registry.zig", b.createModule(.{
         .root_source_file = b.path("src/models/registry.zig"),
         .target = target,
         .optimize = optimize,
     }));
-    integration_test_mod.addImport("inference/loader.zig", b.createModule(.{
-        .root_source_file = b.path("src/inference/loader.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    integration_test_mod.addImport("inference/loader.zig", inference_loader_mod);
+    // Note: test_integration.zig imports "mlx.zig/src/mlx.zig" but integration_test_mod
+    // registers it as "mlx.zig" — fix key to match source import string
+    integration_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
 
     const integration_test = b.addTest(.{
         .name = "integration_test",
@@ -466,11 +500,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     // gptoss_mlx.zig imports mlx.zig — wire it in
-    gptoss_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    gptoss_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
 
     const harmony_mod = b.createModule(.{
         .root_source_file = b.path("src/harmony/harmony.zig"),
@@ -528,11 +558,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    mxfp4_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    mxfp4_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
 
     const safetensors_mod = b.createModule(.{
         .root_source_file = b.path("src/weight/safetensors.zig"),
@@ -545,11 +571,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    gptoss_loader_mod.addImport("mlx.zig/src/mlx.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    gptoss_loader_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
     gptoss_loader_mod.addImport("safetensors.zig", safetensors_mod);
     gptoss_loader_mod.addImport("../mxfp4.zig", mxfp4_mod);
 
@@ -573,6 +595,7 @@ pub fn build(b: *std.Build) !void {
     mlx_gptoss_backend_mod.addImport("../tools/browser.zig", browser_mod);
     mlx_gptoss_backend_mod.addImport("../tools/python.zig", python_mod);
     mlx_gptoss_backend_mod.addImport("../weight/gptoss_loader.zig", gptoss_loader_mod);
+    mlx_gptoss_backend_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
 
     // Model manager module
     const gptoss_manager_mod = b.createModule(.{
