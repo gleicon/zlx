@@ -36,7 +36,7 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 
 **v2.0 "It Just Works":**
 - [x] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean (completed 2026-04-05)
-- [ ] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end
+- [x] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end (completed 2026-04-06)
 - [ ] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B
 - [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression
 - [ ] **Phase 20: Tools API** - Fix Zig 0.15.2 API breaks, register HTTP routes, verify browser and Python tools end-to-end
@@ -331,7 +331,7 @@ Plans:
 - [x] 17-01-PLAN.md — Speculation removal: delete src/speculation/, remove all dead flags/fields/init blocks (GAP-07)
 - [x] 17-02-PLAN.md — Backends cleanup: delete factory.zig + mlx_backend.zig, update mod.zig and backend.zig (GAP-05)
 - [x] 17-03-PLAN.md — DeepSeek handler: create chat_deepseek.zig + server.zig wiring via LlamaBackend (GAP-03, MODEL-03)
-- [ ] 17-04-PLAN.md — GPT-OSS fix: wire real tokenize call, config.json reads, fix EOS termination (GAP-01, GAP-04, MODEL-02)
+- [x] 17-04-PLAN.md — GPT-OSS fix: wire real tokenize call, config.json reads, fix EOS termination (GAP-01, GAP-04, MODEL-02)
 - [x] 17-05-PLAN.md — Prompt cache: implement loadIndex() with real index.json disk reads (GAP-06)
 
 ### Phase 18: Gemma 4 E4B
@@ -410,7 +410,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 14. llama.cpp Backend Integration | 0/5 | Planned | Not Started |
 | 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
 | 16. Build & Gap Closure | 3/3 | Complete    | 2026-04-05 |
-| 17. Inference Gap Closure | 4/5 | In Progress|  |
+| 17. Inference Gap Closure | 5/5 | Complete   | 2026-04-06 |
 | 18. Gemma 4 E4B | 0/TBD | Not started | — |
 | 19. TurboQuant Metal | 0/TBD | Not started | — |
 | 20. Tools API | 0/TBD | Not started | — |
