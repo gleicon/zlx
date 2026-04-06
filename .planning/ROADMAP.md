@@ -410,7 +410,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 14. llama.cpp Backend Integration | 0/5 | Planned | Not Started |
 | 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
 | 16. Build & Gap Closure | 3/3 | Complete    | 2026-04-05 |
-| 17. Inference Gap Closure | 5/5 | Complete   | 2026-04-06 |
+| 17. Inference Gap Closure | 7/8 | In Progress|  |
 | 18. Gemma 4 E4B | 0/TBD | Not started | — |
 | 19. TurboQuant Metal | 0/TBD | Not started | — |
 | 20. Tools API | 0/TBD | Not started | — |
