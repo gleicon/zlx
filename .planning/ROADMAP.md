@@ -325,7 +325,7 @@ Plans:
   4. Vocab size, EOS token, and BOS token values in logs match the values in the loaded model's `config.json` — not hardcoded 32000/2/1
   5. `zig build test` passes Qwen integration test with a real model on disk
   6. `zig build test` passes DeepSeek integration test via llama.cpp backend
-**Plans**: 5 plans
+**Plans**: 9 plans (5 original + 4 gap closure)
 
 Plans:
 - [x] 17-01-PLAN.md — Speculation removal: delete src/speculation/, remove all dead flags/fields/init blocks (GAP-07)
@@ -333,6 +333,10 @@ Plans:
 - [x] 17-03-PLAN.md — DeepSeek handler: create chat_deepseek.zig + server.zig wiring via LlamaBackend (GAP-03, MODEL-03)
 - [x] 17-04-PLAN.md — GPT-OSS fix: wire real tokenize call, config.json reads, fix EOS termination (GAP-01, GAP-04, MODEL-02)
 - [x] 17-05-PLAN.md — Prompt cache: implement loadIndex() with real index.json disk reads (GAP-06)
+- [x] 17-06-PLAN.md — Gap closure: shared_mlx_mod, BackendType.mlx removal (MODEL-01 partial)
+- [x] 17-07-PLAN.md — Gap closure: loadIndex() re-implemented on Deepseek branch (GAP-06)
+- [x] 17-08-PLAN.md — Gap closure: GPTOSSTransformer real forward() via embed_tokens+lm_head (GAP-03, MODEL-03)
+- [ ] 17-09-PLAN.md — Gap closure: fix all 6 failing test targets in zig build test (MODEL-01)
 
 ### Phase 18: Gemma 4 E4B
 **Goal**: Users can load Gemma 4 E4B 4-bit and receive completions via the standard `/v1/chat/completions` endpoint
@@ -410,7 +414,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 14. llama.cpp Backend Integration | 0/5 | Planned | Not Started |
 | 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
 | 16. Build & Gap Closure | 3/3 | Complete    | 2026-04-05 |
-| 17. Inference Gap Closure | 8/8 | Complete   | 2026-04-06 |
+| 17. Inference Gap Closure | 8/9 | Executing  | — |
 | 18. Gemma 4 E4B | 0/TBD | Not started | — |
 | 19. TurboQuant Metal | 0/TBD | Not started | — |
 | 20. Tools API | 0/TBD | Not started | — |
