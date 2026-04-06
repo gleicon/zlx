@@ -1,6 +1,7 @@
 //! tools_api.zig - HTTP API endpoints for tools
 
 const std = @import("std");
+fn ArrayList(comptime T: type) type { return std.array_list.AlignedManaged(T, null); }
 const httpz = @import("httpz");
 const tools_types = @import("../tools/types.zig");
 const tool_executor = @import("../tools/tool_executor.zig");
@@ -24,7 +25,7 @@ const PythonRequest = struct {
 const ToolResponse = struct {
     success: bool,
     output: []const u8,
-    error: ?[]const u8 = null,
+    err_msg: ?[]const u8 = null,
     execution_time_ms: u64 = 0,
 };
 
@@ -45,23 +46,20 @@ pub const ToolsAPI = struct {
         // Parse request body
         const body = req.body() orelse {
             res.status = 400;
-            try res.json(.{ .error = "Missing request body" }, .{});
+            try res.json(.{ .@"error" ="Missing request body" }, .{});
             return;
         };
 
-        const parsed = std.json.parseFromSlice(BrowserRequest, self.allocator, body, .{}) catch {
+        const parsed_result = std.json.parseFromSlice(BrowserRequest, self.allocator, body, .{}) catch {
             res.status = 400;
-            try res.json(.{ .error = "Invalid JSON" }, .{});
+            try res.json(.{ .@"error" ="Invalid JSON" }, .{});
             return;
         };
-        defer std.json.parseFree(BrowserRequest, self.allocator, parsed);
+        defer parsed_result.deinit();
+        const parsed = parsed_result.value;
 
         // Execute browser tool
-        const args = try std.json.stringifyAlloc(
-            self.allocator,
-            parsed,
-            .{},
-        );
+        const args = try std.json.Stringify.valueAlloc(self.allocator, parsed, .{});
         defer self.allocator.free(args);
 
         const request = tools_types.ToolCallRequest{
@@ -69,10 +67,10 @@ pub const ToolsAPI = struct {
             .arguments = args,
         };
 
-        const result = self.executor.executeToolCall(request) catch |err| {
+        var result = self.executor.executeToolCall(request) catch |err| {
             res.status = 500;
             try res.json(.{
-                .error = "Tool execution failed",
+                .@"error" ="Tool execution failed",
                 .details = @errorName(err),
             }, .{});
             return;
@@ -83,7 +81,7 @@ pub const ToolsAPI = struct {
         try res.json(.{
             .success = result.success,
             .output = result.output,
-            .error = result.error_message,
+            .@"error" =result.error_message,
             .execution_time_ms = result.execution_time_ms,
         }, .{});
     }
@@ -92,23 +90,20 @@ pub const ToolsAPI = struct {
     pub fn pythonToolHandler(self: *ToolsAPI, req: *httpz.Request, res: *httpz.Response) !void {
         const body = req.body() orelse {
             res.status = 400;
-            try res.json(.{ .error = "Missing request body" }, .{});
+            try res.json(.{ .@"error" ="Missing request body" }, .{});
             return;
         };
 
-        const parsed = std.json.parseFromSlice(PythonRequest, self.allocator, body, .{}) catch {
+        const parsed_result = std.json.parseFromSlice(PythonRequest, self.allocator, body, .{}) catch {
             res.status = 400;
-            try res.json(.{ .error = "Invalid JSON" }, .{});
+            try res.json(.{ .@"error" ="Invalid JSON" }, .{});
             return;
         };
-        defer std.json.parseFree(PythonRequest, self.allocator, parsed);
+        defer parsed_result.deinit();
+        const parsed = parsed_result.value;
 
         // Execute Python tool
-        const args = try std.json.stringifyAlloc(
-            self.allocator,
-            parsed,
-            .{},
-        );
+        const args = try std.json.Stringify.valueAlloc(self.allocator, parsed, .{});
         defer self.allocator.free(args);
 
         const request = tools_types.ToolCallRequest{
@@ -116,10 +111,10 @@ pub const ToolsAPI = struct {
             .arguments = args,
         };
 
-        const result = self.executor.executeToolCall(request) catch |err| {
+        var result = self.executor.executeToolCall(request) catch |err| {
             res.status = 500;
             try res.json(.{
-                .error = "Tool execution failed",
+                .@"error" ="Tool execution failed",
                 .details = @errorName(err),
             }, .{});
             return;
@@ -129,7 +124,7 @@ pub const ToolsAPI = struct {
         try res.json(.{
             .success = result.success,
             .output = result.output,
-            .error = result.error_message,
+            .@"error" =result.error_message,
             .execution_time_ms = result.execution_time_ms,
         }, .{});
     }
@@ -140,11 +135,11 @@ pub const ToolsAPI = struct {
 
         const definitions = self.executor.getToolDefinitions() catch {
             res.status = 500;
-            try res.json(.{ .error = "Failed to get tool definitions" }, .{});
+            try res.json(.{ .@"error" ="Failed to get tool definitions" }, .{});
             return;
         };
 
-        var tools = std.ArrayList(struct {
+        var tools = ArrayList(struct {
             name: []const u8,
             description: []const u8,
             parameters: []const u8,

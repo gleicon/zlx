@@ -3,6 +3,7 @@
 //! Handles model.safetensors.index.json parsing and weight mapping for MoE models.
 
 const std = @import("std");
+fn ArrayList(comptime T: type) type { return std.array_list.AlignedManaged(T, null); }
 const mlx = @import("../mlx.zig/src/mlx.zig");
 
 /// Weight index entry mapping weight name to file path
@@ -213,8 +214,8 @@ fn parseAlternativeFormat(
 pub fn getShardFiles(
     allocator: std.mem.Allocator,
     index: SafetensorsIndex,
-) !std.ArrayList([]const u8) {
-    var shards = std.ArrayList([]const u8).init(allocator);
+) !ArrayList([]const u8) {
+    var shards = ArrayList([]const u8).init(allocator);
     errdefer {
         for (shards.items) |path| allocator.free(path);
         shards.deinit();
