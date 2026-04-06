@@ -14,7 +14,7 @@ pub const ConfigError = error{
     InvalidTimeout,
     InvalidCacheSize,
     InvalidTurboquantBits,
-    InvalidSpeculationDepth,
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     InvalidConfigFile,
     MissingRequiredField,
 };
@@ -31,9 +31,7 @@ pub const Config = struct {
     turboquant_enabled: bool = false,
     turboquant_bits: u4 = 4,
     turboquant_adaptive: u8 = 4,
-    draft_model: ?[]const u8 = null,
-    speculation_depth: usize = 4,
-    no_speculation: bool = false,
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     cors_origins: []const u8 = "*", // Allow all for WebUI compatibility
     config_file: ?[]const u8 = null, // Track source for debugging
 };
@@ -50,9 +48,7 @@ const FileConfig = struct {
     turboquant_enabled: ?bool = null,
     turboquant_bits: ?u4 = null,
     turboquant_adaptive: ?u8 = null,
-    draft_model: ?[]const u8 = null,
-    speculation_depth: ?usize = null,
-    no_speculation: ?bool = null,
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     cors_origins: ?[]const u8 = null,
 };
 
@@ -162,9 +158,7 @@ fn mergeConfig(base: Config, file: FileConfig) Config {
     if (file.turboquant_enabled) |v| result.turboquant_enabled = v;
     if (file.turboquant_bits) |v| result.turboquant_bits = v;
     if (file.turboquant_adaptive) |v| result.turboquant_adaptive = v;
-    if (file.draft_model) |v| result.draft_model = v;
-    if (file.speculation_depth) |v| result.speculation_depth = v;
-    if (file.no_speculation) |v| result.no_speculation = v;
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     if (file.cors_origins) |v| result.cors_origins = v;
 
     return result;
@@ -247,28 +241,7 @@ fn applyEnvOverrides(allocator: std.mem.Allocator, config: Config) !Config {
         }
     }
 
-    if (try getEnvVar(allocator, "ZLX_DRAFT_MODEL")) |value| {
-        defer allocator.free(value);
-        result.draft_model = try allocator.dupe(u8, value);
-    }
-
-    if (try getEnvVar(allocator, "ZLX_SPECULATION_DEPTH")) |value| {
-        defer allocator.free(value);
-        if (std.fmt.parseInt(usize, value, 10)) |depth| {
-            if (depth >= 1 and depth <= 8) {
-                result.speculation_depth = depth;
-            } else {
-                std.log.warn("ZLX_SPECULATION_DEPTH must be 1-8: {d}, using {d}", .{ depth, result.speculation_depth });
-            }
-        } else |_| {
-            std.log.warn("Invalid ZLX_SPECULATION_DEPTH value: {s}", .{value});
-        }
-    }
-
-    if (try getEnvVar(allocator, "ZLX_NO_SPECULATION")) |value| {
-        defer allocator.free(value);
-        result.no_speculation = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
-    }
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
     if (try getEnvVar(allocator, "ZLX_CORS_ORIGINS")) |value| {
         defer allocator.free(value);
@@ -312,11 +285,7 @@ fn validateConfig(config: Config) ConfigError!void {
         return ConfigError.InvalidTurboquantBits;
     }
 
-    // Speculation depth: 1-8
-    if (config.speculation_depth < 1 or config.speculation_depth > 8) {
-        std.log.err("Invalid speculation_depth: {d}. Must be between 1 and 8.", .{config.speculation_depth});
-        return ConfigError.InvalidSpeculationDepth;
-    }
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
     // Note: model is optional at config file level (can be provided via CLI)
 }
