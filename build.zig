@@ -332,11 +332,31 @@ pub fn build(b: *std.Build) !void {
 
     // Shared MLX module — one instance reused across all test modules to prevent
     // "file exists in modules" collision errors in zig build test.
+    // utils.zig and regex.zig are created FIRST so mlx.zig, qwen.zig, and tokenizer.zig
+    // all share the same compilation units (avoids "file exists in modules" collision).
+    const shared_utils_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/utils.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const shared_regex_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/regex.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // regex.zig has @cImport(<pcre2.h>) — add include path at module level
+    shared_regex_mod.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/pcre2/include" });
     const shared_mlx_mod = b.createModule(.{
         .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
         .target = target,
         .optimize = optimize,
     });
+    shared_mlx_mod.addImport("utils.zig", shared_utils_mod);
+    // mlx.zig has @cImport(<mlx/c/mlx.h>) — add include path at module level so any
+    // test compile step that uses shared_mlx_mod can find the header without needing
+    // configureExecutable to pass the path to every individual compile step.
+    const mlx_c_absolute = std.fs.cwd().realpathAlloc(b.allocator, deps.mlx_c_path) catch deps.mlx_c_path;
+    shared_mlx_mod.addIncludePath(.{ .cwd_relative = mlx_c_absolute });
 
     // Test MoE module (PHASE-11-03)
     const moe_test_mod = b.createModule(.{
@@ -347,18 +367,31 @@ pub fn build(b: *std.Build) !void {
 
     // Add dependencies for moe tests
     moe_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    // c_v4_mod and mlx_v4_mod must be created BEFORE moe_mod because moe.zig
+    // imports @import("mlx_v4.zig") at line 12 — moe_mod needs mlx_v4_mod wired.
+    // mlx_c_v4_absolute defined above at line ~310 — reuse it here for c_v4_mod
+    const c_v4_mod = b.createModule(.{
+        .root_source_file = b.path("src/c_v4.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    c_v4_mod.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    const mlx_v4_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx_v4.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mlx_v4_mod.addImport("c_v4.zig", c_v4_mod);
+    mlx_v4_mod.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
     const moe_mod = b.createModule(.{
         .root_source_file = b.path("src/moe.zig"),
         .target = target,
         .optimize = optimize,
     });
     moe_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    moe_mod.addImport("mlx_v4.zig", mlx_v4_mod); // moe.zig:12 uses @import("mlx_v4.zig")
     moe_test_mod.addImport("moe.zig", moe_mod);
-    moe_test_mod.addImport("mlx_v4.zig", b.createModule(.{
-        .root_source_file = b.path("src/mlx_v4.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    moe_test_mod.addImport("mlx_v4.zig", mlx_v4_mod);
 
     const moe_test = b.addTest(.{
         .name = "moe_test",
@@ -377,18 +410,6 @@ pub fn build(b: *std.Build) !void {
     });
     mla_mod.addImport("mlx.zig", shared_mlx_mod);
 
-    // tokenizer.zig imports @import("regex.zig") and @import("utils.zig") — NOT mlx.zig
-    // regex.zig uses @cImport(pcre2.h) — no module dep needed, configureExecutable provides include path
-    const shared_utils_mod = b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/utils.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const shared_regex_mod = b.createModule(.{
-        .root_source_file = b.path("src/mlx.zig/src/regex.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
     // Shared tokenizer module — mlx_gptoss_backend.zig:10 imports "../mlx.zig/src/tokenizer.zig"
     // tokenizer.zig imports regex.zig and utils.zig (verified from source lines 6-8)
     const shared_tokenizer_mod = b.createModule(.{
