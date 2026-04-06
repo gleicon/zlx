@@ -34,7 +34,7 @@ test "DeepSeek weight loading and dequantization" {
     std.log.info("Testing DeepSeek weight loading from {s}...", .{model_path});
 
     // 1. Load config and detect model type
-    const config_info = try loader.loadModelInfo(allocator, model_path);
+    var config_info = try loader.loadModelInfo(allocator, model_path);
     defer config_info.deinit();
 
     try testing.expectEqual(loader.ModelType.deepseek_v2_moe, config_info.model_type);
@@ -144,7 +144,7 @@ test "GPT-OSS weight loading" {
     std.log.info("Testing GPT-OSS weight loading from {s}...", .{model_path});
 
     // 1. Load config and detect model type
-    const config_info = try loader.loadModelInfo(allocator, model_path);
+    var config_info = try loader.loadModelInfo(allocator, model_path);
     defer config_info.deinit();
 
     try testing.expectEqual(loader.ModelType.gpt_oss, config_info.model_type);
