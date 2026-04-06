@@ -11,7 +11,7 @@ const manager_mod = @import("models/manager.zig");
 const memory = @import("models/memory.zig");
 const prompt_cache = @import("cache/prompt_cache.zig");
 const compression = @import("compression/mod.zig");
-const speculation = @import("speculation/mod.zig");
+// speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 const config_mod = @import("config.zig");
 const download = @import("download/mod.zig");
 
@@ -39,9 +39,7 @@ const USAGE =
     "  --turboquant            Enable TurboQuant KV cache compression (BETA)\n" ++
     "  --turboquant-bits N     Quantization bits: 3 or 4 (default: 4)\n" ++
     "  --turboquant-adaptive N Keep first/last N layers in FP16 (default: 4)\n" ++
-    "  --draft-model <NAME>   Draft model for speculative decoding (auto-select if not set)\n" ++
-    "  --speculation-depth N   Tokens to speculate ahead: 1-8 (default: 4)\n" ++
-    "  --no-speculation        Disable speculative decoding\n" ++
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     "  --list-models           List available model shortcuts\n" ++
     "  --configure-opencode    Auto-configure OpenCode to use this server\n" ++
     "  --help                  Show this help message\n" ++
@@ -60,7 +58,7 @@ const USAGE =
     "  zlx --model ./models/my-model --port 9000 --timeout 120\n" ++
     "  zlx --model qwen2.5-coder --cache-size 5 --cache-dir ~/.cache/zlx-small\n" ++
     "  zlx --model qwen2.5-coder --turboquant --turboquant-bits 4\n" ++
-    "  zlx --model qwen2.5-coder-7b --draft-model qwen2.5-coder-1.5b --speculation-depth 4\n" ++
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     "  zlx --model gpt-oss-20b                     # OpenAI GPT-OSS (11.2 GB)\n" ++
     "  zlx --list-models                           # Show all model shortcuts\n" ++
     "  zlx --download-model qwen2.5-coder-1.5b       # Download a model\n" ++
@@ -78,7 +76,7 @@ const USAGE =
     "  POST /v1/models/switch          Switch to different model (blocking)\n" ++
     "  GET  /v1/health                 Health check\n" ++
     "  GET  /v1/metrics                Prometheus metrics\n" ++
-    "  GET  /v1/metrics/speculative    Speculative decoding metrics\n" ++
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     "\n" ++
     "CORS Configuration:\n" ++
     "  Default: CORS is enabled for all origins (*) for Open WebUI compatibility.\n" ++
@@ -97,9 +95,7 @@ const Config = struct {
     turboquant_enabled: bool = false, // TurboQuant compression (EXPERIMENTAL)
     turboquant_bits: u4 = 4, // Quantization bits (3 or 4)
     turboquant_adaptive: u8 = 4, // First/last N layers kept in FP16
-    draft_model: ?[]const u8 = null, // Draft model for speculation (null = auto)
-    speculation_depth: usize = 4, // Tokens to speculate ahead (default: 4)
-    no_speculation: bool = false, // Disable speculative decoding
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     configure_opencode: bool = false, // Configure OpenCode and exit
 };
 
@@ -248,24 +244,7 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
             if (config.turboquant_adaptive > 32) {
                 std.log.warn("Adaptive layers >32 seems high, but accepting value: {d}", .{config.turboquant_adaptive});
             }
-        } else if (std.mem.eql(u8, arg, "--draft-model")) {
-            const value = args.next() orelse {
-                std.log.err("Expected value after --draft-model", .{});
-                return error.MissingArgument;
-            };
-            config.draft_model = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, arg, "--speculation-depth")) {
-            const value = args.next() orelse {
-                std.log.err("Expected value after --speculation-depth", .{});
-                return error.MissingArgument;
-            };
-            config.speculation_depth = try std.fmt.parseInt(usize, value, 10);
-            if (config.speculation_depth < 1 or config.speculation_depth > 8) {
-                std.log.err("Speculation depth must be 1-8, got {d}", .{config.speculation_depth});
-                return error.InvalidSpeculationDepth;
-            }
-        } else if (std.mem.eql(u8, arg, "--no-speculation")) {
-            config.no_speculation = true;
+        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
         } else if (std.mem.eql(u8, arg, "--list-models")) {
             // List available model shortcuts and exit
             download.listKnownModels();
@@ -327,16 +306,7 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
             config.turboquant_adaptive,
         });
     }
-    if (config.draft_model) |draft| {
-        std.log.info("Speculative decoding enabled with draft model: {s} (depth: {d})", .{
-            draft,
-            config.speculation_depth,
-        });
-    } else if (!config.no_speculation) {
-        std.log.info("Speculative decoding enabled (auto-select draft model, depth: {d})", .{
-            config.speculation_depth,
-        });
-    }
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
     return config;
 }
@@ -355,9 +325,7 @@ fn convertFileConfig(file_config: config_mod.Config) Config {
         .turboquant_enabled = file_config.turboquant_enabled,
         .turboquant_bits = file_config.turboquant_bits,
         .turboquant_adaptive = file_config.turboquant_adaptive,
-        .draft_model = file_config.draft_model,
-        .speculation_depth = file_config.speculation_depth,
-        .no_speculation = file_config.no_speculation,
+        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     };
 }
 
@@ -555,48 +523,39 @@ pub fn main() !void {
     // Initialize model manager
     if (models_mod.getGlobalRegistry()) |registry| {
         try manager_mod.initGlobalManager(allocator, registry);
-
-        // Initialize speculative decoding subsystem (after registry is available)
-        if (!config.no_speculation) {
-            speculation.initSpeculation(allocator, registry) catch |err| {
-                std.log.warn("Failed to initialize speculative decoding: {s}. Continuing without speculation.", .{@errorName(err)});
-            };
-
-            // Configure speculation settings
-            if (speculation.isInitialized()) {
-                const spec_config = speculation.SpeculationConfig{
-                    .enabled = true,
-                    .draft_model = config.draft_model,
-                    .speculation_depth = config.speculation_depth,
-                };
-                speculation.configure(spec_config);
-
-                std.log.info("Speculative decoding enabled (depth: {d})", .{config.speculation_depth});
-                if (config.draft_model) |dm| {
-                    std.log.info("Draft model: {s}", .{dm});
-                } else {
-                    std.log.info("Draft model: auto-select", .{});
-                }
-            }
-        } else {
-            std.log.info("Speculative decoding disabled by user", .{});
-        }
     }
-    defer {
-        speculation.shutdownSpeculation(allocator);
-        manager_mod.deinitGlobalManager(allocator);
-    }
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+    defer manager_mod.deinitGlobalManager(allocator);
 
     // Get model name for status update (extract basename from path if needed)
     const raw_model_name = config.model_name orelse model_path;
     const model_name = blk: {
+        var name = raw_model_name;
+
         // If the model name contains path separators, extract just the basename
         if (std.mem.indexOf(u8, raw_model_name, "/")) |_| {
-            if (std.mem.lastIndexOf(u8, raw_model_name, "/")) |last_slash| {
-                break :blk raw_model_name[last_slash + 1 ..];
+            // Find last slash position
+            var last_slash = std.mem.lastIndexOf(u8, raw_model_name, "/");
+
+            // If path ends with slash, find the second-to-last slash
+            if (last_slash) |pos| {
+                if (pos == raw_model_name.len - 1) {
+                    // Path ends with slash, look for previous slash
+                    const trimmed = raw_model_name[0..pos];
+                    last_slash = std.mem.lastIndexOf(u8, trimmed, "/");
+                }
+            }
+
+            if (last_slash) |pos| {
+                name = raw_model_name[pos + 1 ..];
+                // Strip any trailing slashes from the result
+                while (name.len > 0 and name[name.len - 1] == '/') {
+                    name = name[0 .. name.len - 1];
+                }
             }
         }
-        break :blk raw_model_name;
+
+        break :blk name;
     };
 
     std.log.info("Loading model from: {s}", .{model_path});
