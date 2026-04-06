@@ -1,6 +1,7 @@
 //! python.zig - Python tool for code execution in Docker sandbox
 
 const std = @import("std");
+fn ArrayList(comptime T: type) type { return std.array_list.AlignedManaged(T, null); }
 const tools_types = @import("types.zig");
 
 const ToolCallRequest = tools_types.ToolCallRequest;
@@ -76,10 +77,10 @@ pub const PythonTool = struct {
         }
 
         // Execute Docker
-        var stdout = std.ArrayList(u8).init(self.allocator);
+        var stdout = ArrayList(u8).init(self.allocator);
         defer stdout.deinit();
 
-        var stderr = std.ArrayList(u8).init(self.allocator);
+        var stderr = ArrayList(u8).init(self.allocator);
         defer stderr.deinit();
 
         var process = std.process.Child.init(docker_args, self.allocator);
@@ -88,10 +89,7 @@ pub const PythonTool = struct {
 
         try process.spawn();
 
-        // Read output with timeout
-        const stdout_reader = process.stdout.?.reader();
-        const stderr_reader = process.stderr.?.reader();
-
+        // Read output with timeout — use File.read() directly (Zig 0.15.2 API)
         var stdout_buffer: [4096]u8 = undefined;
         var stderr_buffer: [4096]u8 = undefined;
 
@@ -107,7 +105,7 @@ pub const PythonTool = struct {
             }
 
             if (!stdout_done) {
-                const n = try stdout_reader.read(&stdout_buffer);
+                const n = try process.stdout.?.read(&stdout_buffer);
                 if (n == 0) {
                     stdout_done = true;
                 } else {
@@ -116,7 +114,7 @@ pub const PythonTool = struct {
             }
 
             if (!stderr_done) {
-                const n = try stderr_reader.read(&stderr_buffer);
+                const n = try process.stderr.?.read(&stderr_buffer);
                 if (n == 0) {
                     stderr_done = true;
                 } else {
@@ -132,7 +130,7 @@ pub const PythonTool = struct {
             .stdout = try stdout.toOwnedSlice(),
             .stderr = try stderr.toOwnedSlice(),
             .exit_code = switch (result) {
-                .Exited => |code| @intCast(code),
+                .Exited => |exit_val| @intCast(exit_val),
                 .Signal => |sig| @intCast(sig),
                 .Stopped => |sig| @intCast(sig),
                 .Unknown => |sig| @intCast(sig),
@@ -153,7 +151,7 @@ pub const PythonTool = struct {
 
     /// Build Docker command for execution
     fn buildDockerCommand(self: *PythonTool, code: []const u8) ![][]const u8 {
-        var args = std.ArrayList([]const u8).init(self.allocator);
+        var args = ArrayList([]const u8).init(self.allocator);
         errdefer {
             for (args.items) |arg| self.allocator.free(arg);
             args.deinit();
@@ -171,15 +169,15 @@ pub const PythonTool = struct {
         }
 
         // Memory limit
-        var mem_arg = try std.fmt.allocPrint(self.allocator, "--memory={d}m", .{self.config.memory_limit_mb});
+        const mem_arg = try std.fmt.allocPrint(self.allocator, "--memory={d}m", .{self.config.memory_limit_mb});
         try args.append(mem_arg);
 
         // CPU limit
-        var cpu_arg = try std.fmt.allocPrint(self.allocator, "--cpus={d:.1}", .{self.config.cpu_limit});
+        const cpu_arg = try std.fmt.allocPrint(self.allocator, "--cpus={d:.1}", .{self.config.cpu_limit});
         try args.append(cpu_arg);
 
         // Timeout
-        var timeout_arg = try std.fmt.allocPrint(self.allocator, "--stop-timeout={d}", .{
+        const timeout_arg = try std.fmt.allocPrint(self.allocator, "--stop-timeout={d}", .{
             self.config.timeout_ms / 1000,
         });
         try args.append(timeout_arg);
@@ -207,13 +205,14 @@ pub const PythonTool = struct {
             code: []const u8,
         };
 
-        const args = try std.json.parseFromSlice(Args, allocator, request.arguments, .{});
-        defer std.json.parseFree(Args, allocator, args);
+        const args_parsed = try std.json.parseFromSlice(Args, allocator, request.arguments, .{});
+        defer args_parsed.deinit();
+        const args = args_parsed.value;
 
-        const result = try self.execute(args.code);
+        var result = try self.execute(args.code);
         defer result.deinit(allocator);
 
-        var output = std.ArrayList(u8).init(allocator);
+        var output = ArrayList(u8).init(allocator);
         errdefer output.deinit();
 
         if (result.stdout.len > 0) {

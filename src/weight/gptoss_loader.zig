@@ -1,7 +1,7 @@
 //! gptoss_loader.zig - GPT-OSS weight loading from safetensors
 
 const std = @import("std");
-const mlx = @import("mlx.zig/src/mlx.zig");
+const mlx = @import("../mlx.zig/src/mlx.zig");
 const safetensors = @import("safetensors.zig");
 const mxfp4 = @import("../mxfp4.zig");
 
@@ -111,10 +111,10 @@ pub const GPTOSSWeightLoader = struct {
         var dir = try std.fs.cwd().openDir(self.checkpoint_path, .{ .iterate = true });
         defer dir.close();
 
-        var files = std.ArrayList([]const u8).init(self.allocator);
+        var files = std.ArrayList([]const u8).empty;
         defer {
             for (files.items) |f| self.allocator.free(f);
-            files.deinit();
+            files.deinit(self.allocator);
         }
 
         // Find all safetensors files
@@ -122,7 +122,7 @@ pub const GPTOSSWeightLoader = struct {
         while (try iter.next()) |entry| {
             if (std.mem.endsWith(u8, entry.name, ".safetensors")) {
                 const path = try std.fs.path.join(self.allocator, &.{ self.checkpoint_path, entry.name });
-                try files.append(path);
+                try files.append(self.allocator, path);
             }
         }
 
@@ -153,7 +153,7 @@ pub const GPTOSSWeightLoader = struct {
 
         const header = reader.header orelse return error.NoHeader;
 
-        var tensor_names = try reader.getTensorNames(self.allocator);
+        const tensor_names = try reader.getTensorNames(self.allocator);
         defer {
             for (tensor_names) |n| self.allocator.free(n);
             self.allocator.free(tensor_names);
@@ -207,21 +207,23 @@ pub const GPTOSSWeightLoader = struct {
             mlx_shape[i] = @intCast(dim);
         }
 
-        // Determine MLX dtype
-        const mlx_dtype: mlx.Dtype = switch (info.dtype) {
-            .float32 => mlx.Float32,
-            .float16 => mlx.Float16,
-            .bfloat16 => mlx.BFloat16,
+        // Determine MLX dtype — use mlx.C.mlx_dtype constants
+        const mlx_dtype: mlx.C.mlx_dtype = switch (info.dtype) {
+            .float32 => mlx.FLOAT32,
+            .float16 => mlx.FLOAT16,
+            .bfloat16 => mlx.BFLOAT16,
             else => unreachable,
         };
 
-        return mlx.arrayFromData(
+        // Use C API directly because shape is dynamic
+        const arr = mlx.C.mlx_array_new_data(
             data.ptr,
-            @intCast(data.len / info.dtype.sizeInBytes()),
-            @intCast(info.shape.len),
             mlx_shape.ptr,
+            @intCast(info.shape.len),
             mlx_dtype,
         );
+        if (arr.ctx == null) return error.InvalidArray;
+        return arr;
     }
 
     /// Load MXFP4 tensor with dequantization

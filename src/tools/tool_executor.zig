@@ -37,7 +37,7 @@ pub const ToolExecutor = struct {
     }
 
     /// Register the Python tool
-    pub fn registerPython(self: *ToolExecutor, config: PythonTool.PythonConfig) !void {
+    pub fn registerPython(self: *ToolExecutor, config: python.PythonConfig) !void {
         const python_tool = try self.allocator.create(PythonTool);
         python_tool.* = PythonTool.init(self.allocator, config);
         try self.registry.register("python", python_tool.asTool());

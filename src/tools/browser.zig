@@ -1,6 +1,7 @@
 //! browser.zig - Browser tool for web search and navigation
 
 const std = @import("std");
+fn ArrayList(comptime T: type) type { return std.array_list.AlignedManaged(T, null); }
 const tools_types = @import("types.zig");
 
 const ToolCallRequest = tools_types.ToolCallRequest;
@@ -109,26 +110,19 @@ pub const BrowserTool = struct {
             };
         }
 
-        // Fetch page
-        var response_body = std.ArrayList(u8).init(self.allocator);
-        defer response_body.deinit();
+        // Fetch page using std.http.Client.fetch (Zig 0.15.2 API)
+        var response_body = std.ArrayListUnmanaged(u8).empty;
+        defer response_body.deinit(self.allocator);
 
-        const uri = try std.Uri.parse(url);
-        var server_header_buffer: [8192]u8 = undefined;
-
-        var request = try self.http_client.open(.GET, uri, .{
-            .server_header_buffer = &server_header_buffer,
-            .headers = .{
-                .user_agent = .{ .override = self.config.user_agent },
-            },
+        var aw = std.Io.Writer.Allocating.fromArrayList(self.allocator, &response_body);
+        const result = try self.http_client.fetch(.{
+            .location = .{ .url = url },
+            .method = .GET,
+            .response_writer = &aw.writer,
         });
-        defer request.deinit();
+        _ = result;
 
-        try request.send();
-        try request.wait();
-
-        const body = try request.reader().readAllAlloc(self.allocator, self.config.max_page_size);
-        defer self.allocator.free(body);
+        const body = response_body.items;
 
         // Parse HTML to extract content
         const content = try self.extractTextFromHTML(body);
@@ -163,7 +157,7 @@ pub const BrowserTool = struct {
         // Search for query in content
         // Return matches with surrounding context
 
-        var results = std.ArrayList(struct { text: []const u8, context: []const u8 }).init(std.heap.page_allocator);
+        var results = ArrayList(struct { text: []const u8, context: []const u8 }).init(std.heap.page_allocator);
         // Stub implementation
         try results.append(.{
             .text = try std.heap.page_allocator.dupe(u8, query),
@@ -183,10 +177,11 @@ pub const BrowserTool = struct {
             url: ?[]const u8 = null,
         };
 
-        const args = try std.json.parseFromSlice(Args, allocator, request.arguments, .{});
-        defer std.json.parseFree(Args, allocator, args);
+        const args_parsed = try std.json.parseFromSlice(Args, allocator, request.arguments, .{});
+        defer args_parsed.deinit();
+        const args = args_parsed.value;
 
-        var output = std.ArrayList(u8).init(allocator);
+        var output = ArrayList(u8).init(allocator);
         errdefer output.deinit();
 
         var success = true;
@@ -214,7 +209,7 @@ pub const BrowserTool = struct {
             }
         } else if (std.mem.eql(u8, args.action, "open")) {
             if (args.url) |url| {
-                const page = try self.open(url);
+                var page = try self.open(url);
                 defer page.deinit(allocator);
 
                 try std.fmt.format(output.writer(), "Title: {s}\n\n{s}", .{
@@ -272,7 +267,7 @@ pub const BrowserTool = struct {
     fn searchStub(self: *BrowserTool, query: []const u8) ![]SearchResult {
         _ = self;
         // Return stub results for testing
-        var results = std.ArrayList(SearchResult).init(std.heap.page_allocator);
+        var results = ArrayList(SearchResult).init(std.heap.page_allocator);
 
         try results.append(.{
             .title = try std.heap.page_allocator.dupe(u8, "Example Result for "),
@@ -286,7 +281,7 @@ pub const BrowserTool = struct {
     fn extractTextFromHTML(self: *BrowserTool, html: []const u8) ![]const u8 {
         // Simple HTML to text extraction
         // In production, use a proper HTML parser
-        var text = std.ArrayList(u8).init(self.allocator);
+        var text = ArrayList(u8).init(self.allocator);
         errdefer text.deinit();
 
         var in_tag = false;

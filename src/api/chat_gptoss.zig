@@ -112,7 +112,7 @@ pub const ChatGPTOSSHandler = struct {
     pub fn handle(self: *ChatGPTOSSHandler, req: *httpz.Request, res: *httpz.Response) !void {
         const body = req.body() orelse {
             res.status = 400;
-            try res.write("{\"error\": \"Missing request body\"}");
+            try res.writer().writeAll("{\"error\": \"Missing request body\"}");
             return;
         };
 
@@ -124,7 +124,7 @@ pub const ChatGPTOSSHandler = struct {
             .{},
         ) catch {
             res.status = 400;
-            try res.write("{\"error\": \"Invalid JSON\"}");
+            try res.writer().writeAll("{\"error\": \"Invalid JSON\"}");
             return;
         };
         defer parsed.deinit();
@@ -134,7 +134,7 @@ pub const ChatGPTOSSHandler = struct {
         // Extract model
         const model_val = root.get("model") orelse {
             res.status = 400;
-            try res.write("{\"error\": \"Missing model field\"}");
+            try res.writer().writeAll("{\"error\": \"Missing model field\"}");
             return;
         };
         const model = model_val.string;
@@ -142,7 +142,7 @@ pub const ChatGPTOSSHandler = struct {
         // Verify it's a GPT-OSS model
         if (!isGptOssModel(model)) {
             res.status = 400;
-            try res.write("{\"error\": \"Invalid model for GPT-OSS endpoint\"}");
+            try res.writer().writeAll("{\"error\": \"Invalid model for GPT-OSS endpoint\"}");
             return;
         }
 
@@ -181,7 +181,7 @@ pub const ChatGPTOSSHandler = struct {
         // Extract messages array
         const messages_val = root.get("messages") orelse {
             res.status = 400;
-            try res.write("{\"error\": \"Missing messages field\"}");
+            try res.writer().writeAll("{\"error\": \"Missing messages field\"}");
             return;
         };
 
@@ -332,7 +332,7 @@ pub const ChatGPTOSSHandler = struct {
     ) !void {
         _ = completion_tokens;
 
-        res.content_type = "text/event-stream";
+        res.content_type = .EVENTS;
         res.status = 200;
 
         const id = try std.fmt.allocPrint(self.allocator, "chatcmpl-{d}", .{std.time.timestamp()});
@@ -346,7 +346,7 @@ pub const ChatGPTOSSHandler = struct {
         const chunk_line = try std.fmt.allocPrint(self.allocator, "data: {s}\n\n", .{chunk_json});
         defer self.allocator.free(chunk_line);
 
-        try res.writeChunk(chunk_line);
+        try res.chunk(chunk_line);
 
         // Send finish chunk
         const finish_json = try std.fmt.allocPrint(self.allocator, "{{\"id\":\"{s}\",\"object\":\"chat.completion.chunk\",\"created\":{d},\"model\":\"{s}\"," ++
@@ -356,8 +356,8 @@ pub const ChatGPTOSSHandler = struct {
         const finish_line = try std.fmt.allocPrint(self.allocator, "data: {s}\n\n", .{finish_json});
         defer self.allocator.free(finish_line);
 
-        try res.writeChunk(finish_line);
-        try res.writeChunk("data: [DONE]\n\n");
+        try res.chunk(finish_line);
+        try res.chunk("data: [DONE]\n\n");
     }
 };
 
