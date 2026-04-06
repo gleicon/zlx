@@ -252,14 +252,26 @@ pub const GPTOSSWeightLoader = struct {
         return self.tensors.get(name);
     }
 
-    /// Load all transformer weights into GPTOSSTransformer
+    /// Load all transformer weights into GPTOSSTransformer.
+    /// Sets embed_tokens and lm_head fields on the transformer.
+    /// The loader must remain alive while the transformer is in use (tensors are not copied).
     pub fn loadIntoTransformer(
         self: *GPTOSSWeightLoader,
         transformer: anytype,
     ) !void {
-        _ = transformer;
-        _ = self;
-        // TODO: Map tensor names to transformer layers
+        if (self.getTensor("model.embed_tokens.weight")) |t| {
+            transformer.embed_tokens = t;
+        } else {
+            std.log.warn("GPT-OSS: model.embed_tokens.weight not found in checkpoint", .{});
+        }
+        if (self.getTensor("lm_head.weight")) |t| {
+            transformer.lm_head = t;
+        }
+        // Mark weights as loaded if we have at least the embedding table
+        if (transformer.embed_tokens != null) {
+            transformer.weights_loaded = true;
+            std.log.info("GPT-OSS: embed_tokens and lm_head wired into transformer", .{});
+        }
     }
 
     /// Check if weights are loaded

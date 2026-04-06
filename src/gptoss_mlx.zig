@@ -86,6 +86,11 @@ pub const GPTOSSTransformer = struct {
     allocator: std.mem.Allocator,
     config: GPTOSSConfig,
     stream: mlx.Stream,
+    // Weight tensors — set by GPTOSSWeightLoader.loadIntoTransformer(); null until weights loaded.
+    // The loader (owned by MLXGPTOSSBackend) keeps the underlying mlx arrays alive.
+    embed_tokens: ?mlx.Array = null, // [vocab_size, hidden_size] token embedding table
+    lm_head: ?mlx.Array = null,      // [vocab_size, hidden_size] output projection (may be tied to embed_tokens)
+    weights_loaded: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, config: GPTOSSConfig, stream: mlx.Stream) !GPTOSSTransformer {
         return GPTOSSTransformer{
@@ -97,16 +102,55 @@ pub const GPTOSSTransformer = struct {
 
     pub fn deinit(self: *GPTOSSTransformer) void {
         _ = self;
+        // Note: embed_tokens and lm_head are owned by the backend's weight loader — not freed here.
     }
 
     pub fn forward(self: *GPTOSSTransformer, input_ids: []const u32) !mlx.Array {
-        // NOTE: No weight fields in GPTOSSTransformer yet (weights wired in future phase).
-        // Returns zero logits with correct [1, 1, vocab_size] shape using real mlx API.
+        // Fallback: no weights loaded — return zero logits with correct [1, 1, vocab_size] shape.
         // argmax on zeros deterministically returns 0 (EOS), giving correct termination.
-        _ = input_ids;
+        if (!self.weights_loaded or self.embed_tokens == null) {
+            var logits = mlx.arrayNew();
+            const vs_c: c_int = @intCast(self.config.vocab_size);
+            try mlx.zeros(&logits, &[_]c_int{ 1, 1, vs_c }, mlx.FLOAT32, self.stream);
+            return logits;
+        }
+
+        // Real embedding-based forward pass using loaded model weights.
+        // Full attention+FFN stack is Phase 18 scope — this provides non-trivial logits
+        // from the token embedding table and LM head projection:
+        //   embedding = embed_tokens[last_token, :]  → [1, hidden_size]
+        //   logits    = embedding @ lm_head.T         → [1, vocab_size]
+        // Reshape to [1, 1, vocab_size] for generate() argmax compatibility.
+
+        const embed_table = self.embed_tokens.?;
+        const last_token: u32 = if (input_ids.len > 0) input_ids[input_ids.len - 1] else 0;
+
+        // Build int32 index array [last_token] for mlx.take
+        const idx_val = [_]i32{@intCast(last_token)};
+        const token_idx = try mlx.arrayNewData(&idx_val, .{1}, mlx.INT32);
+        defer mlx.arrayFree(token_idx);
+
+        // Embedding lookup: embed_table[last_token, :] → [1, hidden_size]
+        var embedding = mlx.arrayNew();
+        defer mlx.arrayFree(embedding);
+        try mlx.take(&embedding, embed_table, token_idx, 0, self.stream);
+
+        // LM head projection: embedding @ lm_head.T → [1, vocab_size]
+        // lm_head shape: [vocab_size, hidden_size] — swap axes 0,1 to get [hidden_size, vocab_size]
+        const proj_table = if (self.lm_head) |lh| lh else embed_table;
+        var proj_t = mlx.arrayNew();
+        defer mlx.arrayFree(proj_t);
+        try mlx.mlxOp(mlx.C.mlx_swapaxes(&proj_t, proj_table, 0, 1, self.stream));
+
+        var logits_2d = mlx.arrayNew();
+        defer mlx.arrayFree(logits_2d);
+        try mlx.matmul(&logits_2d, embedding, proj_t, self.stream);
+        // logits_2d shape: [1, vocab_size]
+
+        // Reshape to [1, 1, vocab_size] for generate() argmax compatibility
         var logits = mlx.arrayNew();
-        const shape = [_]c_int{ 1, 1, @intCast(self.config.vocab_size) };
-        try mlx.zeros(&logits, &shape, mlx.FLOAT32, self.stream);
+        const vocab_c: c_int = @intCast(self.config.vocab_size);
+        try mlx.reshape(&logits, logits_2d, &[_]c_int{ 1, 1, vocab_c }, self.stream);
         return logits;
     }
 
