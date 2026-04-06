@@ -1,8 +1,9 @@
 // Phase 14-05: Backend-aware generator
+// factory: removed — backlog item, evaluate after core inference is stable
+// Note: BackendGenerator is a stub. Live inference uses inference/mod.zig + MLX.zig directly.
 
 const std = @import("std");
 const backends = @import("../backends/mod.zig");
-const factory = @import("../backends/factory.zig");
 const registry = @import("../models/registry.zig");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
 const generator = @import("generator.zig");
@@ -29,30 +30,11 @@ pub const BackendGenerator = struct {
         model_path: []const u8,
         arch: registry.ModelArchitecture,
     ) !BackendGenerator {
-        // Create backend via factory
-        const backend = try factory.createBackend(
-            allocator,
-            model_path,
-            arch,
-            .auto, // Auto-select based on architecture
-        );
-        errdefer backend.deinit(allocator);
-
-        // Load tokenizer (model-agnostic for now)
-        // TODO: Make tokenizer backend-specific
-        const tokenizer = try mlx_tokenizer.Tokenizer.init(allocator, model_path);
-        errdefer tokenizer.deinit();
-
-        std.log.info("BackendGenerator initialized with {s} backend for {s}", .{
-            @tagName(backend.getType()),
-            @tagName(arch),
-        });
-
-        return BackendGenerator{
-            .allocator = allocator,
-            .backend = backend,
-            .tokenizer = tokenizer,
-        };
+        // factory: removed — backend creation via factory is backlog; live path uses inference/mod.zig
+        _ = allocator;
+        _ = model_path;
+        _ = arch;
+        return error.NotImplemented;
     }
 
     /// Initialize with explicit backend preference
@@ -60,29 +42,14 @@ pub const BackendGenerator = struct {
         allocator: std.mem.Allocator,
         model_path: []const u8,
         arch: registry.ModelArchitecture,
-        preference: factory.BackendPreference,
+        preference: backends.BackendPreference,
     ) !BackendGenerator {
-        const backend = try factory.createBackend(
-            allocator,
-            model_path,
-            arch,
-            preference,
-        );
-        errdefer backend.deinit(allocator);
-
-        const tokenizer = try mlx_tokenizer.Tokenizer.init(allocator, model_path);
-        errdefer tokenizer.deinit();
-
-        std.log.info("BackendGenerator initialized with {s} backend (requested: {s})", .{
-            @tagName(backend.getType()),
-            @tagName(preference),
-        });
-
-        return BackendGenerator{
-            .allocator = allocator,
-            .backend = backend,
-            .tokenizer = tokenizer,
-        };
+        // factory: removed — backend creation via factory is backlog; live path uses inference/mod.zig
+        _ = allocator;
+        _ = model_path;
+        _ = arch;
+        _ = preference;
+        return error.NotImplemented;
     }
 
     /// Free generator resources
