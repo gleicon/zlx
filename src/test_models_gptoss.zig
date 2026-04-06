@@ -8,6 +8,7 @@
 //! - Performance benchmark
 
 const std = @import("std");
+const mlx = @import("mlx.zig/src/mlx.zig");
 const gptoss_mlx = @import("gptoss_mlx.zig");
 const harmony = @import("harmony/harmony.zig");
 const harmony_template = @import("harmony/template.zig");
@@ -55,7 +56,9 @@ test "GPT-OSS config 120B has correct parameters" {
 pub fn testGptossInference(allocator: std.mem.Allocator) !void {
     // Initialize stub transformer (no real weights needed for structural test)
     const config = GPTOSSConfig.gptoss20b();
-    var transformer = try GPTOSSTransformer.init(allocator, config, undefined);
+    const stream = mlx.defaultGpuStreamNew();
+    defer mlx.streamFree(stream);
+    var transformer = try GPTOSSTransformer.init(allocator, config, stream);
     defer transformer.deinit();
 
     // Generate a short sequence
