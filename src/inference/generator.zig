@@ -7,8 +7,7 @@ const std = @import("std");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
-const speculation = @import("../speculation/speculative_generator.zig");
-const draft_model = @import("../models/draft_model.zig");
+// speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 const backends = @import("../backends/mod.zig");
 const factory = @import("../backends/factory.zig");
 const registry = @import("../models/registry.zig");
@@ -159,12 +158,7 @@ pub const GenerationState = struct {
     /// Tracks if cache is owned by this GenerationState (false if restored from cache)
     owns_cache: bool = true,
 
-    /// Speculative generation delegation (optional)
-    speculative_generator: ?*speculation.SpeculativeGenerator = null,
-    use_speculation: bool = false,
-
-    /// Draft model reference (optional, for speculation)
-    draft_model: ?*draft_model.DraftModel = null,
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
     /// Initialize generation state with a transformer and initial tokens
     pub fn init(
@@ -174,47 +168,9 @@ pub const GenerationState = struct {
         eos_token_ids: []const u32,
         options: GenerationOptions,
         tokenizer: ?*mlx_tokenizer.Tokenizer,
-        draft_model_ref: ?*draft_model.DraftModel,
-        speculation_depth: usize,
     ) !Self {
-        // If draft model available and speculation enabled, use speculative generation
-        if (draft_model_ref != null and speculation_depth > 0) {
-            const spec_gen = try allocator.create(speculation.SpeculativeGenerator);
-            spec_gen.* = try speculation.SpeculativeGenerator.init(
-                allocator,
-                transformer,
-                draft_model_ref.?.transformer,
-                speculation_depth,
-                options,
-            );
-
-            return Self{
-                .allocator = allocator,
-                .transformer = transformer,
-                .cache = null, // Managed by speculative generator
-                .tokens_generated = 0,
-                .max_tokens = options.max_tokens,
-                .current_tokens = .empty,
-                .is_complete = false,
-                .eos_token_ids = eos_token_ids,
-                .toks_array = mlx.arrayNew(),
-                .logits_array = mlx.arrayNew(),
-                .mask_array = mlx.arrayNew(),
-                .options = options,
-                .logprobs_buffer = .empty,
-                .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
-                .decoded_text_buffer = .empty,
-                .tokens_since_decode = .empty,
-                .tokenizer = tokenizer,
-                .prompt_processed = false,
-                .owns_cache = false,
-                .speculative_generator = spec_gen,
-                .use_speculation = true,
-                .draft_model = draft_model_ref,
-            };
-        }
-
-        // Standard initialization without speculation
+        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+        // Standard initialization
         // Initialize MLX arrays
         const toks_array = blk: {
             // Create initial tokens array [1, seq_len]
@@ -297,15 +253,11 @@ pub const GenerationState = struct {
 
     /// Deinitialize generation state and free resources
     pub fn deinit(self: *Self) void {
-        // Free speculative generator if present
-        if (self.speculative_generator) |sg| {
-            sg.deinit();
-            self.allocator.destroy(sg);
-        }
+        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
         if (self.cache) |cache| {
-            // Only free cache if we own it (not restored from cache and not managed by spec gen)
-            if (self.owns_cache and !self.use_speculation) {
+            // Only free cache if we own it (not restored from cache)
+            if (self.owns_cache) {
                 cache.deinit();
                 self.allocator.destroy(cache);
             }
@@ -373,49 +325,7 @@ pub const GenerationState = struct {
             return null;
         }
 
-        // Use speculative generation if available
-        if (self.use_speculation and self.speculative_generator != null) {
-            const token = try self.speculative_generator.?.next();
-            if (token) |t| {
-                self.tokens_generated += 1;
-
-                // Check for EOS
-                if (self.options.stop_on_eos) {
-                    for (self.eos_token_ids) |eos_id| {
-                        if (t == eos_id) {
-                            self.is_complete = true;
-                            self.stop_reason = .eos;
-                            break;
-                        }
-                    }
-                }
-
-                // Try to decode for stop sequence detection
-                if (self.options.stop_sequences.len > 0 and self.tokenizer != null) {
-                    try self.current_tokens.append(self.allocator, t);
-
-                    // Decode and check stop sequences
-                    const decoded_chunk = try self.decodeTokens(&[1]u32{t});
-                    defer self.allocator.free(decoded_chunk);
-
-                    try self.decoded_text_buffer.appendSlice(self.allocator, decoded_chunk);
-
-                    if (self.checkStopSequence()) {
-                        self.is_complete = true;
-                        self.stop_reason = .stop;
-                        self.truncateStopSequence();
-                        return null;
-                    }
-                } else {
-                    try self.current_tokens.append(self.allocator, t);
-                }
-
-                return t;
-            } else {
-                self.is_complete = true;
-                return null;
-            }
-        }
+        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
         const transformer = self.transformer.?;
         const cache = self.cache.?;
@@ -965,10 +875,9 @@ pub fn generateAll(
     eos_token_ids: []const u32,
     options: GenerationOptions,
     tokenizer: ?*mlx_tokenizer.Tokenizer,
-    draft_model_ref: ?*draft_model.DraftModel,
-    speculation_depth: usize,
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 ) ![]const u32 {
-    var state = try GenerationState.init(allocator, transformer, initial_tokens, eos_token_ids, options, tokenizer, draft_model_ref, speculation_depth);
+    var state = try GenerationState.init(allocator, transformer, initial_tokens, eos_token_ids, options, tokenizer);
     defer state.deinit();
 
     var result = std.ArrayList(u32).init(allocator);

@@ -238,70 +238,74 @@ pub const InferenceContext = struct {
             std.log.warn("Input truncated from {d} to {d} tokens to fit context limit", .{ input_tokens.len + max_input_tokens, max_input_tokens });
         }
 
-        // Initialize transformer
-        var transformer = try qwen.Transformer.init(self.allocator, self.model_path);
-        defer transformer.deinit();
+        // Initialize transformer based on model type
+        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+        switch (self.model_type) {
+            else => {
+                // Qwen and other models use standard MLX loader
+                var transformer = try qwen.Transformer.init(self.allocator, self.model_path);
+                defer transformer.deinit();
 
-        // Update options with adjusted max_tokens
-        var gen_options = options;
-        gen_options.max_tokens = max_new_tokens;
+                // Update options with adjusted max_tokens
+                var gen_options = options;
+                gen_options.max_tokens = max_new_tokens;
 
-        // Initialize generation state
-        var state = try generator.GenerationState.init(
-            self.allocator,
-            &transformer,
-            input_tokens,
-            self.getEosTokenIds(),
-            gen_options,
-            &self.tokenizer.?, // Pass tokenizer for stop sequence detection
-            null, // draft_model - not yet integrated
-            0, // speculation_depth - disabled for now
-        );
-        defer state.deinit();
+                // Initialize generation state
+                var state = try generator.GenerationState.init(
+                    self.allocator,
+                    &transformer,
+                    input_tokens,
+                    self.getEosTokenIds(),
+                    gen_options,
+                    &self.tokenizer.?, // Pass tokenizer for stop sequence detection
+                );
+                defer state.deinit();
 
-        // Collect tokens with timeout checking
-        var output_tokens = std.ArrayList(u32).empty;
-        errdefer output_tokens.deinit(self.allocator);
+                // Collect tokens with timeout checking
+                var output_tokens = std.ArrayList(u32).empty;
+                errdefer output_tokens.deinit(self.allocator);
 
-        while (try state.next()) |token| {
-            try output_tokens.append(self.allocator, token);
+                while (try state.next()) |token| {
+                    try output_tokens.append(self.allocator, token);
 
-            // Check timeout every token (D-33: measured from request start)
-            const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
-            if (elapsed >= timeout_ms) {
-                std.log.warn("Generation timed out after {d}ms, returning partial result", .{elapsed});
-                timed_out = true;
-                state.setStopReason(.timeout);
-                break;
-            }
+                    // Check timeout every token (D-33: measured from request start)
+                    const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
+                    if (elapsed >= timeout_ms) {
+                        std.log.warn("Generation timed out after {d}ms, returning partial result", .{elapsed});
+                        timed_out = true;
+                        state.setStopReason(.timeout);
+                        break;
+                    }
+                }
+
+                // Decode output tokens only (not full context like regular generate)
+                const text = try tokenizer_ref.decode(output_tokens.items);
+
+                // Get logprobs if enabled
+                const logprobs = if (options.logprobs_enabled) state.getLogprobs() else null;
+
+                // Set stop reason based on timeout
+                var stop_reason = state.getStopReason();
+                if (timed_out) {
+                    stop_reason = .timeout;
+                }
+
+                const result = GenerationResult{
+                    .text = text,
+                    .logprobs = logprobs,
+                    .prompt_tokens = @intCast(input_tokens.len),
+                    .completion_tokens = @intCast(output_tokens.items.len),
+                    .stop_reason = stop_reason,
+                };
+
+                self.allocator.free(input_tokens);
+
+                return TimeoutResult{
+                    .result = result,
+                    .timed_out = timed_out,
+                };
+            },
         }
-
-        // Decode output tokens only (not full context like regular generate)
-        const text = try tokenizer_ref.decode(output_tokens.items);
-
-        // Get logprobs if enabled
-        const logprobs = if (options.logprobs_enabled) state.getLogprobs() else null;
-
-        // Set stop reason based on timeout
-        var stop_reason = state.getStopReason();
-        if (timed_out) {
-            stop_reason = .timeout;
-        }
-
-        const result = GenerationResult{
-            .text = text,
-            .logprobs = logprobs,
-            .prompt_tokens = @intCast(input_tokens.len),
-            .completion_tokens = @intCast(output_tokens.items.len),
-            .stop_reason = stop_reason,
-        };
-
-        self.allocator.free(input_tokens);
-
-        return TimeoutResult{
-            .result = result,
-            .timed_out = timed_out,
-        };
     }
 
     fn getTransformer(self: *Self) !*qwen.Transformer {
@@ -367,6 +371,7 @@ pub fn generateWithLogprobs(
     const eos_token_ids = &[_]u32{ 151645, 151643 };
 
     // Initialize generation state
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     var state = try generator.GenerationState.init(
         allocator,
         transformer,
@@ -374,8 +379,6 @@ pub fn generateWithLogprobs(
         eos_token_ids,
         adjusted_options,
         tokenizer, // Pass tokenizer for stop sequence detection
-        null, // draft_model
-        0, // speculation_depth
     );
     defer state.deinit();
 
