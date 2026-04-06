@@ -336,7 +336,7 @@ Plans:
 - [x] 17-06-PLAN.md — Gap closure: shared_mlx_mod, BackendType.mlx removal (MODEL-01 partial)
 - [x] 17-07-PLAN.md — Gap closure: loadIndex() re-implemented on Deepseek branch (GAP-06)
 - [x] 17-08-PLAN.md — Gap closure: GPTOSSTransformer real forward() via embed_tokens+lm_head (GAP-03, MODEL-03)
-- [ ] 17-09-PLAN.md — Gap closure: fix all 6 failing test targets in zig build test (MODEL-01)
+- [x] 17-09-PLAN.md — Gap closure: fix all 6 failing test targets in zig build test (MODEL-01)
 
 ### Phase 18: Gemma 4 E4B
 **Goal**: Users can load Gemma 4 E4B 4-bit and receive completions via the standard `/v1/chat/completions` endpoint
@@ -414,7 +414,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 14. llama.cpp Backend Integration | 0/5 | Planned | Not Started |
 | 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
 | 16. Build & Gap Closure | 3/3 | Complete    | 2026-04-05 |
-| 17. Inference Gap Closure | 8/9 | Executing  | — |
+| 17. Inference Gap Closure | 9/9 | Complete   | 2026-04-06 |
 | 18. Gemma 4 E4B | 0/TBD | Not started | — |
 | 19. TurboQuant Metal | 0/TBD | Not started | — |
 | 20. Tools API | 0/TBD | Not started | — |
