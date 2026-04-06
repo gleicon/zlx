@@ -117,6 +117,16 @@ pub fn build(b: *std.Build) !void {
     exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "src" }) });
     exe.linkSystemLibrary("llama");
 
+    // Link ggml libraries (required by libllama.a; ggml symbols split across multiple archives)
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "ggml", "src" }) });
+    exe.linkSystemLibrary("ggml");
+    exe.linkSystemLibrary("ggml-base");
+    exe.linkSystemLibrary("ggml-cpu");
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "ggml", "src", "ggml-blas" }) });
+    exe.linkSystemLibrary("ggml-blas");
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "ggml", "src", "ggml-metal" }) });
+    exe.linkSystemLibrary("ggml-metal");
+
     // Add llama.cpp-only build step
     const llama_step = b.step("llama", "Build llama.cpp library only");
     llama_step.dependOn(&build_cmd.step);
