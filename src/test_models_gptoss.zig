@@ -252,5 +252,5 @@ test "Backend selectBackend routing" {
     try std.testing.expectEqual(backend_mod.BackendType.mlx_gptoss, select("gpt-oss-20b"));
     try std.testing.expectEqual(backend_mod.BackendType.mlx_gptoss, select("gptoss-120b"));
     try std.testing.expectEqual(backend_mod.BackendType.llama_cpp, select("deepseek-coder-v2"));
-    try std.testing.expectEqual(backend_mod.BackendType.mlx, select("qwen2.5-coder"));
+    try std.testing.expectEqual(backend_mod.BackendType.llama_cpp, select("qwen2.5-coder"));
 }
