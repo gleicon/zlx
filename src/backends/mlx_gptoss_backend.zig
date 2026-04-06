@@ -37,6 +37,10 @@ pub const MLXGPTOSSBackend = struct {
     harmony_tmpl: HarmonyTemplate,
     config: BackendConfig,
     loaded: bool,
+    // vocab/token IDs from config.json per D-06 — not hardcoded
+    vocab_size: u32,
+    eos_token: u32,
+    bos_token: u32,
 
     pub const BackendConfig = struct {
         max_context: usize = 131072,
@@ -82,6 +86,10 @@ pub const MLXGPTOSSBackend = struct {
             ),
             .config = backend_config,
             .loaded = false,
+            // GPT-OSS defaults — overwritten from config.json in load() per D-06
+            .vocab_size = 151936,
+            .eos_token = 100257,
+            .bos_token = 100256,
         };
     }
 
@@ -100,6 +108,27 @@ pub const MLXGPTOSSBackend = struct {
     /// Load model weights
     pub fn load(self: *MLXGPTOSSBackend) !void {
         if (self.loaded) return;
+
+        // Read vocab/token IDs from model config.json per D-06 — not hardcoded
+        if (self.model_path.len > 0) {
+            const config_path = try std.fs.path.join(self.allocator, &.{ self.model_path, "config.json" });
+            defer self.allocator.free(config_path);
+
+            if (std.fs.openFileAbsolute(config_path, .{})) |f| {
+                defer f.close();
+                const content = try f.readToEndAlloc(self.allocator, 1024 * 1024);
+                defer self.allocator.free(content);
+                const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, content, .{});
+                defer parsed.deinit();
+                const obj = parsed.value.object;
+                if (obj.get("vocab_size")) |v| self.vocab_size = @intCast(v.integer);
+                if (obj.get("eos_token_id")) |v| self.eos_token = @intCast(v.integer);
+                if (obj.get("bos_token_id")) |v| self.bos_token = @intCast(v.integer);
+                std.log.info("GPT-OSS config: vocab_size={d}, eos={d}, bos={d}", .{ self.vocab_size, self.eos_token, self.bos_token });
+            } else |err| {
+                std.log.warn("GPT-OSS: Could not open config.json at {s}: {}. Using GPT-OSS defaults.", .{ config_path, err });
+            }
+        }
 
         // Create weight config based on variant
         const weight_config = switch (self.model_variant) {
@@ -214,24 +243,19 @@ pub const MLXGPTOSSBackend = struct {
         self.loaded = false;
     }
 
-    /// Get vocabulary size
+    /// Get vocabulary size — from config.json field loaded at runtime per D-06
     pub fn getVocabSize(self: *const MLXGPTOSSBackend) u32 {
-        return switch (self.model_variant) {
-            .gptoss_20b => 151936,
-            .gptoss_120b => 151936,
-        };
+        return self.vocab_size;
     }
 
-    /// Get EOS token
+    /// Get EOS token — from config.json field loaded at runtime per D-06
     pub fn getEosToken(self: *const MLXGPTOSSBackend) u32 {
-        _ = self;
-        return 100257; // GPT-OSS EOS token
+        return self.eos_token;
     }
 
-    /// Get BOS token
+    /// Get BOS token — from config.json field loaded at runtime per D-06
     pub fn getBosToken(self: *const MLXGPTOSSBackend) u32 {
-        _ = self;
-        return 100256; // GPT-OSS BOS token
+        return self.bos_token;
     }
 };
 
