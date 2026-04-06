@@ -697,6 +697,7 @@ pub fn build(b: *std.Build) !void {
     gptoss_test_mod.addImport("backends/backend.zig", backend_base_mod);
     gptoss_test_mod.addImport("backends/mlx_gptoss_backend.zig", mlx_gptoss_backend_mod);
     gptoss_test_mod.addImport("model/gptoss_manager.zig", gptoss_manager_mod);
+    gptoss_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
 
     const gptoss_test = b.addTest(.{
         .name = "gptoss_test",
