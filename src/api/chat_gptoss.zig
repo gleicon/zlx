@@ -212,8 +212,12 @@ pub const ChatGPTOSSHandler = struct {
         const harmony_prompt = try template.formatHarmonyChat(openai_messages.items, null);
         defer self.allocator.free(harmony_prompt);
 
-        // Tokenize prompt (stub — returns empty for now; real tokenizer in future)
-        const prompt_tokens = try self.allocator.alloc(u32, 0);
+        // Tokenize prompt using MLXGPTOSSBackend.tokenize() — real tokenizer call per D-01 — replaced alloc(u32, 0) stub
+        const prompt_tokens = try mlx_gptoss_backend.tokenize(
+            @ptrCast(self.gptoss_backend),
+            harmony_prompt,
+            self.allocator,
+        );
         defer self.allocator.free(prompt_tokens);
 
         // Generate
