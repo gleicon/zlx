@@ -9,7 +9,7 @@ const qwen = @import("../mlx.zig/src/qwen.zig");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
 // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 const backends = @import("../backends/mod.zig");
-const factory = @import("../backends/factory.zig");
+// factory: removed — backlog item, evaluate after core inference is stable
 const registry = @import("../models/registry.zig");
 
 // TODO(14-05): Generator is being migrated to use backends.Backend abstraction

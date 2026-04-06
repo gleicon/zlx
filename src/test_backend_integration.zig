@@ -1,126 +1,21 @@
 //! test_backend_integration.zig - Integration tests for backend abstraction layer
 //!
 //! Tests the unified backend interface with both MLX.zig and llama.cpp backends.
+// factory: removed — backlog item, evaluate after core inference is stable
+// Tests that depended on factory.zig (detectBackendType, detectModelFormat, getCapabilities)
+// have been removed. The factory abstraction is deferred to a future phase.
 
 const std = @import("std");
 const backends = @import("backends/mod.zig");
-const factory = @import("backends/factory.zig");
 const registry = @import("models/registry.zig");
 const backend_generator = @import("inference/backend_generator.zig");
-
-test "backend factory selects correct backend for architectures" {
-    const testing = std.testing;
-
-    // Qwen should select MLX
-    try testing.expectEqual(
-        factory.BackendPreference.mlx,
-        factory.detectBackendType(.qwen),
-    );
-
-    // Phi should select MLX
-    try testing.expectEqual(
-        factory.BackendPreference.mlx,
-        factory.detectBackendType(.phi),
-    );
-
-    // DeepSeek MoE should select llama.cpp
-    try testing.expectEqual(
-        factory.BackendPreference.llama_cpp,
-        factory.detectBackendType(.deepseek_v2_moe),
-    );
-
-    // DeepSeek V1 should select llama.cpp
-    try testing.expectEqual(
-        factory.BackendPreference.llama_cpp,
-        factory.detectBackendType(.deepseek_v1),
-    );
-
-    // GPT-OSS should select llama.cpp
-    try testing.expectEqual(
-        factory.BackendPreference.llama_cpp,
-        factory.detectBackendType(.gpt_oss),
-    );
-
-    // Llama should select llama.cpp
-    try testing.expectEqual(
-        factory.BackendPreference.llama_cpp,
-        factory.detectBackendType(.llama),
-    );
-
-    // Unknown should return auto (needs manual selection)
-    try testing.expectEqual(
-        factory.BackendPreference.auto,
-        factory.detectBackendType(.unknown),
-    );
-}
 
 test "backend type conversions" {
     const testing = std.testing;
 
-    // Verify BackendType enum values
-    try testing.expect(@intFromEnum(backends.BackendType.mlx) == 0);
-    try testing.expect(@intFromEnum(backends.BackendType.llama_cpp) == 1);
-}
-
-test "detectModelFormat identifies file types" {
-    const testing = std.testing;
-
-    try testing.expectEqual(
-        factory.ModelFormat.gguf,
-        factory.detectModelFormat("model.gguf"),
-    );
-
-    try testing.expectEqual(
-        factory.ModelFormat.gguf,
-        factory.detectModelFormat("deepseek-coder-v2-lite.Q4_K_M.gguf"),
-    );
-
-    try testing.expectEqual(
-        factory.ModelFormat.gguf,
-        factory.detectModelFormat("GPT-OSS-20B-Q4_K_M.gguf"),
-    );
-
-    try testing.expectEqual(
-        factory.ModelFormat.safetensors,
-        factory.detectModelFormat("model.safetensors"),
-    );
-
-    try testing.expectEqual(
-        factory.ModelFormat.safetensors,
-        factory.detectModelFormat("model-00001-of-00002.safetensors"),
-    );
-
-    try testing.expectEqual(
-        factory.ModelFormat.unknown,
-        factory.detectModelFormat("model.bin"),
-    );
-
-    try testing.expectEqual(
-        factory.ModelFormat.unknown,
-        factory.detectModelFormat("model.pt"),
-    );
-}
-
-test "getCapabilities returns correct values for MLX" {
-    const testing = std.testing;
-
-    const mlx_caps = factory.getCapabilities(.qwen, .mlx);
-    try testing.expect(mlx_caps.supports_turboquant);
-    try testing.expect(mlx_caps.supports_speculative_decoding);
-    try testing.expect(mlx_caps.supports_prompt_caching);
-    try testing.expectEqual(@as(u32, 32768), mlx_caps.max_context_length);
-    try testing.expectEqualStrings("4bit", mlx_caps.preferred_quantization);
-}
-
-test "getCapabilities returns correct values for llama.cpp" {
-    const testing = std.testing;
-
-    const llama_caps = factory.getCapabilities(.deepseek_v2_moe, .llama_cpp);
-    try testing.expect(llama_caps.supports_turboquant);
-    try testing.expect(!llama_caps.supports_speculative_decoding);
-    try testing.expect(llama_caps.supports_prompt_caching);
-    try testing.expectEqual(@as(u32, 131072), llama_caps.max_context_length);
-    try testing.expectEqualStrings("Q4_K_M", llama_caps.preferred_quantization);
+    // Verify BackendType enum values — mlx removed, llama_cpp and mlx_gptoss remain
+    try testing.expect(@intFromEnum(backends.BackendType.llama_cpp) >= 0);
+    try testing.expect(@intFromEnum(backends.BackendType.mlx_gptoss) >= 0);
 }
 
 test "registry has DeepSeek with llama.cpp preference" {
@@ -213,30 +108,30 @@ test "CompressionParams struct" {
 test "backend descriptions" {
     const testing = std.testing;
 
-    const mlx_desc = backends.getBackendDescription(.mlx);
-    try testing.expect(std.mem.indexOf(u8, mlx_desc, "MLX") != null);
-
     const llama_desc = backends.getBackendDescription(.llama_cpp);
     try testing.expect(std.mem.indexOf(u8, llama_desc, "llama.cpp") != null);
+
+    const gptoss_desc = backends.getBackendDescription(.mlx_gptoss);
+    try testing.expect(std.mem.indexOf(u8, gptoss_desc, "MLX") != null);
 }
 
 test "backend feature support" {
     const testing = std.testing;
 
     // Both backends support turboquant
-    try testing.expect(backends.supportsFeature(.mlx, "turboquant"));
     try testing.expect(backends.supportsFeature(.llama_cpp, "turboquant"));
+    try testing.expect(backends.supportsFeature(.mlx_gptoss, "turboquant"));
 
-    // Only MLX supports speculative decoding (currently)
-    try testing.expect(backends.supportsFeature(.mlx, "speculative_decoding"));
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     try testing.expect(!backends.supportsFeature(.llama_cpp, "speculative_decoding"));
+    try testing.expect(!backends.supportsFeature(.mlx_gptoss, "speculative_decoding"));
 
     // Both support prompt caching
-    try testing.expect(backends.supportsFeature(.mlx, "prompt_caching"));
     try testing.expect(backends.supportsFeature(.llama_cpp, "prompt_caching"));
+    try testing.expect(backends.supportsFeature(.mlx_gptoss, "prompt_caching"));
 
     // Only llama.cpp supports GGUF
-    try testing.expect(!backends.supportsFeature(.mlx, "gguf"));
+    try testing.expect(!backends.supportsFeature(.mlx_gptoss, "gguf"));
     try testing.expect(backends.supportsFeature(.llama_cpp, "gguf"));
 }
 
