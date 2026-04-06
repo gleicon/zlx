@@ -219,6 +219,7 @@ pub fn build(b: *std.Build) !void {
         }),
     });
     backend_integration_test.root_module.addImport("backends", backends_mod);
+    configureExecutable(backend_integration_test, b, deps);
 
     const run_backend_integration_test = b.addRunArtifact(backend_integration_test);
     test_step.dependOn(&run_backend_integration_test.step);
@@ -363,6 +364,7 @@ pub fn build(b: *std.Build) !void {
         .name = "moe_test",
         .root_module = moe_test_mod,
     });
+    configureExecutable(moe_test, b, deps);
 
     const run_moe_test = b.addRunArtifact(moe_test);
     test_step.dependOn(&run_moe_test.step);
@@ -679,6 +681,7 @@ pub fn build(b: *std.Build) !void {
         .name = "gptoss_test",
         .root_module = gptoss_test_mod,
     });
+    configureExecutable(gptoss_test, b, deps);
 
     const run_gptoss_test = b.addRunArtifact(gptoss_test);
     const test_gptoss_step = b.step("test-gptoss", "Run GPT-OSS integration tests (Phase 15)");
@@ -697,6 +700,7 @@ pub fn build(b: *std.Build) !void {
         .name = "gptoss_manager_test",
         .root_module = gptoss_manager_test_mod,
     });
+    configureExecutable(gptoss_manager_test, b, deps);
 
     const run_gptoss_manager_test = b.addRunArtifact(gptoss_manager_test);
     test_step.dependOn(&run_gptoss_manager_test.step);
