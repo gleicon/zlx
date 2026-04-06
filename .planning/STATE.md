@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "It Just Works"
 status: executing
-stopped_at: Completed 17-01-PLAN.md — speculation removal
-last_updated: "2026-04-06T00:17:19.602Z"
+stopped_at: Completed 17-02-PLAN.md — delete orphaned backend stubs
+last_updated: "2026-04-06T00:22:47.351Z"
 last_activity: 2026-04-06
 progress:
   total_phases: 20
   completed_phases: 8
   total_plans: 48
-  completed_plans: 44
+  completed_plans: 45
   percent: 82
 ---
 
@@ -33,7 +33,7 @@ See: .planning/PROJECT.md (updated 2026-04-05)
 
 Milestone: v2.0 "It Just Works"
 Phase: 17 (inference-gap-closure) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-04-06
 
@@ -87,6 +87,13 @@ Progress: [████████████████░░░░] 46/56 p
 
 ## Decision Log
 
+**2026-04-06:** Phase 17 Plan 02 — delete orphaned backend stubs (GAP-02, GAP-05)
+
+- **Decision**: D-04 executed: `factory.zig` and `mlx_backend.zig` deleted — confirmed pure stubs never called by live inference path
+- **Decision**: GAP-02 closed: hardcoded `vocab_size=32000`, `eos_token=2`, `bos_token=1` eliminated — lived exclusively in deleted `mlx_backend.zig`
+- **Decision**: `BackendType.mlx` removed from union; Qwen inference uses `inference/mod.zig` + MLX.zig directly; Backend union now only has `.llama_cpp` and `.mlx_gptoss` arms
+- **Decision**: `BackendGenerator` stub kept with `error.NotImplemented` — preserves type surface for Phase 18 without introducing false factory path
+
 **2026-04-05:** Phase 16 complete — build gap closure
 
 - **Decision**: MLA stub (Approach B) used for `MultiHeadLatentAttention` init — `init()` returns `!*Self` (heap pointer) but `DeepSeekLayer.mla` is a value type; dereferencing heap-allocated struct while `deinit()` calls `allocator.destroy(self)` would cause use-after-free
@@ -116,6 +123,6 @@ Progress: [████████████████░░░░] 46/56 p
 ## Session Continuity
 
 Last activity: 2026-04-05 - Phase 16 complete (build gap closure)
-Last session: 2026-04-06T00:17:19.600Z
-Stopped at: Completed 17-01-PLAN.md — speculation removal
+Last session: 2026-04-06T00:22:47.348Z
+Stopped at: Completed 17-02-PLAN.md — delete orphaned backend stubs
 Resume: `/gsd:plan-phase 17`
