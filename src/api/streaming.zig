@@ -131,6 +131,7 @@ pub fn streamResponse(
     defer transformer.deinit();
 
     // Use generation state with full sampling support
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     var state = try generator.GenerationState.init(
         allocator,
         &transformer,
@@ -138,8 +139,6 @@ pub fn streamResponse(
         transformer.eos_token_ids,
         gen_options,
         &ctx.tokenizer.?, // Pass tokenizer for stop sequence detection
-        null, // draft_model
-        0, // speculation_depth
     );
     defer state.deinit();
 
@@ -400,6 +399,7 @@ pub fn generateNonStreamingResponse(
     const eos_token_ids = transformer.eos_token_ids;
 
     // Initialize generation state
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     var state = try generator.GenerationState.init(
         allocator,
         &transformer,
@@ -407,8 +407,6 @@ pub fn generateNonStreamingResponse(
         eos_token_ids,
         gen_options,
         &ctx.tokenizer.?, // Pass tokenizer for stop sequence detection
-        null, // draft_model
-        0, // speculation_depth
     );
     defer state.deinit();
 
