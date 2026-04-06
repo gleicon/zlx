@@ -221,8 +221,8 @@ These requirements improve reliability, monitoring, and operations.
 - [ ] **GAP-03**: GPT-OSS native MLX forward pass implemented with real tensor computation (layer embeddings, attention, FFN) — not returning `mlx.zeros()`
 - [ ] **GAP-04**: GPT-OSS tokenizer wired to real tokenizer (tiktoken or Qwen-compatible) — `tokenize()` does not return empty slice
 - [ ] **GAP-05**: MLX backend factory (`createMlxBackend`) creates a real backend object, not a stub `u8` pointer
-- [ ] **GAP-06**: Prompt cache `parseIndex()` reads actual cache index entries from disk — not returning empty
-- [ ] **GAP-07**: Speculative decoding wired to main generation path (or explicitly removed with clear documentation if deferred)
+- [x] **GAP-06**: Prompt cache `parseIndex()` reads actual cache index entries from disk — not returning empty
+- [x] **GAP-07**: Speculative decoding wired to main generation path (or explicitly removed with clear documentation if deferred)
 - [x] **GAP-08**: Build system compiles without deprecation errors on Zig 0.15.2 (`b.pathJoin` → correct API, all `@compileError` and deprecated paths resolved)
 - [x] **GAP-09**: `mlx.arrayIsEmpty()` calls removed or replaced with a valid MLX.zig API call — no undefined symbol at link time
 - [x] **GAP-10**: `MultiHeadLatentAttention` struct field mismatch in `loader.zig` resolved — struct definition and initialization agree
