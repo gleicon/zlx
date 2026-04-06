@@ -14,6 +14,8 @@ pub const LlamaBackend = struct {
     model: *llama_c.llama_model,
     /// llama.cpp context handle
     ctx: *llama_c.llama_context,
+    /// llama.cpp vocab handle (owned by model, do not free separately)
+    vocab: *const llama_c.llama_vocab,
     /// Memory allocator
     allocator: std.mem.Allocator,
     /// Vocabulary size
@@ -50,19 +52,20 @@ pub const LlamaBackend = struct {
         ctx_params.n_batch = 512;
         ctx_params.n_threads = @intCast(std.Thread.getCpuCount() catch 4);
         ctx_params.n_threads_batch = ctx_params.n_threads;
-        ctx_params.seed = 42;
+        // Note: seed was removed from llama_context_params in newer llama.cpp; use llama_sampler_init_dist(seed) instead
 
         // 4. Create context
         const ctx = llama_c.llama_new_context_with_model(model, ctx_params) orelse {
-            std.log.err("Failed to create llama.cpp context");
+            std.log.err("Failed to create llama.cpp context", .{});
             llama_c.llama_model_free(model);
             return error.ContextCreationFailed;
         };
 
-        // 5. Get metadata
-        const vocab_size = @as(u32, @intCast(llama_c.llama_n_vocab(model)));
-        const eos_token = llama_c.llama_token_eos(model);
-        const bos_token = llama_c.llama_token_bos(model);
+        // 5. Get metadata via vocab API (llama_n_vocab/llama_token_eos/llama_token_bos now take llama_vocab*)
+        const vocab = llama_c.llama_model_get_vocab(model);
+        const vocab_size = @as(u32, @intCast(llama_c.llama_vocab_n_tokens(vocab)));
+        const eos_token = llama_c.llama_vocab_eos(vocab);
+        const bos_token = llama_c.llama_vocab_bos(vocab);
 
         std.log.info("llama.cpp model loaded: vocab={d}, eos={d}, bos={d}", .{
             vocab_size,
@@ -73,11 +76,12 @@ pub const LlamaBackend = struct {
         return LlamaBackend{
             .model = model,
             .ctx = ctx,
+            .vocab = vocab.?,
             .allocator = allocator,
             .vocab_size = vocab_size,
             .eos_token = eos_token,
             .bos_token = bos_token,
-            .seed = ctx_params.seed,
+            .seed = 42, // default seed (llama_context_params.seed removed in newer llama.cpp)
         };
     }
 
@@ -95,9 +99,9 @@ pub const LlamaBackend = struct {
         var tokens = try self.allocator.alloc(llama_c.llama_token, max_tokens);
         errdefer self.allocator.free(tokens);
 
-        // Tokenize with BOS
+        // Tokenize with BOS (llama_tokenize now takes llama_vocab* not llama_model*)
         const n_tokens = llama_c.llama_tokenize(
-            self.model,
+            self.vocab,
             text.ptr,
             @intCast(text.len),
             tokens.ptr,
@@ -144,16 +148,12 @@ pub const LlamaBackend = struct {
     }
 
     /// Sample next token using configured sampler
+    /// Uses llama_sampler_sample (new API; llama_sample_token was removed)
     pub fn sample(
         self: *LlamaBackend,
         sampler: *llama_c.llama_sampler,
     ) llama_c.llama_token {
-        // Get logits
-        const logits = llama_c.llama_get_logits(self.ctx);
-        const n_vocab = @as(usize, @intCast(self.vocab_size));
-
-        // Sample
-        return llama_c.llama_sample_token(self.ctx, sampler, logits, n_vocab);
+        return llama_c.llama_sampler_sample(sampler, self.ctx, -1);
     }
 
     /// Get vocabulary size
@@ -294,8 +294,8 @@ pub fn llamaGenerate(
                     return null;
                 }
 
-                // Get token text
-                const token_text = llama_c.llama_token_get_text(it.backend.model, token);
+                // Get token text (llama_token_get_text now takes llama_vocab* not llama_model*)
+                const token_text = llama_c.llama_token_get_text(it.backend.vocab, token);
                 const text_copy = try it_allocator.dupe(u8, std.mem.sliceTo(token_text, 0));
 
                 // Decode for next iteration

@@ -73,7 +73,7 @@ pub const ChatDeepSeekHandler = struct {
         // Extract model
         const model_val = root.get("model") orelse {
             res.status = 400;
-            try res.write("{\"error\": \"Missing model field\"}");
+            try res.writer().writeAll("{\"error\": \"Missing model field\"}");
             return;
         };
         const model = model_val.string;

@@ -42,6 +42,12 @@ pub const llama_token_bos = c.llama_token_bos;
 pub const llama_token_nl = c.llama_token_nl;
 pub const llama_n_vocab = c.llama_n_vocab;
 
+// Vocab API (new in recent llama.cpp — n_vocab/bos/eos now take llama_vocab* not llama_model*)
+pub const llama_model_get_vocab = c.llama_model_get_vocab;
+pub const llama_vocab_n_tokens = c.llama_vocab_n_tokens;
+pub const llama_vocab_bos = c.llama_vocab_bos;
+pub const llama_vocab_eos = c.llama_vocab_eos;
+
 // KV cache functions
 pub const llama_get_kv_cache_token_count = c.llama_get_kv_cache_token_count;
 pub const llama_kv_cache_update = c.llama_kv_cache_update;
@@ -51,7 +57,8 @@ pub const llama_kv_cache_clear = c.llama_kv_cache_clear;
 pub const llama_decode = c.llama_decode;
 pub const llama_get_logits = c.llama_get_logits;
 pub const llama_sample_token_greedy = c.llama_sample_token_greedy;
-pub const llama_sample_token = c.llama_sample_token;
+// llama_sample_token was removed; use llama_sampler_sample(smpl, ctx, idx) instead
+pub const llama_sampler_sample = c.llama_sampler_sample;
 
 // Sampler chain functions
 pub const llama_sampler_chain_init = c.llama_sampler_chain_init;
