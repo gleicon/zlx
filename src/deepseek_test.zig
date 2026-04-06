@@ -80,16 +80,16 @@ test "DeepSeek layer structure" {
 
     // Verify struct layout by checking field types
     // This is a compile-time test
-    const input_norm_info = @typeInfo(TestLayer).Struct.fields[0];
+    const input_norm_info = @typeInfo(TestLayer).@"struct".fields[0];
     try std.testing.expectEqualStrings("input_norm", input_norm_info.name);
 
-    const mla_info = @typeInfo(TestLayer).Struct.fields[1];
+    const mla_info = @typeInfo(TestLayer).@"struct".fields[1];
     try std.testing.expectEqualStrings("mla", mla_info.field_type);
 
-    const post_attn_norm_info = @typeInfo(TestLayer).Struct.fields[2];
+    const post_attn_norm_info = @typeInfo(TestLayer).@"struct".fields[2];
     try std.testing.expectEqualStrings("post_attn_norm", post_attn_norm_info.name);
 
-    const moe_info = @typeInfo(TestLayer).Struct.fields[3];
+    const moe_info = @typeInfo(TestLayer).@"struct".fields[3];
     try std.testing.expectEqualStrings("moe", moe_info.field_type);
 }
 
@@ -151,7 +151,7 @@ test "ModelUnion supports DeepSeek variant" {
     const union_info = @typeInfo(inference.ModelUnion);
     var has_deepseek = false;
 
-    for (union_info.Union.fields) |field| {
+    for (union_info.@"union".fields) |field| {
         if (std.mem.eql(u8, field.name, "deepseek")) {
             has_deepseek = true;
             break;
@@ -166,16 +166,16 @@ test "DeepSeekWeights structure" {
     // Verify DeepSeekWeights has required fields
     const TestWeights = deepseek.DeepSeekWeights;
 
-    const token_embed_info = @typeInfo(TestWeights).Struct.fields[0];
+    const token_embed_info = @typeInfo(TestWeights).@"struct".fields[0];
     try std.testing.expectEqualStrings("token_embedding", token_embed_info.name);
 
-    const layers_info = @typeInfo(TestWeights).Struct.fields[1];
+    const layers_info = @typeInfo(TestWeights).@"struct".fields[1];
     try std.testing.expectEqualStrings("layers", layers_info.name);
 
-    const norm_info = @typeInfo(TestWeights).Struct.fields[2];
+    const norm_info = @typeInfo(TestWeights).@"struct".fields[2];
     try std.testing.expectEqualStrings("norm", norm_info.name);
 
-    const lm_head_info = @typeInfo(TestWeights).Struct.fields[3];
+    const lm_head_info = @typeInfo(TestWeights).@"struct".fields[3];
     try std.testing.expectEqualStrings("lm_head", lm_head_info.name);
 }
 
