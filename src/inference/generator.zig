@@ -912,7 +912,7 @@ test "GenerationState basic test" {
         .stop_on_eos = true,
     };
 
-    var state = try GenerationState.init(allocator, &transformer, &initial_tokens, transformer.eos_token_ids, options, null, null, 0);
+    var state = try GenerationState.init(allocator, &transformer, &initial_tokens, transformer.eos_token_ids, options, null);
     defer state.deinit();
 
     // Generate a few tokens
