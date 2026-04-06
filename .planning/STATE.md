@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "It Just Works"
 status: executing
-stopped_at: Completed 17-02-PLAN.md — delete orphaned backend stubs
-last_updated: "2026-04-06T00:22:47.351Z"
+stopped_at: Completed 17-03-PLAN.md — DeepSeek handler wired into server.zig
+last_updated: "2026-04-06T12:32:42.282Z"
 last_activity: 2026-04-06
 progress:
   total_phases: 20
   completed_phases: 8
   total_plans: 48
-  completed_plans: 45
+  completed_plans: 46
   percent: 82
 ---
 
@@ -33,11 +33,11 @@ See: .planning/PROJECT.md (updated 2026-04-05)
 
 Milestone: v2.0 "It Just Works"
 Phase: 17 (inference-gap-closure) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-04-06
 
-Progress: [████████████████░░░░] 46/56 plans (82%)
+Progress: [██████████] 46/48 plans (96%)
 
 ## v2.0 Phase Summary
 
@@ -87,6 +87,13 @@ Progress: [████████████████░░░░] 46/56 p
 
 ## Decision Log
 
+**2026-04-06:** Phase 17 Plan 03 — DeepSeek handler wired, llama.cpp API migrated, zig build fixed (GAP-03, MODEL-02, MODEL-03)
+
+- **Decision**: D-01 applied: `g_chat_deepseek_handler` global in `server.zig` dispatches by `deepseek` prefix — no factory/registry layer
+- **Decision**: D-06 applied: `vocab_size`, `eos_token`, `bos_token` read from `LlamaBackend` accessors via `llama_model_get_vocab()` — never hardcoded
+- **Decision**: ggml sub-libraries added to `build.zig` (`libggml.a`, `libggml-base.a`, `libggml-cpu.a`, `libggml-blas.a`, `libggml-metal.a`) — unblocks linker; `zig build` exits 0
+- **Decision**: llama.cpp vocab API migrated: seed removed from context_params; all vocab/token functions now take `llama_vocab*`; `llama_sample_token` replaced by `llama_sampler_sample`
+
 **2026-04-06:** Phase 17 Plan 02 — delete orphaned backend stubs (GAP-02, GAP-05)
 
 - **Decision**: D-04 executed: `factory.zig` and `mlx_backend.zig` deleted — confirmed pure stubs never called by live inference path
@@ -123,6 +130,6 @@ Progress: [████████████████░░░░] 46/56 p
 ## Session Continuity
 
 Last activity: 2026-04-05 - Phase 16 complete (build gap closure)
-Last session: 2026-04-06T00:22:47.348Z
-Stopped at: Completed 17-02-PLAN.md — delete orphaned backend stubs
+Last session: 2026-04-06T12:32:42.279Z
+Stopped at: Completed 17-03-PLAN.md — DeepSeek handler wired into server.zig
 Resume: `/gsd:plan-phase 17`
