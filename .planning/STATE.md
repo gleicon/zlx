@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "It Just Works"
 status: executing
-stopped_at: Completed 17-09-PLAN.md — zig build test module wiring, all import-path and C-header errors fixed
-last_updated: "2026-04-06T19:10:01.149Z"
+stopped_at: Completed 17-10-PLAN.md — all compile and runtime failures fixed; 35/35 steps, 109/109 tests pass
+last_updated: "2026-04-06T21:00:00.000Z"
 last_activity: 2026-04-06
 progress:
   total_phases: 20
   completed_phases: 9
-  total_plans: 52
-  completed_plans: 51
-  percent: 96
+  total_plans: 53
+  completed_plans: 52
+  percent: 98
 ---
 
 # Project State
@@ -33,9 +33,9 @@ See: .planning/PROJECT.md (updated 2026-04-05)
 
 Milestone: v2.0 "It Just Works"
 Phase: 17 (inference-gap-closure) — EXECUTING
-Plan: 2 of 9
+Plan: 2 of 10
 Status: Ready to execute
-Last activity: 2026-04-06
+Last activity: 2026-04-07
 
 Progress: [██████████] 46/48 plans (96%)
 
@@ -87,6 +87,12 @@ Progress: [██████████] 46/48 plans (96%)
 
 ## Decision Log
 
+**2026-04-06:** Phase 17 Plan 10 — all compile + runtime failures fixed; 35/35 steps, 109/109 tests pass (GAP-01, MODEL-01)
+
+- **Decision**: MLX null-ctx guard: `array.ctx == null` must be used instead of `mlx.arrayIsEmpty()` — arrayIsEmpty calls `mlx_array_size` → `mlx_array_get_()` which calls `exit(-1)` on null ctx
+- **Decision**: `mla.MultiHeadLatentAttention.deinit()` calls `allocator.destroy(self)` — bypass it when struct is a VALUE field; manually free individual arrays
+- **Decision**: `mlx.randomNormal` allocates/frees GPU stream internally — callers stay simple, consistent with `zeros` helper
+
 **2026-04-06:** Phase 17 Plan 03 — DeepSeek handler wired, llama.cpp API migrated, zig build fixed (GAP-03, MODEL-02, MODEL-03)
 
 - **Decision**: D-01 applied: `g_chat_deepseek_handler` global in `server.zig` dispatches by `deepseek` prefix — no factory/registry layer
@@ -130,6 +136,6 @@ Progress: [██████████] 46/48 plans (96%)
 ## Session Continuity
 
 Last activity: 2026-04-05 - Phase 16 complete (build gap closure)
-Last session: 2026-04-06T19:10:01.146Z
-Stopped at: Completed 17-09-PLAN.md — zig build test module wiring, all import-path and C-header errors fixed
-Resume: `/gsd:plan-phase 17`
+Last session: 2026-04-06T21:00:00.000Z
+Stopped at: Completed 17-10-PLAN.md — all Phase 17 compile/runtime failures fixed; 35/35 steps, 109/109 tests pass
+Resume: `/gsd:execute-phase 18`
