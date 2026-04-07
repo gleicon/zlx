@@ -320,6 +320,7 @@ pub const ModelMetadata = struct {
     pub fn deinit(self: *ModelMetadata) void {
         self.allocator.free(self.id);
         self.allocator.free(self.path);
+        if (self.config.model_type.len > 0) self.allocator.free(self.config.model_type);
     }
 };
 
@@ -565,20 +566,22 @@ pub const ModelRegistry = struct {
         // - KV cache: 2 * num_layers * hidden_size * max_seq_len * bytes_per_param
         // - Activations: ~20% overhead buffer
 
-        const bytes_per_param: u8 = switch (config.quantization_bits) {
-            8 => 1,
-            16 => 2,
-            32 => 4,
-            else => 2, // Default to FP16
-        };
-
         const num_params = config.estimateParameterCount();
 
-        // Weights memory
-        const weights_bytes = num_params * bytes_per_param;
+        // Weights memory — handle sub-byte quantization (4-bit = 0.5 bytes/param)
+        const weights_bytes: u64 = switch (config.quantization_bits) {
+            4 => num_params / 2, // 2 values packed per byte
+            8 => num_params * 1,
+            16 => num_params * 2,
+            32 => num_params * 4,
+            else => num_params * 2, // Default to FP16
+        };
 
-        // KV cache memory (2 for K and V, per layer)
-        const kv_bytes_per_token = 2 * @as(u64, config.num_layers) * @as(u64, config.hidden_size) * bytes_per_param;
+        // KV cache bytes_per_param (always FP16 at runtime regardless of weight quant)
+        const kv_bytes_per_param: u64 = 2;
+
+        // KV cache memory (2 for K and V, per layer) — always FP16 at runtime
+        const kv_bytes_per_token = 2 * @as(u64, config.num_layers) * @as(u64, config.hidden_size) * kv_bytes_per_param;
         const kv_cache_bytes = kv_bytes_per_token * self.max_context_length;
 
         // Activations overhead (20% buffer)
