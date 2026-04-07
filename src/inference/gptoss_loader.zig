@@ -21,6 +21,7 @@ pub const GptOssLoadError = error{
     UnsupportedQuantization,
     SafetensorsError,
     ConfigError,
+    OutOfMemory,
 };
 
 /// Register all weight keys for GPT-OSS model
@@ -34,7 +35,7 @@ pub fn registerGptOssWeightKeys(
     allocator: std.mem.Allocator,
     weight_index: *std.StringHashMap([]const u8),
     config: gpt_oss.GptOssConfig,
-) !void {
+) GptOssLoadError!void {
     // Embedding and output
     try weight_index.put(try allocator.dupe(u8, "model.embed_tokens.weight"), "model.safetensors");
     try weight_index.put(try allocator.dupe(u8, "model.norm.weight"), "model.safetensors");
@@ -42,28 +43,28 @@ pub fn registerGptOssWeightKeys(
 
     // 24 layers
     var buf: [256]u8 = undefined;
-    for (0..config.num_layers) |layer_idx| {
+    for (0..config.num_hidden_layers) |layer_idx| {
         // Layer norms (not quantized)
-        const input_ln = try std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx});
+        const input_ln = std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx}) catch unreachable;
         try weight_index.put(try allocator.dupe(u8, input_ln), "model.safetensors");
 
-        const post_ln = try std.fmt.bufPrint(&buf, "model.layers.{d}.post_attention_layernorm.weight", .{layer_idx});
+        const post_ln = std.fmt.bufPrint(&buf, "model.layers.{d}.post_attention_layernorm.weight", .{layer_idx}) catch unreachable;
         try weight_index.put(try allocator.dupe(u8, post_ln), "model.safetensors");
 
         // Attention (Q, K, V, O projections) - may be quantized
         for ([_][]const u8{ "q", "k", "v", "o" }) |proj| {
-            const attn_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.{s}_proj.weight", .{ layer_idx, proj });
+            const attn_key = std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.{s}_proj.weight", .{ layer_idx, proj }) catch unreachable;
             try weight_index.put(try allocator.dupe(u8, attn_key), "model.safetensors");
         }
 
         // MoE router (not quantized)
-        const router_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.router.weight", .{layer_idx});
+        const router_key = std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.router.weight", .{layer_idx}) catch unreachable;
         try weight_index.put(try allocator.dupe(u8, router_key), "model.safetensors");
 
         // 32 experts per layer (all quantized in MXFP4)
         for (0..config.num_experts) |expert_idx| {
             for ([_][]const u8{ "gate", "up", "down" }) |proj| {
-                const expert_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.{s}_proj.weight", .{ layer_idx, expert_idx, proj });
+                const expert_key = std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.{s}_proj.weight", .{ layer_idx, expert_idx, proj }) catch unreachable;
                 try weight_index.put(try allocator.dupe(u8, expert_key), "model.safetensors");
             }
         }
@@ -90,8 +91,8 @@ pub fn loadGptOssWeights(
     _ = quant_config;
 
     // Parse safetensors index to find weight locations
-    var index_path_buf: [512]u8 = undefined;
-    const index_path = try std.fmt.bufPrint(&index_path_buf, "{s}/model.safetensors.index.json", .{model_path});
+    var index_path_buf: [1024]u8 = undefined;
+    const index_path = std.fmt.bufPrint(&index_path_buf, "{s}/model.safetensors.index.json", .{model_path}) catch return GptOssLoadError.ConfigError;
 
     var weight_index = std.StringHashMap([]const u8).init(allocator);
     defer {
@@ -118,14 +119,14 @@ pub fn loadGptOssWeights(
         .token_embedding = mlx.arrayNew(),
         .norm = mlx.arrayNew(),
         .lm_head = mlx.arrayNew(),
-        .layers = try allocator.alloc(gpt_oss.GptOssLayer, config.num_layers),
+        .layers = try allocator.alloc(gpt_oss.GptOssLayer, config.num_hidden_layers),
     };
     errdefer {
         mlx.arrayFree(weights.token_embedding);
         mlx.arrayFree(weights.norm);
         mlx.arrayFree(weights.lm_head);
         for (weights.layers) |*layer| {
-            layer.deinit();
+            layer.deinit(allocator);
         }
         allocator.free(weights.layers);
     }
@@ -139,29 +140,29 @@ pub fn loadGptOssWeights(
 
     // Load per-layer weights
     var buf: [256]u8 = undefined;
-    for (0..config.num_layers) |layer_idx| {
+    for (0..config.num_hidden_layers) |layer_idx| {
         // Layer norms (not quantized)
-        const input_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx});
+        const input_ln_key = std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx}) catch unreachable;
         const input_norm = try loadUnquantizedWeight(allocator, model_path, input_ln_key);
 
-        const post_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.post_attention_layernorm.weight", .{layer_idx});
+        const post_ln_key = std.fmt.bufPrint(&buf, "model.layers.{d}.post_attention_layernorm.weight", .{layer_idx}) catch unreachable;
         const post_attn_norm = try loadUnquantizedWeight(allocator, model_path, post_ln_key);
 
         // Attention projections (may be quantized)
-        const q_proj_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.q_proj.weight", .{layer_idx});
+        const q_proj_key = std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.q_proj.weight", .{layer_idx}) catch unreachable;
         const q_proj = try loadWeightOrQuantized(allocator, model_path, q_proj_key, .{ .group_size = 64 });
 
-        const k_proj_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.k_proj.weight", .{layer_idx});
+        const k_proj_key = std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.k_proj.weight", .{layer_idx}) catch unreachable;
         const k_proj = try loadWeightOrQuantized(allocator, model_path, k_proj_key, .{ .group_size = 64 });
 
-        const v_proj_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.v_proj.weight", .{layer_idx});
+        const v_proj_key = std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.v_proj.weight", .{layer_idx}) catch unreachable;
         const v_proj = try loadWeightOrQuantized(allocator, model_path, v_proj_key, .{ .group_size = 64 });
 
-        const o_proj_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.o_proj.weight", .{layer_idx});
+        const o_proj_key = std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.o_proj.weight", .{layer_idx}) catch unreachable;
         const o_proj = try loadWeightOrQuantized(allocator, model_path, o_proj_key, .{ .group_size = 64 });
 
         // MoE router (not quantized)
-        const router_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.router.weight", .{layer_idx});
+        const router_key = std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.router.weight", .{layer_idx}) catch unreachable;
         const router = try loadUnquantizedWeight(allocator, model_path, router_key);
 
         // Load all 32 experts
@@ -169,9 +170,9 @@ pub fn loadGptOssWeights(
         errdefer allocator.free(experts);
 
         for (0..config.num_experts) |expert_idx| {
-            const gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.gate_proj.weight", .{ layer_idx, expert_idx });
-            const up_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.up_proj.weight", .{ layer_idx, expert_idx });
-            const down_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.down_proj.weight", .{ layer_idx, expert_idx });
+            const gate_key = std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.gate_proj.weight", .{ layer_idx, expert_idx }) catch unreachable;
+            const up_key = std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.up_proj.weight", .{ layer_idx, expert_idx }) catch unreachable;
+            const down_key = std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.experts.{d}.down_proj.weight", .{ layer_idx, expert_idx }) catch unreachable;
 
             experts[expert_idx] = gpt_oss.GptOssExpert{
                 .gate_proj = try loadWeightOrQuantized(allocator, model_path, gate_key, .{ .group_size = 32 }),
@@ -181,18 +182,25 @@ pub fn loadGptOssWeights(
         }
 
         weights.layers[layer_idx] = gpt_oss.GptOssLayer{
+            .layer_type = .sliding,
             .input_norm = input_norm,
             .post_attn_norm = post_attn_norm,
-            .q_proj = q_proj,
-            .k_proj = k_proj,
-            .v_proj = v_proj,
-            .o_proj = o_proj,
+            .attention = gpt_oss.GptOssAttention{
+                .q_proj = q_proj,
+                .k_proj = k_proj,
+                .v_proj = v_proj,
+                .o_proj = o_proj,
+                .num_heads = config.num_attention_heads,
+                .num_kv_heads = config.num_key_value_heads,
+                .head_dim = config.hidden_size / config.num_attention_heads,
+                .layer_idx = layer_idx,
+            },
             .router = router,
             .experts = experts,
         };
     }
 
-    std.log.info("Loaded GPT-OSS weights: {d} layers, {d} experts per layer", .{ config.num_layers, config.num_experts });
+    std.log.info("Loaded GPT-OSS weights: {d} layers, {d} experts per layer", .{ config.num_hidden_layers, config.num_experts });
 
     return weights;
 }

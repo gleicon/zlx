@@ -62,10 +62,11 @@ pub const Server = struct {
         // Create httpz server
         var server = try httpz.Server(void).init(allocator, httpz_config, {});
 
-        // Initialize GPT-OSS backend and handler (model loaded lazily on first request)
+        // Initialize GPT-OSS backend and handler using the already-loaded model path
+        const gptoss_model_path: []const u8 = if (handlers.global_context) |ctx| ctx.model_path else "";
         g_gptoss_backend = try mlx_gptoss_backend_mod.MLXGPTOSSBackend.init(
             allocator,
-            "", // model_path — empty placeholder; real path set at load time via /v1/models/switch
+            gptoss_model_path,
             .{},
         );
         g_chat_gptoss_handler = chat_gptoss.ChatGPTOSSHandler.init(allocator, &g_gptoss_backend.?);

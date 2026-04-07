@@ -259,17 +259,16 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         .logprobs_enabled = request.logprobs orelse false,
     };
 
-    // Generate cache key and check cache (if enabled)
-    const cache_hit = false; // Placeholder - actual cache integration in generation layer
+    // Generate cache key (if cache enabled)
+    var cache_key_obj: ?prompt_cache.CacheKey = null;
     const cache_key: ?[]const u8 = blk: {
         if (prompt_cache.getGlobalCache()) |cache| {
-            // Get model identifier from context
             const model_name = std.fs.path.basename(ctx.model_path);
-            // Use model path as hash since it's unique
             const key = cache.generateKey(model_name, ctx.model_path, prompt, gen_options) catch |err| {
                 std.log.warn("[{s}] Failed to generate cache key: {s}", .{ request_id, @errorName(err) });
                 break :blk null;
             };
+            cache_key_obj = key;
             const key_str = try ctx.allocator.dupe(u8, key.slice());
             break :blk key_str;
         }
@@ -277,9 +276,8 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
     };
     defer if (cache_key) |key| ctx.allocator.free(key);
 
-    // Log cache status for debugging
     if (cache_key) |key| {
-        std.log.debug("[{s}] Cache key: {s}, hit: {s}", .{ request_id, key, if (cache_hit) "true" else "false" });
+        std.log.debug("[{s}] Cache key: {s}, hit: false", .{ request_id, key });
     }
 
     // Generate with timeout
@@ -303,6 +301,20 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         std.log.warn("[{s}] Request timed out", .{request_id});
         try sendTimeoutError(res, "Request exceeded timeout limit", request_id);
         return;
+    }
+
+    // Save generation result to prompt cache (if enabled and key available)
+    if (cache_key_obj) |key| {
+        if (prompt_cache.getGlobalCache()) |cache| {
+            const file_path = try std.fs.path.join(ctx.allocator, &.{ cache.cache_dir, "entries", key.slice() });
+            defer ctx.allocator.free(file_path);
+            std.fs.cwd().writeFile(.{ .sub_path = file_path, .data = timeout_result.result.text }) catch |err| {
+                std.log.warn("[{s}] Cache write failed: {s}", .{ request_id, @errorName(err) });
+            };
+            cache.save(key, file_path, timeout_result.result.text.len) catch |err| {
+                std.log.warn("[{s}] Cache index update failed: {s}", .{ request_id, @errorName(err) });
+            };
+        }
     }
 
     // Build and send the response

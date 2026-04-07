@@ -114,7 +114,7 @@ pub const MLXGPTOSSBackend = struct {
             const config_path = try std.fs.path.join(self.allocator, &.{ self.model_path, "config.json" });
             defer self.allocator.free(config_path);
 
-            if (std.fs.openFileAbsolute(config_path, .{})) |f| {
+            if (std.fs.cwd().openFile(config_path, .{})) |f| {
                 defer f.close();
                 const content = try f.readToEndAlloc(self.allocator, 1024 * 1024);
                 defer self.allocator.free(content);
@@ -145,11 +145,12 @@ pub const MLXGPTOSSBackend = struct {
 
         try self.weight_loader_inst.?.load(null);
 
-        // Create transformer
-        const gptoss_config = switch (self.model_variant) {
+        // Create transformer — override vocab_size with actual value from config.json
+        var gptoss_config = switch (self.model_variant) {
             .gptoss_20b => GPTOSSConfig.gptoss20b(),
             .gptoss_120b => GPTOSSConfig.gptoss120b(),
         };
+        if (self.vocab_size > 0) gptoss_config.vocab_size = self.vocab_size;
 
         // Initialize transformer with a real MLX GPU stream
         const gpu_stream = mlx_api.defaultGpuStreamNew();

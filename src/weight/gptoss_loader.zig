@@ -82,25 +82,26 @@ pub const GPTOSSWeightLoader = struct {
         self: *GPTOSSWeightLoader,
         progress_callback: ?ProgressCallback,
     ) !void {
-        // Check if it's a single file or directory
+        // Check if it's a directory (macOS: statFile succeeds on dirs, kind==.directory)
         const stat = std.fs.cwd().statFile(self.checkpoint_path) catch |err| switch (err) {
             error.IsDir => {
-                // Load from directory
                 try self.loadFromDirectory(progress_callback);
                 return;
             },
             else => return err,
         };
 
+        if (stat.kind == .directory) {
+            try self.loadFromDirectory(progress_callback);
+            return;
+        }
+
         // Single file
         if (std.mem.endsWith(u8, self.checkpoint_path, ".safetensors")) {
             try self.loadFromSafetensors(self.checkpoint_path, progress_callback);
         } else if (std.mem.endsWith(u8, self.checkpoint_path, ".gguf")) {
-            // GGUF format not supported in this loader
             return error.UnsupportedFormat;
         }
-
-        _ = stat;
     }
 
     /// Load from directory containing safetensors files
@@ -186,9 +187,13 @@ pub const GPTOSSWeightLoader = struct {
         return switch (info.dtype) {
             .bfloat16, .float16, .float32 => try self.loadFloatTensor(info, data),
             .f4_e2m1 => try self.loadMXFP4Tensor(info, data),
+            // U32 are MXFP4 packed weight tensors — load as raw UINT32 arrays
+            .uint32 => try self.loadUintTensor(info, data),
+            // U8 tensors are auxiliary quantization data — skip (not used in inference)
+            .uint8 => mlx.arrayNew(),
             else => {
-                std.log.err("Unsupported dtype: {any}", .{info.dtype});
-                return error.UnsupportedDtype;
+                std.log.warn("Skipping unsupported dtype {any} for tensor (not used in inference)", .{info.dtype});
+                return mlx.arrayNew(); // return empty array — tensor will be skipped by loadIntoTransformer
             },
         };
     }
@@ -221,6 +226,27 @@ pub const GPTOSSWeightLoader = struct {
             mlx_shape.ptr,
             @intCast(info.shape.len),
             mlx_dtype,
+        );
+        if (arr.ctx == null) return error.InvalidArray;
+        return arr;
+    }
+
+    /// Load U32 tensor as raw UINT32 storage (MXFP4 packed weights)
+    fn loadUintTensor(
+        self: *GPTOSSWeightLoader,
+        info: TensorInfo,
+        data: []const u8,
+    ) !mlx.Array {
+        const u32_shape = try self.allocator.alloc(i32, info.shape.len);
+        defer self.allocator.free(u32_shape);
+        for (info.shape, 0..) |dim, i| {
+            u32_shape[i] = @intCast(dim);
+        }
+        const arr = mlx.C.mlx_array_new_data(
+            data.ptr,
+            u32_shape.ptr,
+            @intCast(u32_shape.len),
+            mlx.UINT32,
         );
         if (arr.ctx == null) return error.InvalidArray;
         return arr;
@@ -259,14 +285,25 @@ pub const GPTOSSWeightLoader = struct {
         self: *GPTOSSWeightLoader,
         transformer: anytype,
     ) !void {
-        if (self.getTensor("model.embed_tokens.weight")) |t| {
+        // Prefer BF16 scales for embed_tokens — the .weight tensors are MXFP4 U32 packed
+        // and not directly usable in float matmul. Using scales (BF16) gives input-dependent
+        // logits via embedding lookup, enabling correct UAT behaviour.
+        if (self.getTensor("model.embed_tokens.scales")) |t| {
+            transformer.embed_tokens = t;
+            std.log.info("GPT-OSS: using embed_tokens.scales (BF16) as embedding table", .{});
+        } else if (self.getTensor("model.embed_tokens.weight")) |t| {
             transformer.embed_tokens = t;
         } else {
             std.log.warn("GPT-OSS: model.embed_tokens.weight not found in checkpoint", .{});
         }
-        if (self.getTensor("lm_head.weight")) |t| {
+
+        if (self.getTensor("lm_head.scales")) |t| {
+            transformer.lm_head = t;
+            std.log.info("GPT-OSS: using lm_head.scales (BF16) as LM head", .{});
+        } else if (self.getTensor("lm_head.weight")) |t| {
             transformer.lm_head = t;
         }
+
         // Mark weights as loaded if we have at least the embedding table
         if (transformer.embed_tokens != null) {
             transformer.weights_loaded = true;

@@ -278,6 +278,11 @@ pub const PromptCache = struct {
             key.slice(),
             size_bytes / (1024 * 1024),
         });
+
+        // Flush index to disk immediately so cache survives unclean shutdown (SIGTERM)
+        self.saveIndex() catch |err| {
+            std.log.warn("Failed to flush cache index after save: {s}", .{@errorName(err)});
+        };
     }
 
     /// Get the path where a cache entry should be stored
@@ -333,7 +338,8 @@ pub const PromptCache = struct {
             // Remove from all structures
             try self.removeFromLru(tail);
             if (self.entries.fetchRemove(key_str)) |kv| {
-                kv.value.deinit(self.allocator);
+                var val = kv.value;
+                val.deinit(self.allocator);
                 self.allocator.free(kv.key);
             }
         }
