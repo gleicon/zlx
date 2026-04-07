@@ -38,6 +38,56 @@ SKIP=0
 FAIL=0
 FAILURES=()
 
+# ── Server PID tracking — all servers registered here, killed on EXIT ─────────
+#
+# IMPORTANT: never start a server via $() subshell.
+# $() forks a subshell; the server's & becomes a child of that subshell; when
+# the subshell exits the server is orphaned and `wait` can no longer track it.
+# Instead, always start servers directly with & then capture $! immediately.
+# Register every PID here so the EXIT trap cleans up even on early exit.
+
+declare -a SERVER_PIDS=()
+
+cleanup_servers() {
+    local pid
+    for pid in "${SERVER_PIDS[@]+"${SERVER_PIDS[@]}"}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            # Give it a moment, then force-kill if still alive
+            sleep 1
+            kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+    SERVER_PIDS=()
+}
+
+trap cleanup_servers EXIT INT TERM
+
+register_server() {
+    # Usage: register_server PID
+    SERVER_PIDS+=("$1")
+}
+
+kill_server() {
+    # Usage: kill_server PID
+    # Removes from tracking array and kills.
+    local target="$1"
+    kill "$target" 2>/dev/null || true
+    # Wait up to 5s for graceful exit, then force
+    local i=0
+    while kill -0 "$target" 2>/dev/null && [ $i -lt 10 ]; do
+        sleep 0.5; i=$((i+1))
+    done
+    kill -0 "$target" 2>/dev/null && kill -9 "$target" 2>/dev/null || true
+    # Remove from SERVER_PIDS
+    local new_pids=()
+    local pid
+    for pid in "${SERVER_PIDS[@]+"${SERVER_PIDS[@]}"}"; do
+        [ "$pid" != "$target" ] && new_pids+=("$pid") || true
+    done
+    SERVER_PIDS=("${new_pids[@]+"${new_pids[@]}"}")
+}
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 color_green="\033[0;32m"
@@ -98,14 +148,6 @@ chat_request() {
         2>/dev/null || echo ""
 }
 
-start_server() {
-    local model_path="$1"
-    local port="$2"
-    shift 2
-    "$ZLX_BIN" --model "$model_path" --port "$port" "$@" &
-    echo $!
-}
-
 # ── UAT-1: GPT-OSS forward pass with real model weights ──────────────────────
 
 run_uat_1() {
@@ -125,12 +167,13 @@ run_uat_1() {
 
     local PORT=18180
     local SERVER_PID
-    SERVER_PID=$(start_server "$GPTOSS_PATH" $PORT)
-    # shellcheck disable=SC2064
-    trap "kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null" RETURN
+
+    "$ZLX_BIN" --model "$GPTOSS_PATH" --port $PORT &
+    SERVER_PID=$!
+    register_server "$SERVER_PID"
 
     if ! wait_for_server $PORT 180; then
-        kill "$SERVER_PID" 2>/dev/null || true
+        kill_server "$SERVER_PID"
         log_fail "UAT-1: Server did not start within 180s"
         return
     fi
@@ -139,8 +182,7 @@ run_uat_1() {
     C1=$(chat_request $PORT "gptoss" "What is 2+2? Answer in one word." 15)
     C2=$(chat_request $PORT "gptoss" "Name the capital of France. One word only." 15)
 
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+    kill_server "$SERVER_PID"
 
     if [ -z "$C1" ] || [ "$C1" = "null" ]; then
         log_fail "UAT-1: GPT-OSS returned empty content (prompt 1)"
@@ -183,16 +225,18 @@ run_uat_2() {
     local PORT=18181
     local CACHE_DIR
     CACHE_DIR=$(mktemp -d /tmp/zlx-e2e-cache-XXXXXX)
-    # shellcheck disable=SC2064
-    trap "rm -rf '$CACHE_DIR'" RETURN
 
     # --- First start: populate cache ---
     echo "  Starting server (first run)..."
     local SERVER_PID
-    SERVER_PID=$(start_server "$MODEL_PATH" $PORT --cache-dir "$CACHE_DIR")
+
+    "$ZLX_BIN" --model "$MODEL_PATH" --port $PORT --cache-dir "$CACHE_DIR" &
+    SERVER_PID=$!
+    register_server "$SERVER_PID"
 
     if ! wait_for_server $PORT 120; then
-        kill "$SERVER_PID" 2>/dev/null || true
+        kill_server "$SERVER_PID"
+        rm -rf "$CACHE_DIR"
         log_fail "UAT-2: Server (first run) did not start within 120s"
         return
     fi
@@ -203,11 +247,11 @@ run_uat_2() {
     # Give cache time to flush to disk
     sleep 2
 
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+    kill_server "$SERVER_PID"
 
     # Verify cache index was written
     if [ ! -f "$CACHE_DIR/index.json" ]; then
+        rm -rf "$CACHE_DIR"
         log_fail "UAT-2: index.json not created after first request — cache not writing to disk"
         return
     fi
@@ -227,38 +271,40 @@ print(len(entries) if isinstance(entries, (list, dict)) else 0)
     echo "  Restarting server..."
     local LOG_FILE
     LOG_FILE=$(mktemp /tmp/zlx-restart-XXXXXX.log)
+
     "$ZLX_BIN" --model "$MODEL_PATH" --port $PORT --cache-dir "$CACHE_DIR" > "$LOG_FILE" 2>&1 &
     SERVER_PID=$!
+    register_server "$SERVER_PID"
 
     if ! wait_for_server $PORT 120; then
-        kill "$SERVER_PID" 2>/dev/null || true
+        kill_server "$SERVER_PID"
+        rm -rf "$CACHE_DIR" "$LOG_FILE"
         log_fail "UAT-2: Server (restart) did not start within 120s"
-        rm -f "$LOG_FILE"
         return
     fi
 
     # Give server a moment to finish logging init
     sleep 2
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+    kill_server "$SERVER_PID"
 
     # Check log for "Loaded N cache entries"
     if grep -qE "Loaded [1-9][0-9]* cache entries|Loaded 1 cache entries" "$LOG_FILE" 2>/dev/null; then
         local LOG_LINE
         LOG_LINE=$(grep -E "Loaded [0-9]+ cache entries" "$LOG_FILE" | tail -1)
+        rm -rf "$CACHE_DIR" "$LOG_FILE"
         log_pass "UAT-2: Cache persistence — '$LOG_LINE'"
     else
         # Cache may still be populated even if log message format differs
         if [ -f "$CACHE_DIR/index.json" ] && [ "$ENTRY_COUNT" -gt 0 ] 2>/dev/null; then
+            rm -rf "$CACHE_DIR" "$LOG_FILE"
             log_pass "UAT-2: Cache persistence — index.json present with $ENTRY_COUNT entries (log message not found, cache file confirmed)"
         else
-            log_fail "UAT-2: No cache-loaded message in restart log"
             echo "  Log tail:"
             tail -20 "$LOG_FILE" | sed 's/^/    /'
+            rm -rf "$CACHE_DIR" "$LOG_FILE"
+            log_fail "UAT-2: No cache-loaded message in restart log"
         fi
     fi
-
-    rm -f "$LOG_FILE"
 }
 
 # ── UAT-3: DeepSeek inference smoke test ─────────────────────────────────────
@@ -290,7 +336,7 @@ run_uat_3() {
     # HTTP smoke test uses GPT-OSS (MLX) to verify the HTTP inference pipeline.
     local GPTOSS_PATH="$MODELS_DIR/GPT-OSS-20B-4bit"
     if ! has_weights "$GPTOSS_PATH"; then
-        log_skip "UAT-3 Part B: HTTP smoke test — GPT-OSS weights not present (GGUF path requires separate download; see docs/deepseek-http.md)"
+        log_skip "UAT-3 Part B: HTTP smoke test — GPT-OSS weights not present (GGUF path requires separate download)"
         return
     fi
 
@@ -301,12 +347,13 @@ run_uat_3() {
 
     local PORT=18182
     local SERVER_PID
-    SERVER_PID=$(start_server "$GPTOSS_PATH" $PORT)
-    # shellcheck disable=SC2064
-    trap "kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null" RETURN
+
+    "$ZLX_BIN" --model "$GPTOSS_PATH" --port $PORT &
+    SERVER_PID=$!
+    register_server "$SERVER_PID"
 
     if ! wait_for_server $PORT 180; then
-        kill "$SERVER_PID" 2>/dev/null || true
+        kill_server "$SERVER_PID"
         log_fail "UAT-3 Part B: Server did not start"
         return
     fi
@@ -314,8 +361,7 @@ run_uat_3() {
     local CONTENT
     CONTENT=$(chat_request $PORT "gptoss" "Reply with the single word: hello" 10)
 
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+    kill_server "$SERVER_PID"
 
     if [ -z "$CONTENT" ] || [ "$CONTENT" = "null" ]; then
         log_fail "UAT-3 Part B: HTTP inference returned empty content"
