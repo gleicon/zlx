@@ -892,16 +892,24 @@ pub fn generateAll(
 
 test "GenerationState basic test" {
     // This test requires a loaded model - skip if not available
-    const model_path = "./models/Qwen2.5-Coder-1.5B-4bit";
-    std.fs.cwd().access(model_path, .{}) catch {
-        std.debug.print("Skipping test - model not found at {s}\n", .{model_path});
-        return;
+    // Try exact path first, then -Instruct variant (same weights, different HF repo name)
+    const model_name = blk: {
+        std.fs.cwd().access("./models/Qwen2.5-Coder-1.5B-4bit", .{}) catch {
+            std.fs.cwd().access("./models/Qwen2.5-Coder-1.5B-Instruct-4bit", .{}) catch {
+                std.debug.print("Skipping test - model not found (tried Qwen2.5-Coder-1.5B-4bit and Qwen2.5-Coder-1.5B-Instruct-4bit)\n", .{});
+                return;
+            };
+            break :blk "Qwen2.5-Coder-1.5B-Instruct-4bit";
+        };
+        break :blk "Qwen2.5-Coder-1.5B-4bit";
     };
+    const model_path = try std.fmt.allocPrint(std.testing.allocator, "./models/{s}", .{model_name});
+    defer std.testing.allocator.free(model_path);
 
     const allocator = std.testing.allocator;
 
-    // Initialize transformer (this loads the model)
-    var transformer = try qwen.Transformer.init(allocator, "Qwen2.5-Coder-1.5B-4bit");
+    // Initialize transformer (this loads the model — pass full path, not just name)
+    var transformer = try qwen.Transformer.init(allocator, model_path);
     defer transformer.deinit();
 
     // Create initial tokens
