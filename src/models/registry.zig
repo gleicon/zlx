@@ -373,7 +373,7 @@ pub const ModelRegistry = struct {
         // Iterate subdirectories
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
-            if (entry.kind != .directory) continue;
+            if (entry.kind != .directory and entry.kind != .sym_link) continue;
 
             const model_path = try std.fs.path.join(self.allocator, &.{ path, entry.name });
             defer self.allocator.free(model_path);

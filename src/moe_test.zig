@@ -28,7 +28,7 @@ test "MoE routes tokens to experts" {
     const seq_len: c_int = 8;
     var hidden_states = mlx.arrayNew();
     defer mlx.arrayFree(hidden_states);
-    _ = mlx.randomNormal(&hidden_states, &.{ batch_size, seq_len, @intCast(config.hidden_size) }, .float32);
+    try mlx.randomNormal(&hidden_states, .{ batch_size, seq_len, @as(c_int, @intCast(config.hidden_size)) }, mlx.FLOAT32);
 
     const routing = try moe_instance.route(hidden_states);
     defer {
@@ -70,7 +70,7 @@ test "MoE uses only top-k experts" {
     const seq_len: c_int = 4;
     var hidden_states = mlx.arrayNew();
     defer mlx.arrayFree(hidden_states);
-    _ = mlx.randomNormal(&hidden_states, &.{ batch_size, seq_len, @intCast(config.hidden_size) }, .float32);
+    try mlx.randomNormal(&hidden_states, .{ batch_size, seq_len, @as(c_int, @intCast(config.hidden_size)) }, mlx.FLOAT32);
 
     const routing = try moe_instance.route(hidden_states);
     defer {
@@ -104,7 +104,7 @@ test "Shared experts always active" {
     const seq_len: c_int = 2;
     var hidden_states = mlx.arrayNew();
     defer mlx.arrayFree(hidden_states);
-    _ = mlx.randomNormal(&hidden_states, &.{ batch_size, seq_len, @intCast(config.hidden_size) }, .float32);
+    try mlx.randomNormal(&hidden_states, .{ batch_size, seq_len, @as(c_int, @intCast(config.hidden_size)) }, mlx.FLOAT32);
 
     var output = mlx.arrayNew();
     defer mlx.arrayFree(output);
@@ -137,18 +137,20 @@ test "Expert FFN produces correct shape" {
         .w_down = undefined,
     };
 
-    // Create random weights
+    // Create random weights with correct shapes for matmul:
+    // w_gate, w_up: [hidden_size, intermediate_size]  (x @ w_gate: [1,1,hidden] @ [hidden,inter])
+    // w_down: [intermediate_size, hidden_size]         (gate_up @ w_down: [1,1,inter] @ [inter,hidden])
     var w_gate = mlx.arrayNew();
     defer mlx.arrayFree(w_gate);
-    _ = mlx.randomNormal(&w_gate, &.{ @intCast(intermediate_size), @intCast(hidden_size) }, .float32);
+    try mlx.randomNormal(&w_gate, .{ @as(c_int, @intCast(hidden_size)), @as(c_int, @intCast(intermediate_size)) }, mlx.FLOAT32);
 
     var w_up = mlx.arrayNew();
     defer mlx.arrayFree(w_up);
-    _ = mlx.randomNormal(&w_up, &.{ @intCast(intermediate_size), @intCast(hidden_size) }, .float32);
+    try mlx.randomNormal(&w_up, .{ @as(c_int, @intCast(hidden_size)), @as(c_int, @intCast(intermediate_size)) }, mlx.FLOAT32);
 
     var w_down = mlx.arrayNew();
     defer mlx.arrayFree(w_down);
-    _ = mlx.randomNormal(&w_down, &.{ @intCast(hidden_size), @intCast(intermediate_size) }, .float32);
+    try mlx.randomNormal(&w_down, .{ @as(c_int, @intCast(intermediate_size)), @as(c_int, @intCast(hidden_size)) }, mlx.FLOAT32);
 
     expert.w_gate = w_gate;
     expert.w_up = w_up;
@@ -157,7 +159,7 @@ test "Expert FFN produces correct shape" {
     // Test forward on single token
     var input = mlx.arrayNew();
     defer mlx.arrayFree(input);
-    _ = mlx.randomNormal(&input, &.{ 1, 1, @intCast(hidden_size) }, .float32);
+    try mlx.randomNormal(&input, .{ 1, 1, @as(c_int, @intCast(hidden_size)) }, mlx.FLOAT32);
 
     var output = mlx.arrayNew();
     defer mlx.arrayFree(output);
@@ -205,7 +207,7 @@ test "CPU fallback works without Metal" {
     const seq_len: c_int = 4;
     var hidden_states = mlx.arrayNew();
     defer mlx.arrayFree(hidden_states);
-    _ = mlx.randomNormal(&hidden_states, &.{ batch_size, seq_len, @intCast(config.hidden_size) }, .float32);
+    try mlx.randomNormal(&hidden_states, .{ batch_size, seq_len, @as(c_int, @intCast(config.hidden_size)) }, mlx.FLOAT32);
 
     const routing = try moe_instance.route(hidden_states);
     defer {

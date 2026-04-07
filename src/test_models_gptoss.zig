@@ -149,7 +149,9 @@ test "GPT-OSS browser tool execution (parse tool call from Harmony)" {
 /// Test streaming generation via token iterator
 pub fn testGptossStreaming(allocator: std.mem.Allocator) !void {
     const config = GPTOSSConfig.gptoss20b();
-    var transformer = try GPTOSSTransformer.init(allocator, config, undefined);
+    const stream = mlx.defaultGpuStreamNew();
+    defer mlx.streamFree(stream);
+    var transformer = try GPTOSSTransformer.init(allocator, config, stream);
     defer transformer.deinit();
 
     // Create a stub backend to test streaming via token iterator
@@ -159,8 +161,11 @@ pub fn testGptossStreaming(allocator: std.mem.Allocator) !void {
     });
     defer bknd.deinit();
 
-    // Inject pre-loaded transformer to avoid weight loading
+    // Inject pre-loaded transformer to avoid weight loading.
+    // Give the backend's copy its own stream to prevent double-free when
+    // both bknd.deinit() and defer mlx.streamFree(stream) run on cleanup.
     bknd.transformer = transformer;
+    bknd.transformer.?.stream = mlx.defaultGpuStreamNew();
     bknd.loaded = true;
 
     const prompt_tokens = [_]u32{ 100256, 1 };
@@ -189,7 +194,9 @@ test "GPT-OSS streaming generation via token iterator" {
 /// In stub mode (no real weights) this just validates the loop overhead.
 pub fn testGptossPerformanceBenchmark(allocator: std.mem.Allocator) !void {
     const config = GPTOSSConfig.gptoss20b();
-    var transformer = try GPTOSSTransformer.init(allocator, config, undefined);
+    const stream = mlx.defaultGpuStreamNew();
+    defer mlx.streamFree(stream);
+    var transformer = try GPTOSSTransformer.init(allocator, config, stream);
     defer transformer.deinit();
 
     const N: usize = 100;

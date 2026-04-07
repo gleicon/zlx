@@ -275,8 +275,15 @@ pub const ChatGPTOSSHandler = struct {
             }
         }
 
-        const text_content = try text_parts.toOwnedSlice(self.allocator);
+        var text_content = try text_parts.toOwnedSlice(self.allocator);
         defer self.allocator.free(text_content);
+
+        // Fallback: if Harmony parser found no assistant messages, use raw output buffer
+        // This covers the case where the model output isn't Harmony-formatted
+        if (text_content.len == 0 and output_buf.items.len > 0) {
+            self.allocator.free(text_content);
+            text_content = try self.allocator.dupe(u8, output_buf.items);
+        }
 
         if (is_stream) {
             try self.sendStreamResponse(res, model, text_content, completion_tokens);

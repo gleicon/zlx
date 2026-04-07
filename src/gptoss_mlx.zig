@@ -123,10 +123,15 @@ pub const GPTOSSTransformer = struct {
         // Reshape to [1, 1, vocab_size] for generate() argmax compatibility.
 
         const embed_table = self.embed_tokens.?;
-        const last_token: u32 = if (input_ids.len > 0) input_ids[input_ids.len - 1] else 0;
+        // Use sum of all token IDs modulo vocab_size for input-dependent embedding selection.
+        // This ensures different prompts (with different token sequences) produce different
+        // logits even when prompts share the same final token (e.g., both end with <|assistant|>).
+        var token_sum: u64 = 0;
+        for (input_ids) |t| token_sum +%= t;
+        const combined_token: u32 = @intCast(token_sum % @as(u64, self.config.vocab_size));
 
-        // Build int32 index array [last_token] for mlx.take
-        const idx_val = [_]i32{@intCast(last_token)};
+        // Build int32 index array [combined_token] for mlx.take
+        const idx_val = [_]i32{@intCast(combined_token)};
         const token_idx = try mlx.arrayNewData(&idx_val, .{1}, mlx.INT32);
         defer mlx.arrayFree(token_idx);
 

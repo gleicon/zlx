@@ -242,7 +242,10 @@ run_uat_2() {
     fi
 
     echo "  Sending request to populate cache..."
-    chat_request $PORT "qwen" "say hello" 5 > /dev/null
+    # Use the basename of the model path as the model name to avoid a model-switch attempt
+    local MODEL_NAME
+    MODEL_NAME=$(basename "$MODEL_PATH")
+    chat_request $PORT "$MODEL_NAME" "say hello" 5 > /dev/null
 
     # Give cache time to flush to disk
     sleep 2
@@ -383,42 +386,42 @@ run_uat_4() {
     fi
 
     echo "  Running zig build test (includes Qwen tokenizer and GenerationState tests)..."
-    local ZIG_OUTPUT
-    ZIG_OUTPUT=$(zig build test --summary all 2>&1) || true
+    local ZIG_OUTPUT ZIG_EXIT
+    ZIG_OUTPUT=$(zig build test --summary all 2>&1) || ZIG_EXIT=$?
+    ZIG_EXIT=${ZIG_EXIT:-0}
 
-    # Check tokenizer round-trip test
-    local TOKENIZER_PASS=false
-    if echo "$ZIG_OUTPUT" | grep -qE "Tokenizer.*passed|tokenizer.*passed"; then
-        TOKENIZER_PASS=true
+    # Check for Qwen-specific model-not-found skip (distinct from other model skips)
+    local QWEN_SKIPPED=false
+    if echo "$ZIG_OUTPUT" | grep -qE "Skipping test.*Qwen|Skipping test.*qwen|Skipping test.*1\.5B"; then
+        QWEN_SKIPPED=true
     fi
 
-    # Check qwen test
-    local QWEN_PASS=false
-    if echo "$ZIG_OUTPUT" | grep -qE "qwen.*passed|qwen2\.5-coder.*passed"; then
-        QWEN_PASS=true
+    # Check overall test suite success via Build Summary line
+    local ALL_PASSED=false
+    if echo "$ZIG_OUTPUT" | grep -qE "Build Summary:.*tests passed|[0-9]+/[0-9]+ tests passed" && [ "$ZIG_EXIT" -eq 0 ]; then
+        ALL_PASSED=true
     fi
 
-    # Check GenerationState test (in generator.zig)
-    local GENSTATE_PASS=false
-    if echo "$ZIG_OUTPUT" | grep -qE "GenerationState.*passed|generator.*passed"; then
-        GENSTATE_PASS=true
+    # Check integration_test passed (contains Qwen GenerationState + Qwen tokenizer tests)
+    local INTEGRATION_PASS=false
+    if echo "$ZIG_OUTPUT" | grep -qE "integration_test [0-9]+ passed"; then
+        INTEGRATION_PASS=true
     fi
 
-    if $TOKENIZER_PASS || $QWEN_PASS || $GENSTATE_PASS; then
-        local SUMMARY=""
-        $TOKENIZER_PASS  && SUMMARY="$SUMMARY tokenizer-roundtrip"
-        $QWEN_PASS       && SUMMARY="$SUMMARY qwen-model"
-        $GENSTATE_PASS   && SUMMARY="$SUMMARY GenerationState"
-        log_pass "UAT-4: Qwen zig build test passed:$SUMMARY"
+    if $QWEN_SKIPPED; then
+        log_fail "UAT-4: Qwen model not found during test — check models/Qwen2.5-Coder-1.5B-4bit symlink"
+    elif $INTEGRATION_PASS && $ALL_PASSED; then
+        local SUMMARY_LINE
+        SUMMARY_LINE=$(echo "$ZIG_OUTPUT" | grep -E "Build Summary:" | tail -1 | sed 's/^.*Build Summary: //')
+        log_pass "UAT-4: Qwen zig build test — $SUMMARY_LINE"
+    elif [ "$ZIG_EXIT" -ne 0 ]; then
+        log_fail "UAT-4: zig build test failed (exit $ZIG_EXIT)"
+        echo "  Output tail:"
+        echo "$ZIG_OUTPUT" | tail -10 | sed 's/^/    /'
     else
-        # Check if the tests were skipped (model path not found message)
-        if echo "$ZIG_OUTPUT" | grep -q "Skipping test - model not found"; then
-            log_fail "UAT-4: Model not found during test — check Qwen2.5-Coder-1.5B-4bit symlink"
-        else
-            log_skip "UAT-4: Qwen-specific tests not found in output (may be merged into summary)"
-            echo "  Summary line:"
-            echo "$ZIG_OUTPUT" | grep -E "summary|Summary|passed|failed" | tail -5 | sed 's/^/    /'
-        fi
+        log_skip "UAT-4: integration_test not found in summary (zig test may have passed)"
+        echo "  Summary line:"
+        echo "$ZIG_OUTPUT" | grep -E "Build Summary|passed|failed" | tail -5 | sed 's/^/    /'
     fi
 }
 
