@@ -529,6 +529,7 @@ pub fn build(b: *std.Build) !void {
         .name = "deepseek_test",
         .root_module = deepseek_test_mod,
     });
+    configureExecutable(deepseek_test, b, deps);
 
     const run_deepseek_test = b.addRunArtifact(deepseek_test);
     test_step.dependOn(&run_deepseek_test.step);
@@ -557,6 +558,7 @@ pub fn build(b: *std.Build) !void {
         .name = "integration_test",
         .root_module = integration_test_mod,
     });
+    configureExecutable(integration_test, b, deps);
 
     const run_integration_test = b.addRunArtifact(integration_test);
     const test_integration_step = b.step("test-integration", "Run MoE model integration tests");
@@ -726,6 +728,15 @@ pub fn build(b: *std.Build) !void {
 
     const run_gptoss_manager_test = b.addRunArtifact(gptoss_manager_test);
     test_step.dependOn(&run_gptoss_manager_test.step);
+
+    // E2E tests — Phase 17 human UAT automation
+    // Requires model files; skips gracefully if missing.
+    // Run `scripts/download_test_models.sh` first to fetch weights.
+    // Usage: zig build test-e2e
+    const e2e_step = b.step("test-e2e", "Run E2E tests (Phase 17 UAT — requires model files)");
+    const run_e2e = b.addSystemCommand(&.{ "bash", "scripts/e2e_test.sh" });
+    run_e2e.step.dependOn(&exe.step); // ensure binary is built first
+    e2e_step.dependOn(&run_e2e.step);
 }
 
 // ── Inlined from src/mlx.zig/build.zig ────────────────────────────────────────
