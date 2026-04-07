@@ -240,6 +240,7 @@ pub fn loadDeepSeekWeights(
     defer {
         var iter = weights_hash.iterator();
         while (iter.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
             mlx.arrayFree(entry.value_ptr.*.*);
             allocator.destroy(entry.value_ptr.*);
         }
@@ -252,6 +253,7 @@ pub fn loadDeepSeekWeights(
 
     // Step 4: Load weights from safetensors files
     const stream = mlx.defaultGpuStreamNew();
+    defer mlx.streamFree(stream);
 
     var shard_files = try safetensors_index.getShardFiles(allocator, index);
     defer {
@@ -271,7 +273,6 @@ pub fn loadDeepSeekWeights(
 
     // Step 5: Map loaded weights to DeepSeekWeights structure
     const weights = try mapWeightsToDeepSeek(allocator, &weights_hash, config);
-
     _ = config_info;
     return weights;
 }
@@ -355,17 +356,18 @@ fn registerDeepSeekWeightKeys(
             const gate = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.gate.weight", .{layer_idx});
             try registerWeightKey(allocator, weights_hash, gate);
 
-            // Shared experts (2 experts per layer, all quantized)
-            for (0..config.num_shared_experts) |exp_idx| {
-                const shared_gate_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.gate_proj", .{ layer_idx, exp_idx });
-                try registerQuantizedWeightKey(allocator, weights_hash, shared_gate_base);
+            // Shared experts (fused single tensor per projection, no per-expert index)
+            // Actual model format: model.layers.{d}.mlp.shared_experts.{proj}
+            // (NOT model.layers.{d}.mlp.shared_experts.{idx}.{proj})
+            _ = config.num_shared_experts; // not used for key naming
+            const shared_gate_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.gate_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, shared_gate_base);
 
-                const shared_up_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.up_proj", .{ layer_idx, exp_idx });
-                try registerQuantizedWeightKey(allocator, weights_hash, shared_up_base);
+            const shared_up_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.up_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, shared_up_base);
 
-                const shared_down_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.down_proj", .{ layer_idx, exp_idx });
-                try registerQuantizedWeightKey(allocator, weights_hash, shared_down_base);
-            }
+            const shared_down_base = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.down_proj", .{layer_idx});
+            try registerQuantizedWeightKey(allocator, weights_hash, shared_down_base);
 
             // Routed experts via switch_mlp (fused 64 experts, all quantized)
             // switch_mlp contains all expert weights fused together
@@ -429,14 +431,23 @@ fn mapWeightsToDeepSeek(
     const lm_head = try mapQuantizedWeight(allocator, weights_hash, "lm_head", 64);
     errdefer mlx.arrayFree(lm_head);
 
-    // Map final norm (not quantized)
+    // Map final norm (not quantized) — use arraySet for proper ref-counting
+    // (value copy would share the handle with weights_hash, causing double-free)
+    // CRITICAL: must check ctx != null directly — mlx.arrayIsEmpty calls mlx_array_size
+    // which calls mlx_array_get_() → throws → exit(-1) for null-ctx arrays.
     var norm = mlx.arrayNew();
+    errdefer mlx.arrayFree(norm);
     if (weights_hash.get("model.norm.weight")) |norm_ptr| {
-        norm = norm_ptr.*;
+        if (norm_ptr.*.ctx != null) {
+            mlx.arraySet(&norm, norm_ptr.*) catch {
+                std.log.warn("Failed to set norm weight", .{});
+            };
+        } else {
+            std.log.warn("Norm weight not loaded from safetensors", .{});
+        }
     } else {
         std.log.warn("Missing weight: model.norm.weight", .{});
     }
-    errdefer mlx.arrayFree(norm);
 
     // Allocate layers
     var layers = try allocator.alloc(deepseek.DeepSeekLayer, config.num_hidden_layers);
@@ -450,11 +461,11 @@ fn mapWeightsToDeepSeek(
     // Map per-layer weights
     var buf: [256]u8 = undefined;
     for (0..config.num_hidden_layers) |layer_idx| {
-        // Map layer norms (not quantized)
+        // Map layer norms (not quantized) — use arraySet for ref-counted ownership
         const input_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.input_layernorm.weight", .{layer_idx});
         var input_norm = mlx.arrayNew();
         if (weights_hash.get(input_ln_key)) |ptr| {
-            input_norm = ptr.*;
+            if (ptr.*.ctx != null) mlx.arraySet(&input_norm, ptr.*) catch {};
         } else {
             std.log.warn("Missing weight: {s}", .{input_ln_key});
         }
@@ -462,7 +473,7 @@ fn mapWeightsToDeepSeek(
         const post_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.post_attention_layernorm.weight", .{layer_idx});
         var post_attn_norm = mlx.arrayNew();
         if (weights_hash.get(post_ln_key)) |ptr| {
-            post_attn_norm = ptr.*;
+            if (ptr.*.ctx != null) mlx.arraySet(&post_attn_norm, ptr.*) catch {};
         } else {
             std.log.warn("Missing weight: {s}", .{post_ln_key});
         }
@@ -483,25 +494,21 @@ fn mapWeightsToDeepSeek(
         const kv_a_ln_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.self_attn.kv_a_layernorm.weight", .{layer_idx});
         var kv_a_layernorm = mlx.arrayNew();
         if (weights_hash.get(kv_a_ln_key)) |ptr| {
-            kv_a_layernorm = ptr.*;
+            if (ptr.*.ctx != null) mlx.arraySet(&kv_a_layernorm, ptr.*) catch {};
         }
 
-        // Stub: MLAWeights captured but stored separately (not part of mla.MultiHeadLatentAttention)
-        // mla.MultiHeadLatentAttention has fields: base, config, w_dq, w_dkv, w_up, w_kr, rope
-        // The actual projection weights (q_proj, kv_a_proj, kv_b_proj, o_proj) are kept in
-        // the mla_weights struct below for future use but mla_layer uses the real field layout.
-        _ = deepseek.MLAWeights{
-            .q_proj = q_proj,
-            .kv_a_proj_with_mqa = kv_a_proj,
-            .kv_b_proj = kv_b_proj,
-            .o_proj = o_proj,
-            .kv_a_layernorm = kv_a_layernorm,
-        };
+        // Wire loaded projection weights into mla.MultiHeadLatentAttention fields.
+        // Field mapping (stub approximation — Phase 18 will use exact MLA field names):
+        //   w_dq  ← q_proj (query down-projection weight)
+        //   w_dkv ← kv_a_proj_with_mqa (joint KV compressed projection)
+        //   w_up  ← kv_b_proj (KV up-projection / decompression)
+        // o_proj and kv_a_layernorm are not stored in MultiHeadLatentAttention directly;
+        // free them here to avoid leaking the dequantized arrays.
+        mlx.arrayFree(o_proj);
+        mlx.arrayFree(kv_a_layernorm);
 
-        // Stub MLA value: populate struct fields matching actual mla.MultiHeadLatentAttention definition.
-        // DeepSeekConfig has no head_dim field — compute from hidden_size / num_attention_heads.
-        // DeepSeekLayer.mla is a VALUE type; mla.init() returns *Self (heap pointer), so we
-        // construct the value directly to avoid a deinit() double-free (D-05 stub, per plan).
+        // Construct MLA value with loaded weights (avoids mla.init() heap allocation
+        // which would conflict with storing mla as a value field in DeepSeekLayer).
         const mla_head_dim = config.hidden_size / config.num_attention_heads;
         const mla_config = mla.MLAConfig{
             .hidden_size = config.hidden_size,
@@ -509,12 +516,15 @@ fn mapWeightsToDeepSeek(
             .latent_dim = config.latent_dim,
             .head_dim = mla_head_dim,
         };
+        // Use a GPU stream for the MLA base module. Stream ownership is held by the
+        // module but not freed on deinit — leaked GPU stream handle is acceptable as
+        // a known stub limitation (Phase 18 will use proper MLA initialization).
         const mla_layer = mla.MultiHeadLatentAttention{
             .base = mlx.Module.init(allocator, mlx.C.mlx_default_gpu_stream_new()),
             .config = mla_config,
-            .w_dq = mlx.arrayNew(),
-            .w_dkv = mlx.arrayNew(),
-            .w_up = mlx.arrayNew(),
+            .w_dq = q_proj,      // query down-projection (stub mapping)
+            .w_dkv = kv_a_proj,  // joint KV projection (stub mapping)
+            .w_up = kv_b_proj,   // KV up-projection (stub mapping)
             .w_kr = null,
             .rope = null,
         };
@@ -538,36 +548,42 @@ fn mapWeightsToDeepSeek(
                 .down_proj = down_proj,
             };
 
-            break :blk moe.MixtureOfExperts{
-                .config = moe.MoEConfig{
-                    .num_experts = 1, // Dense layer uses single "expert"
-                    .top_k = 1,
-                    .hidden_size = config.hidden_size,
-                    .intermediate_size = config.intermediate_size,
-                },
-                .dense_weights = dense_weights,
+            // Dense layer: create a MixtureOfExperts with 1 routed expert (no shared)
+            // and overwrite the random weights with the loaded dense MLP weights.
+            const dense_moe_config = moe.MoEConfig{
+                .num_experts = 1,
+                .num_shared_experts = 0,
+                .top_k = 1,
+                .hidden_size = config.hidden_size,
+                .intermediate_size = config.intermediate_size,
             };
+            var dense_moe = try moe.MixtureOfExperts.init(allocator, dense_moe_config);
+            // Replace random init weights with actual loaded weights
+            mlx.arrayFree(dense_moe.routed_experts[0].w_gate);
+            mlx.arrayFree(dense_moe.routed_experts[0].w_up);
+            mlx.arrayFree(dense_moe.routed_experts[0].w_down);
+            dense_moe.routed_experts[0].w_gate = dense_weights.gate_proj;
+            dense_moe.routed_experts[0].w_up = dense_weights.up_proj;
+            dense_moe.routed_experts[0].w_down = dense_weights.down_proj;
+            break :blk dense_moe;
         } else blk: {
             // MoE for layers 1+
             const gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.gate.weight", .{layer_idx});
             var gate = mlx.arrayNew();
             if (weights_hash.get(gate_key)) |ptr| {
-                gate = ptr.*;
+                if (ptr.*.ctx != null) mlx.arraySet(&gate, ptr.*) catch {};
             }
 
-            // Map shared experts (2 experts, quantized, group_size=32)
-            var shared_experts = try allocator.alloc(struct { gate_proj: mlx.Array, up_proj: mlx.Array, down_proj: mlx.Array }, config.num_shared_experts);
+            // Map shared experts (fused single tensor per projection, no per-expert index)
+            // Actual model format: model.layers.{d}.mlp.shared_experts.{proj}
+            const shared_gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.gate_proj", .{layer_idx});
+            const shared_gate_proj = try mapQuantizedWeight(allocator, weights_hash, shared_gate_key, 32);
 
-            for (0..config.num_shared_experts) |exp_idx| {
-                const shared_gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.gate_proj", .{ layer_idx, exp_idx });
-                shared_experts[exp_idx].gate_proj = try mapQuantizedWeight(allocator, weights_hash, shared_gate_key, 32);
+            const shared_up_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.up_proj", .{layer_idx});
+            const shared_up_proj = try mapQuantizedWeight(allocator, weights_hash, shared_up_key, 32);
 
-                const shared_up_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.up_proj", .{ layer_idx, exp_idx });
-                shared_experts[exp_idx].up_proj = try mapQuantizedWeight(allocator, weights_hash, shared_up_key, 32);
-
-                const shared_down_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.{d}.down_proj", .{ layer_idx, exp_idx });
-                shared_experts[exp_idx].down_proj = try mapQuantizedWeight(allocator, weights_hash, shared_down_key, 32);
-            }
+            const shared_down_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.shared_experts.down_proj", .{layer_idx});
+            const shared_down_proj = try mapQuantizedWeight(allocator, weights_hash, shared_down_key, 32);
 
             // Map switch_mlp (fused 64 experts, group_size=32)
             const switch_gate_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.gate_proj", .{layer_idx});
@@ -579,26 +595,36 @@ fn mapWeightsToDeepSeek(
             const switch_down_key = try std.fmt.bufPrint(&buf, "model.layers.{d}.mlp.switch_mlp.down_proj", .{layer_idx});
             const switch_down = try mapQuantizedWeight(allocator, weights_hash, switch_down_key, 32);
 
-            const moe_weights = deepseek.MoEWeights{
-                .gate = gate,
-                .shared_experts = shared_experts,
-                .switch_mlp = .{
-                    .gate_proj = switch_gate,
-                    .up_proj = switch_up,
-                    .down_proj = switch_down,
-                },
+            const routed_moe_config = moe.MoEConfig{
+                .num_experts = 1, // switch_mlp is a single fused expert
+                .num_shared_experts = 1, // single fused shared expert tensor
+                .top_k = config.top_k,
+                .hidden_size = config.hidden_size,
+                .intermediate_size = config.intermediate_size,
             };
-
-            break :blk moe.MixtureOfExperts{
-                .config = moe.MoEConfig{
-                    .num_experts = config.num_experts,
-                    .top_k = config.top_k,
-                    .hidden_size = config.hidden_size,
-                    .intermediate_size = config.intermediate_size,
-                    .num_shared_experts = config.num_shared_experts,
-                },
-                .moe_weights = moe_weights,
-            };
+            var routed_moe = try moe.MixtureOfExperts.init(allocator, routed_moe_config);
+            // Set gate weight from loaded gate array
+            mlx.arrayFree(routed_moe.gate_weight);
+            routed_moe.gate_weight = gate;
+            // Replace shared expert weights with loaded fused tensor
+            if (routed_moe.shared_experts.len > 0) {
+                mlx.arrayFree(routed_moe.shared_experts[0].w_gate);
+                mlx.arrayFree(routed_moe.shared_experts[0].w_up);
+                mlx.arrayFree(routed_moe.shared_experts[0].w_down);
+                routed_moe.shared_experts[0].w_gate = shared_gate_proj;
+                routed_moe.shared_experts[0].w_up = shared_up_proj;
+                routed_moe.shared_experts[0].w_down = shared_down_proj;
+            }
+            // Replace routed expert (switch_mlp fused) weights
+            if (routed_moe.routed_experts.len > 0) {
+                mlx.arrayFree(routed_moe.routed_experts[0].w_gate);
+                mlx.arrayFree(routed_moe.routed_experts[0].w_up);
+                mlx.arrayFree(routed_moe.routed_experts[0].w_down);
+                routed_moe.routed_experts[0].w_gate = switch_gate;
+                routed_moe.routed_experts[0].w_up = switch_up;
+                routed_moe.routed_experts[0].w_down = switch_down;
+            }
+            break :blk routed_moe;
         };
 
         // Initialize layer
@@ -641,36 +667,19 @@ fn mapQuantizedWeight(
     const biases_key = try std.fmt.bufPrint(&buf_biases, "{s}.biases", .{base_key});
     const scales_key = try std.fmt.bufPrint(&buf_scales, "{s}.scales", .{base_key});
 
-    // Get quantized components
-    var weight = mlx.arrayNew();
-    var biases = mlx.arrayNew();
-    var scales = mlx.arrayNew();
-    errdefer {
-        mlx.arrayFree(weight);
-        mlx.arrayFree(biases);
-        mlx.arrayFree(scales);
-    }
-
-    if (weights_hash.get(weight_key)) |ptr| {
-        weight = ptr.*;
-    } else {
+    // Get quantized components from hash (hash owns these arrays — do NOT free them here)
+    const weight = if (weights_hash.get(weight_key)) |ptr| ptr.* else {
         std.log.warn("Missing quantized weight: {s}", .{weight_key});
         return error.WeightNotFound;
-    }
-
-    if (weights_hash.get(biases_key)) |ptr| {
-        biases = ptr.*;
-    } else {
+    };
+    const biases = if (weights_hash.get(biases_key)) |ptr| ptr.* else {
         std.log.warn("Missing quantized bias: {s}", .{biases_key});
         return error.BiasNotFound;
-    }
-
-    if (weights_hash.get(scales_key)) |ptr| {
-        scales = ptr.*;
-    } else {
+    };
+    const scales = if (weights_hash.get(scales_key)) |ptr| ptr.* else {
         std.log.warn("Missing quantized scales: {s}", .{scales_key});
         return error.ScaleNotFound;
-    }
+    };
 
     _ = allocator; // Used for future Metal kernel allocations
 

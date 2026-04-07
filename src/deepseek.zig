@@ -85,8 +85,19 @@ pub const DeepSeekLayer = struct {
     pub fn deinit(self: *DeepSeekLayer) void {
         mlx.arrayFree(self.input_norm);
         mlx.arrayFree(self.post_attn_norm);
-        // mla and moe have their own deinit methods
-        self.mla.deinit();
+        // mla: free arrays manually without calling mla.deinit() because:
+        // mla.MultiHeadLatentAttention.deinit() calls allocator.destroy(self),
+        // which is only correct when mla was heap-allocated via mla.init().
+        // Here mla is a VALUE field inside a heap-allocated slice — calling
+        // destroy() on a slice field causes heap corruption / UB.
+        mlx.arrayFree(self.mla.w_dq);
+        mlx.arrayFree(self.mla.w_dkv);
+        mlx.arrayFree(self.mla.w_up);
+        if (self.mla.w_kr) |w| mlx.arrayFree(w);
+        if (self.mla.rope) |rope| rope.deinit();
+        self.mla.base.deinit();
+        // moe has its own deinit method and is NOT heap-allocated by init,
+        // but moe.deinit() does NOT call destroy(self) so it is safe.
         self.moe.deinit();
     }
 };
