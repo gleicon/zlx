@@ -35,18 +35,32 @@ hf_download() {
     local repo="$1"
     local dest="$2"
     echo "Downloading $repo → $dest"
+
+    # Check if huggingface-cli supports the 'download' subcommand (requires huggingface-hub>=0.16)
+    local HF_CLI_HAS_DOWNLOAD=false
     if command -v huggingface-cli &>/dev/null; then
+        if huggingface-cli download --help &>/dev/null 2>&1; then
+            HF_CLI_HAS_DOWNLOAD=true
+        fi
+    fi
+
+    if $HF_CLI_HAS_DOWNLOAD; then
         huggingface-cli download "$repo" --local-dir "$dest" --local-dir-use-symlinks False
     elif command -v python3 &>/dev/null && python3 -c "import huggingface_hub" 2>/dev/null; then
-        python3 -c "
+        python3 - <<PYEOF
 from huggingface_hub import snapshot_download
-snapshot_download(repo_id='$repo', local_dir='$dest', local_dir_use_symlinks=False)
-"
+snapshot_download(repo_id="$repo", local_dir="$dest", local_dir_use_symlinks=False)
+PYEOF
     else
         echo ""
-        echo "ERROR: huggingface-cli not found."
-        echo "Install with:  pip install huggingface-hub"
-        echo "Then re-run this script."
+        echo "ERROR: no usable HuggingFace downloader found."
+        echo ""
+        echo "Option 1 — upgrade huggingface-hub (adds 'download' subcommand):"
+        echo "  pip install --upgrade huggingface-hub"
+        echo ""
+        echo "Option 2 — git clone with LFS (slow but always works):"
+        echo "  git lfs install"
+        echo "  git clone https://huggingface.co/$repo $dest"
         exit 1
     fi
 }
