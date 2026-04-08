@@ -7,6 +7,7 @@ const httpz = @import("httpz");
 const handlers = @import("handlers.zig");
 const chat_gptoss = @import("chat_gptoss.zig");
 const chat_deepseek = @import("chat_deepseek.zig");
+const chat_gemma4 = @import("chat_gemma4.zig");
 const tools_api_mod = @import("tools.zig");
 const tool_executor_mod = @import("../tools/tool_executor.zig");
 const mlx_gptoss_backend_mod = @import("../backends/mlx_gptoss_backend.zig");
@@ -37,6 +38,10 @@ var g_chat_gptoss_handler: ?chat_gptoss.ChatGPTOSSHandler = null;
 var g_deepseek_backend: ?llama_cpp_mod.LlamaBackend = null;
 /// Module-level ChatDeepSeekHandler
 var g_chat_deepseek_handler: ?chat_deepseek.ChatDeepSeekHandler = null;
+/// Module-level LlamaBackend for Gemma 4 — initialized lazily on first request (per D-01, D-02)
+var g_gemma4_backend: ?llama_cpp_mod.LlamaBackend = null;
+/// Module-level ChatGemma4Handler
+var g_chat_gemma4_handler: ?chat_gemma4.ChatGemma4Handler = null;
 /// Module-level ToolsAPI instance for /v1/tools/* route dispatch
 var g_tools_api: ?tools_api_mod.ToolsAPI = null;
 /// Module-level ToolExecutor backing g_tools_api
@@ -74,6 +79,10 @@ pub const Server = struct {
         // Initialize DeepSeek handler — backend is null at startup and loaded lazily on first request (per D-01)
         // DO NOT call LlamaBackend.init(allocator, "") here — it requires a valid GGUF path and will crash
         g_chat_deepseek_handler = chat_deepseek.ChatDeepSeekHandler.init(allocator, &g_deepseek_backend);
+
+        // Initialize Gemma 4 handler — backend is null at startup and loaded lazily on first request (per D-02)
+        // DO NOT call LlamaBackend.init(allocator, "") here — it requires a valid GGUF path and will crash
+        g_chat_gemma4_handler = chat_gemma4.ChatGemma4Handler.init(allocator, &g_gemma4_backend);
 
         // Initialize tool executor and ToolsAPI for /v1/tools/* routes
         g_tool_executor = tool_executor_mod.ToolExecutor.init(allocator);
@@ -147,6 +156,12 @@ pub const Server = struct {
         if (g_gptoss_backend) |*b| b.deinit();
         g_gptoss_backend = null;
         g_chat_gptoss_handler = null;
+        if (g_deepseek_backend) |*b| b.deinit();
+        g_deepseek_backend = null;
+        g_chat_deepseek_handler = null;
+        if (g_gemma4_backend) |*b| b.deinit();
+        g_gemma4_backend = null;
+        g_chat_gemma4_handler = null;
         if (g_tool_executor) |*te| te.deinit();
         g_tools_api = null;
         g_tool_executor = null;
@@ -188,6 +203,14 @@ fn handleChatCompletions(req: *httpz.Request, res: *httpz.Response) !void {
         } else {
             res.status = 503;
             try res.json(.{ .@"error" = "DeepSeek handler not initialized" }, .{});
+        }
+    } else if (chat_gemma4.isGemma4Model(peek.value.model)) {
+        // Gemma 4 dispatch — per D-02 handler-per-model pattern
+        if (g_chat_gemma4_handler) |*handler| {
+            try handler.handle(req, res);
+        } else {
+            res.status = 503;
+            try res.json(.{ .@"error" = "Gemma 4 handler not initialized" }, .{});
         }
     } else {
         try handlers.handleChatCompletions(req, res);
