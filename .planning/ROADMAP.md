@@ -37,7 +37,7 @@ zlx goes from a broken skeleton to a working single-binary OpenAI-compatible inf
 **v2.0 "It Just Works":**
 - [x] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean (completed 2026-04-05)
 - [x] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end (completed 2026-04-06)
-- [ ] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B
+- [x] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B (completed 2026-04-08)
 - [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression
 - [ ] **Phase 20: Tools API** - Fix Zig 0.15.2 API breaks, register HTTP routes, verify browser and Python tools end-to-end
 - [ ] **Phase 21: Project Documentation** - Write project history, extraction candidates, and working model setup guide
@@ -350,7 +350,7 @@ Plans:
 **Plans**: 1 plan (Wave 1: Handler implementation following DeepSeek pattern)
 
 Plans:
-- [ ] 18-01-PLAN.md — Gemma 4 E4B chat handler with llama.cpp backend, chat template, no-think mode (MODEL-04, MODEL-05, MODEL-06, MODEL-07)
+- [x] 18-01-PLAN.md — Gemma 4 E4B chat handler with llama.cpp backend, chat template, no-think mode (MODEL-04, MODEL-05, MODEL-06, MODEL-07)
 
 **UI hint**: no
 
@@ -419,7 +419,7 @@ v1.1: 4 → 5 → 6 → 7 → 8 → 9 (IN PROGRESS - Phase 4 Complete)
 | 15. Native MLX GPT-OSS | 8/9 | In Progress | — |
 | 16. Build & Gap Closure | 3/3 | Complete    | 2026-04-05 |
 | 17. Inference Gap Closure | 10/10 | Complete   | 2026-04-07 |
-| 18. Gemma 4 E4B | 0/TBD | Not started | — |
+| 18. Gemma 4 E4B | 1/1 | Complete   | 2026-04-08 |
 | 19. TurboQuant Metal | 0/TBD | Not started | — |
 | 20. Tools API | 0/TBD | Not started | — |
 | 21. Project Documentation | 0/TBD | Not started | — |
