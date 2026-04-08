@@ -347,7 +347,11 @@ Plans:
   2. A chat completion request using the Gemma 4 E4B chat template (with `<|turn>` / `<turn|>` control tokens) produces a coherent response
   3. Setting `temperature=0.3` in the request and including the no-think system prompt produces a measurably shorter response than default temperature — verbosity reduction is observable
   4. OpenCode pointed at `http://localhost:8080/v1` with Gemma 4 E4B loaded produces inline completions without errors
-**Plans**: TBD
+**Plans**: 1 plan (Wave 1: Handler implementation following DeepSeek pattern)
+
+Plans:
+- [ ] 18-01-PLAN.md — Gemma 4 E4B chat handler with llama.cpp backend, chat template, no-think mode (MODEL-04, MODEL-05, MODEL-06, MODEL-07)
+
 **UI hint**: no
 
 ### Phase 19: TurboQuant Metal
