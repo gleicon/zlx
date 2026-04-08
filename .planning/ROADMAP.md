@@ -359,11 +359,16 @@ Plans:
 **Depends on**: Phase 16 (clean build required)
 **Requirements**: TURBO-01, TURBO-02, TURBO-03, TURBO-04
 **Success Criteria** (what must be TRUE):
-  1. `zig build` succeeds with the TurboQuant Metal kernel compiled — no Python runtime involved
+  1. `zig build` succeeds with the TurboQuant library compiled — no Python runtime involved
   2. Running Qwen with `--turboquant` and without it back-to-back shows KV cache memory in logs reduced by at least 4x
-  3. The compressed+decompressed KV values match reference values from the Python implementation within acceptable tolerance (spot-checked on 10 sample vectors)
-  4. `--turboquant` flag enables compression; if the Metal kernel fails at runtime, the server falls back to standard cache and logs a warning — it does not crash
-**Plans**: TBD
+  3. The compressed+decompressed KV values match reference values within acceptable tolerance
+  4. `--turboquant` flag enables compression; if compression fails at runtime, the server falls back to standard cache and logs a warning — it does not crash
+**Plans**: 3 plans in 2 waves
+
+Plans:
+- [ ] 19-01-PLAN.md — Fix mod.zig exports, remove stub references, clean up module (TURBO-01)
+- [ ] 19-02-PLAN.md — Test turboquant library, engine wrapper, and KvCompressor integration (TURBO-02)
+- [ ] 19-03-PLAN.md — End-to-end verification with server, memory reduction measurement, graceful fallback (TURBO-03, TURBO-04)
 
 ### Phase 20: Tools API
 **Goal**: Browser search and Python execution are reachable, working HTTP endpoints that compile cleanly on Zig 0.15.2
