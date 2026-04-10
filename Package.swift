@@ -19,10 +19,7 @@ let package = Package(
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            resources: [
-                // Include Metal libraries from mlx-swift
-                .process("Resources")
-            ],
+
             swiftSettings: [
                 .unsafeFlags(["-enable-experimental-feature", "StrictConcurrency"]),
                 .define("SWIFT_PACKAGE"),
