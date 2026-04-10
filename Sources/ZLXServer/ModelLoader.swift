@@ -1,15 +1,16 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import Hub
 
-/// Loads models - simplified stub for compilation
+/// Loads models using MLXLMCommon
 public struct ModelLoader {
     
-    /// Load a model from path or HuggingFace ID
+    /// Load a model from HuggingFace ID
     public static func load(
         modelId: String,
         maxKVSize: Int = 4096
-    ) async throws -> ModelContainer {
+    ) async throws -> ZLXModelContainer {
         let registry = await ModelRegistry.shared
         
         // Resolve alias
@@ -20,32 +21,33 @@ public struct ModelLoader {
         }
         
         // Check if already loaded
-        // Note: For now, skip cache check due to Sendable requirements
-        // In production, would use proper isolated cache access
+        if await registry.isLoaded(id: resolvedId) {
+            if let cached = await registry.getZLXModel(id: resolvedId) {
+                return cached
+            }
+        }
         
         print("Loading model: \(modelInfo.name)...")
         
-        // Load configuration
-        let config = try ModelConfiguration.load(from: modelInfo.path)
-        
-        // Create stub model and tokenizer for now
-        // In real implementation, would use MLXLMCommon to load actual model
-        let model = SimpleLanguageModel()
-        let tokenizer = SimpleTokenizer()
-        
-        let container = ModelContainer(
-            info: modelInfo,
-            model: model,
-            tokenizer: tokenizer,
-            configuration: config,
-            maxKVSize: maxKVSize
-        )
-        
-        // Store in registry
-        await registry.storeLoadedModel(id: resolvedId, model: container)
-        
-        print("✅ Model loaded: \(modelInfo.name)")
-        return container
+        // Load using MLXLMCommon's global loadModelContainer function
+        do {
+            let mlxContainer = try await loadModelContainer(id: modelInfo.id)
+            
+            let container = ZLXModelContainer(
+                info: modelInfo,
+                container: mlxContainer
+            )
+            
+            // Store in registry
+            await registry.storeLoadedModel(id: resolvedId, model: container)
+            
+            print("✅ Model loaded: \(modelInfo.name)")
+            return container
+            
+        } catch {
+            print("❌ Failed to load model: \(error)")
+            throw ModelError.failedToLoad(error.localizedDescription)
+        }
     }
 }
 

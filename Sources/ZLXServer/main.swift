@@ -40,7 +40,7 @@ struct ZLXServer: AsyncParsableCommand {
         MLX.GPU.set(cacheLimit: 8 * 1024 * 1024 * 1024) // 8GB GPU cache
         
         // Load model
-        let modelContainer: ModelContainer
+        let modelContainer: ZLXModelContainer
         do {
             modelContainer = try await ModelLoader.load(
                 modelId: model,
@@ -120,7 +120,7 @@ struct ZLXServer: AsyncParsableCommand {
             let targetModelId = body.model ?? self.model
             
             // Get or load model
-            let targetModel: ModelContainer
+            let targetModel: ZLXModelContainer
             do {
                 targetModel = try await ModelLoader.load(modelId: targetModelId)
             } catch {
@@ -160,7 +160,7 @@ struct ZLXServer: AsyncParsableCommand {
     
     private func handleNonStreaming(
         request: ChatCompletionRequest,
-        model: ModelContainer
+        model: ZLXModelContainer
     ) async throws -> Response {
         let messages = request.messages.map { ChatMessage(role: $0.role, content: $0.content) }
         
@@ -168,9 +168,7 @@ struct ZLXServer: AsyncParsableCommand {
             messages: messages,
             maxTokens: request.maxTokens ?? 1024,
             temperature: request.temperature ?? 0.7,
-            topP: request.topP ?? 0.9,
-            topK: request.topK ?? 40,
-            repetitionPenalty: request.repetitionPenalty ?? 1.0
+            topP: request.topP ?? 0.9
         )
         
         let response = ChatCompletionResponse(
@@ -208,19 +206,22 @@ struct ZLXServer: AsyncParsableCommand {
     
     private func handleStreaming(
         request: ChatCompletionRequest,
-        model: ModelContainer,
-        context: RequestContext
+        model: ZLXModelContainer,
+        context: any RequestContext
     ) async throws -> Response {
+        let messages = request.messages.map { ChatMessage(role: $0.role, content: $0.content) }
+        
+        // Get the streaming response from the model
+        let stream = try await model.generateStreaming(
+            messages: messages,
+            maxTokens: request.maxTokens ?? 1024
+        )
+        
         // Create async stream for SSE
-        let stream = AsyncStream<String> { continuation in
+        let sseStream = AsyncStream<String> { continuation in
             Task {
-                let messages = request.messages.map { ChatMessage(role: $0.role, content: $0.content) }
-                
                 var chunkIndex = 0
-                for await chunk in model.generateStreaming(
-                    messages: messages,
-                    maxTokens: request.maxTokens ?? 1024
-                ) {
+                for await chunk in stream {
                     let responseChunk = ChatCompletionChunk(
                         id: "chat-\(UUID().uuidString)",
                         object: "chat.completion.chunk",
@@ -229,7 +230,7 @@ struct ZLXServer: AsyncParsableCommand {
                         choices: [
                             ChunkChoice(
                                 index: chunkIndex,
-                                delta: Delta(content: chunk.token),
+                                delta: Delta(content: chunk.text),
                                 finishReason: chunk.isLast ? "stop" : nil
                             )
                         ]
@@ -252,7 +253,7 @@ struct ZLXServer: AsyncParsableCommand {
         
         // Collect stream into response body
         var body = ByteBuffer()
-        for try await chunk in stream {
+        for try await chunk in sseStream {
             body.writeString(chunk)
         }
         

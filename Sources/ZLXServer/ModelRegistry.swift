@@ -114,20 +114,22 @@ public struct ModelInfo: Identifiable, Sendable {
 
 /// Model registry - manages available models
 public actor ModelRegistry {
-    public static let shared = ModelRegistry()
+    public static let shared: ModelRegistry = {
+        let registry = ModelRegistry()
+        // Register models in a Task since we're outside the actor
+        Task {
+            await registry.registerDefaultModels()
+        }
+        return registry
+    }()
     
     private var models: [String: ModelInfo] = [:]
     private var loadedModels: [String: Any] = [:] // Type-erased loaded models
     
-    private init() {
-        // Defer registration to avoid actor isolation issues in init
-        Task {
-            await registerDefaultModels()
-        }
-    }
+    private init() {}
     
     /// Register built-in models
-    private func registerDefaultModels() async {
+    public func registerDefaultModels() {
         // Qwen 2.5 Coder models
         register(ModelInfo(
             id: "qwen2.5-coder-1.5b",
@@ -238,9 +240,14 @@ public actor ModelRegistry {
         loadedModels[id] = model
     }
     
-    /// Get a loaded model
+    /// Get a loaded model (generic)
     public func getLoadedModel(id: String) -> Any? {
         return loadedModels[id]
+    }
+    
+    /// Get a loaded ZLXModelContainer specifically
+    public func getZLXModel(id: String) -> ZLXModelContainer? {
+        return loadedModels[id] as? ZLXModelContainer
     }
     
     /// Unload a model to free memory

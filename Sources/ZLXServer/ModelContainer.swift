@@ -1,157 +1,6 @@
 import Foundation
 import MLX
-import MLXLMCommon
-
-/// Stub tokenizer for compilation
-public struct SimpleTokenizer: Tokenizer {
-    public let eosTokenId: Int = 2
-    
-    public func encode(text: String, addSpecialTokens: Bool) -> [Int] {
-        // Stub - would use real tokenizer
-        return [1, 2, 3] 
-    }
-    
-    public func decode(tokens: [Int], skipSpecialTokens: Bool) -> String {
-        // Stub - would use real tokenizer
-        return "Hello from model"
-    }
-}
-
-/// Stub model for compilation  
-public struct SimpleLanguageModel {
-    public func callAsFunction(_ tokens: [Int], cache: Any?) -> MLXArray {
-        // Stub - would run actual inference
-        return MLXArray([0.0])
-    }
-}
-
-/// Protocol for tokenizer
-public protocol Tokenizer: Sendable {
-    var eosTokenId: Int { get }
-    func encode(text: String, addSpecialTokens: Bool) -> [Int]
-    func decode(tokens: [Int], skipSpecialTokens: Bool) -> String
-}
-
-/// Container for a loaded model with generation capabilities
-public class ModelContainer: @unchecked Sendable {
-    public let info: ModelInfo
-    public let model: SimpleLanguageModel
-    public let tokenizer: Tokenizer
-    public let configuration: ModelConfiguration
-    
-    private var kvCache: [Int]?
-    private let maxKVSize: Int
-    
-    public init(
-        info: ModelInfo,
-        model: SimpleLanguageModel,
-        tokenizer: Tokenizer,
-        configuration: ModelConfiguration,
-        maxKVSize: Int = 4096
-    ) {
-        self.info = info
-        self.model = model
-        self.tokenizer = tokenizer
-        self.configuration = configuration
-        self.maxKVSize = maxKVSize
-    }
-    
-    /// Generate text from messages
-    public func generate(
-        messages: [ChatMessage],
-        maxTokens: Int = 1024,
-        temperature: Float = 0.7,
-        topP: Float = 0.9,
-        topK: Int = 40,
-        repetitionPenalty: Float = 1.0
-    ) async throws -> GenerationResult {
-        // Apply chat template
-        let prompt = try applyChatTemplate(messages: messages)
-        
-        // Tokenize
-        let inputTokens = tokenizer.encode(text: prompt, addSpecialTokens: true)
-        
-        // Stub generation - would call actual MLX model
-        var outputTokens: [Int] = []
-        
-        // Simulate generation
-        for i in 0..<min(maxTokens, 10) { // Limit to 10 for stub
-            outputTokens.append(i + 100)
-            if i > 5 { break } // Simulate early stop
-        }
-        
-        // Decode output
-        let outputText = tokenizer.decode(tokens: outputTokens, skipSpecialTokens: true)
-        
-        return GenerationResult(
-            text: outputText,
-            promptTokens: inputTokens.count,
-            completionTokens: outputTokens.count,
-            finishReason: "stop"
-        )
-    }
-    
-    /// Generate with streaming
-    public func generateStreaming(
-        messages: [ChatMessage],
-        maxTokens: Int = 1024,
-        temperature: Float = 0.7,
-        topP: Float = 0.9,
-        topK: Int = 40
-    ) -> AsyncStream<StreamChunk> {
-        // Capture values to avoid self access in @Sendable closure
-        let tokenizer = self.tokenizer
-        let info = self.info
-        
-        return AsyncStream { @Sendable continuation in
-            Task {
-                let prompt = applyChatTemplateSync(messages: messages, architecture: info.architecture)
-                let inputTokens = tokenizer.encode(text: prompt, addSpecialTokens: true)
-                
-                for i in 0..<min(maxTokens, 10) {
-                    let tokenText = "Token \(i) "
-                    continuation.yield(StreamChunk(
-                        token: tokenText,
-                        isLast: i >= 5,
-                        index: i
-                    ))
-                    
-                    if i >= 5 {
-                        break
-                    }
-                }
-                
-                continuation.finish()
-            }
-        }
-    }
-    
-    // Synchronous version for streaming
-    private func applyChatTemplateSync(messages: [ChatMessage], architecture: ModelArchitecture) -> String {
-        switch architecture {
-        case .qwen2_5:
-            return QwenChatTemplate.apply(messages: messages)
-        case .deepseekCoderV2:
-            return DeepSeekChatTemplate.apply(messages: messages)
-        case .gemma4:
-            return Gemma4ChatTemplate.apply(messages: messages)
-        }
-    }
-    
-    // MARK: - Private Helpers
-    
-    private func applyChatTemplate(messages: [ChatMessage]) throws -> String {
-        // Use model-specific chat template
-        switch info.architecture {
-        case .qwen2_5:
-            return QwenChatTemplate.apply(messages: messages)
-        case .deepseekCoderV2:
-            return DeepSeekChatTemplate.apply(messages: messages)
-        case .gemma4:
-            return Gemma4ChatTemplate.apply(messages: messages)
-        }
-    }
-}
+@preconcurrency import MLXLMCommon
 
 /// Chat message for conversation
 public struct ChatMessage: Codable, Sendable {
@@ -174,69 +23,141 @@ public struct GenerationResult: Sendable {
 
 /// Streaming chunk
 public struct StreamChunk: Sendable {
-    public let token: String
+    public let text: String
     public let isLast: Bool
     public let index: Int
 }
 
-// MARK: - Chat Templates
-
-struct QwenChatTemplate {
-    static func apply(messages: [ChatMessage]) -> String {
-        var result = ""
-        for message in messages {
-            switch message.role {
-            case "system":
-                result += "<|im_start|>system\n\(message.content)<|im_end|>\n"
-            case "user":
-                result += "<|im_start|>user\n\(message.content)<|im_end|>\n"
-            case "assistant":
-                result += "<|im_start|>assistant\n\(message.content)<|im_end|>\n"
-            default:
-                result += "<|im_start|>\(message.role)\n\(message.content)<|im_end|>\n"
-            }
-        }
-        result += "<|im_start|>assistant\n"
-        return result
+/// Wrapper for MLXLMCommon's ModelContainer
+/// Note: Uses @unchecked Sendable because MLXLMCommon.ModelContainer already uses SerialAccessContainer for thread-safety
+public final class ZLXModelContainer: @unchecked Sendable {
+    public let info: ModelInfo
+    private let underlying: MLXLMCommon.ModelContainer
+    
+    public init(info: ModelInfo, container: MLXLMCommon.ModelContainer) {
+        self.info = info
+        self.underlying = container
     }
-}
-
-struct DeepSeekChatTemplate {
-    static func apply(messages: [ChatMessage]) -> String {
-        var result = ""
-        for message in messages {
-            switch message.role {
+    
+    /// Convert our ChatMessage to MLXLMCommon.Chat.Message
+    private func convertMessages(_ messages: [ChatMessage]) -> [MLXLMCommon.Chat.Message] {
+        return messages.map { msg in
+            switch msg.role {
             case "system":
-                result += message.content + "\n"
+                return MLXLMCommon.Chat.Message.system(msg.content)
             case "user":
-                result += "User: \(message.content)\n"
+                return MLXLMCommon.Chat.Message.user(msg.content)
             case "assistant":
-                result += "Assistant: \(message.content)\n"
+                return MLXLMCommon.Chat.Message.assistant(msg.content)
             default:
-                result += "\(message.role): \(message.content)\n"
+                return MLXLMCommon.Chat.Message.user(msg.content)
             }
         }
-        result += "Assistant:"
-        return result
     }
-}
-
-struct Gemma4ChatTemplate {
-    static func apply(messages: [ChatMessage]) -> String {
-        var result = ""
-        for message in messages {
-            switch message.role {
-            case "system":
-                result += "<|turn|>system\n\(message.content)<|turn|>\n"
-            case "user":
-                result += "<|turn|>user\n\(message.content)<|turn|>\n"
-            case "assistant":
-                result += "<|turn|>assistant\n\(message.content)<|turn|>\n"
-            default:
-                result += "<|turn|>\(message.role)\n\(message.content)<|turn|>\n"
+    
+    /// Generate text from messages (non-streaming)
+    public func generate(
+        messages: [ChatMessage],
+        maxTokens: Int = 1024,
+        temperature: Float = 0.7,
+        topP: Float = 0.9
+    ) async throws -> GenerationResult {
+        // Convert messages
+        let mlxMessages = convertMessages(messages)
+        
+        // Create UserInput
+        let userInput = UserInput(chat: mlxMessages)
+        
+        // Prepare input (applies chat template, tokenizes)
+        let lmInput = try await underlying.prepare(input: userInput)
+        
+        // Create generation parameters
+        let params = GenerateParameters(
+            maxTokens: maxTokens,
+            temperature: temperature,
+            topP: topP
+        )
+        
+        // Generate using ModelContainer's generate method
+        let stream = try await underlying.generate(input: lmInput, parameters: params)
+        
+        // Collect all chunks into results
+        var text = ""
+        var promptTokens = 0
+        var completionTokens = 0
+        var stopReason = "stop"
+        
+        for await generation in stream {
+            switch generation {
+            case .chunk(let chunk):
+                text += chunk
+            case .info(let info):
+                promptTokens = info.promptTokenCount
+                completionTokens = info.generationTokenCount
+                stopReason = String(describing: info.stopReason)
+            case .toolCall:
+                break
             }
         }
-        result += "<|turn|>assistant\n"
-        return result
+        
+        return GenerationResult(
+            text: text,
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            finishReason: stopReason
+        )
+    }
+    
+    /// Generate with streaming - returns the underlying stream directly
+    public func generateStreaming(
+        messages: [ChatMessage],
+        maxTokens: Int = 1024,
+        temperature: Float = 0.7,
+        topP: Float = 0.9
+    ) async throws -> AsyncStream<StreamChunk> {
+        let mlxMessages = convertMessages(messages)
+        
+        let userInput = UserInput(chat: mlxMessages)
+        let lmInput = try await underlying.prepare(input: userInput)
+        let params = GenerateParameters(
+            maxTokens: maxTokens,
+            temperature: temperature,
+            topP: topP
+        )
+        
+        let stream = try await underlying.generate(input: lmInput, parameters: params)
+        
+        return AsyncStream { continuation in
+            // Use a detached task to avoid capturing issues
+            let task = Task {
+                var index = 0
+                for await generation in stream {
+                    switch generation {
+                    case .chunk(let text):
+                        continuation.yield(StreamChunk(
+                            text: text,
+                            isLast: false,
+                            index: index
+                        ))
+                        index += 1
+                    case .info:
+                        continuation.yield(StreamChunk(
+                            text: "",
+                            isLast: true,
+                            index: index
+                        ))
+                        continuation.finish()
+                    case .toolCall:
+                        break
+                    }
+                }
+                continuation.finish()
+            }
+            
+            // Cancel the task if the stream is terminated early
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
     }
 }
