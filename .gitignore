@@ -134,3 +134,4 @@ Icon?
 # Windows specific
 Desktop.ini
 $RECYCLE.BIN/
+*.metallib
