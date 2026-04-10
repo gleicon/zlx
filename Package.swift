@@ -20,7 +20,8 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: [
-                .unsafeFlags(["-enable-experimental-feature", "StrictConcurrency"])
+                .unsafeFlags(["-enable-experimental-feature", "StrictConcurrency"]),
+                .define("SWIFT_PACKAGE"),
             ]
         )
     ]

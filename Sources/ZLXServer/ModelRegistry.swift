@@ -3,7 +3,7 @@ import MLX
 import MLXLMCommon
 
 /// Supported model architectures
-public enum ModelArchitecture: String, CaseIterable {
+public enum ModelArchitecture: String, CaseIterable, Sendable {
     case qwen2_5 = "qwen2.5"
     case deepseekCoderV2 = "deepseek-coder-v2"
     case gemma4 = "gemma4"
@@ -81,7 +81,7 @@ private struct ConfigWrapper: Codable {
 }
 
 /// Model metadata for registry
-public struct ModelInfo: Identifiable {
+public struct ModelInfo: Identifiable, Sendable {
     public let id: String
     public let name: String
     public let architecture: ModelArchitecture
@@ -120,11 +120,14 @@ public actor ModelRegistry {
     private var loadedModels: [String: Any] = [:] // Type-erased loaded models
     
     private init() {
-        registerDefaultModels()
+        // Defer registration to avoid actor isolation issues in init
+        Task {
+            await registerDefaultModels()
+        }
     }
     
     /// Register built-in models
-    private func registerDefaultModels() {
+    private func registerDefaultModels() async {
         // Qwen 2.5 Coder models
         register(ModelInfo(
             id: "qwen2.5-coder-1.5b",

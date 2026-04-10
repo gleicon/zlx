@@ -14,7 +14,7 @@ import NIOCore
 /// - Native MLX inference on Apple Silicon
 /// - OpenAI-compatible /v1/chat/completions endpoint
 /// - Streaming and non-streaming responses
-@main
+@available(macOS 14.0, *)
 struct ZLXServer: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Model path or HuggingFace ID")
     var model: String = "qwen2.5-coder-1.5b"
@@ -53,41 +53,67 @@ struct ZLXServer: AsyncParsableCommand {
         }
         
         // Setup HTTP server
-        let router = HBRouter()
+        let router = Router()
         
         // Health check
-        router.get("/health") { _, _ in
-            HBResponse(
+        router.get("/health") { _, _ -> Response in
+            Response(
                 status: .ok,
                 body: .init(byteBuffer: ByteBuffer(string: "{\"status\": \"ok\"}"))
             )
         }
         
         // OpenAI-compatible models list
-        router.get("/v1/models") { _, _ in
+        router.get("/v1/models") { _, _ -> Response in
             let registry = await ModelRegistry.shared
             let models = await registry.listModels()
             
             let response = ModelsResponse(
-                data: models.map { ModelObject(id: $0.id, object: "model", ownedBy: "local") }
+                data: models.map { ModelObject(id: $0.id, object: "model") }
             )
             
-            return try HBResponse(
-                status: .ok,
-                headers: [.contentType: "application/json"],
-                body: .init(data: JSONEncoder().encode(response))
-            )
+            do {
+                let data = try JSONEncoder().encode(response)
+                var buffer = ByteBuffer(data: data)
+                return Response(
+                    status: .ok,
+                    headers: [.contentType: "application/json"],
+                    body: .init(byteBuffer: buffer)
+                )
+            } catch {
+                var errorBuffer = ByteBuffer(string: "Encoding error")
+                return Response(status: .internalServerError, body: .init(byteBuffer: errorBuffer))
+            }
         }
         
         // Chat completions endpoint
-        router.post("/v1/chat/completions") { request, context in
+        router.post("/v1/chat/completions") { request, context -> Response in
+            // Collect request body
+            var buffer = ByteBuffer()
+            do {
+                for try await chunk in request.body {
+                    var mutableChunk = chunk
+                    buffer.writeBuffer(&mutableChunk)
+                }
+            } catch {
+                var errorBuffer = ByteBuffer(string: "{\"error\": \"Failed to read request body\"}")
+                return Response(
+                    status: .badRequest,
+                    body: .init(byteBuffer: errorBuffer)
+                )
+            }
+            
             let body: ChatCompletionRequest
             do {
-                body = try await request.decode(as: ChatCompletionRequest.self, using: JSONDecoder())
+                guard let data = buffer.getData(at: 0, length: buffer.readableBytes) else {
+                    throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Empty body"))
+                }
+                body = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
             } catch {
-                return HBResponse(
+                var errorBuffer = ByteBuffer(string: "{\"error\": \"Invalid JSON: \(error)\"}")
+                return Response(
                     status: .badRequest,
-                    body: .init(string: "{\"error\": \"Invalid JSON\"}")
+                    body: .init(byteBuffer: errorBuffer)
                 )
             }
             
@@ -98,9 +124,10 @@ struct ZLXServer: AsyncParsableCommand {
             do {
                 targetModel = try await ModelLoader.load(modelId: targetModelId)
             } catch {
-                return HBResponse(
+                var errorBuffer = ByteBuffer(string: "{\"error\": \"Model not found: \(targetModelId)\"}")
+                return Response(
                     status: .notFound,
-                    body: .init(string: "{\"error\": \"Model not found: \(targetModelId)\"}")
+                    body: .init(byteBuffer: errorBuffer)
                 )
             }
             
@@ -114,7 +141,7 @@ struct ZLXServer: AsyncParsableCommand {
         }
         
         // Build and start server
-        let app = HBApplication(router: router)
+        var app = Application(router: router)
         app.configuration.address = .hostname(host, port: port)
         
         print("")
@@ -134,7 +161,7 @@ struct ZLXServer: AsyncParsableCommand {
     private func handleNonStreaming(
         request: ChatCompletionRequest,
         model: ModelContainer
-    ) async throws -> HBResponse {
+    ) async throws -> Response {
         let messages = request.messages.map { ChatMessage(role: $0.role, content: $0.content) }
         
         let result = try await model.generate(
@@ -165,18 +192,25 @@ struct ZLXServer: AsyncParsableCommand {
             )
         )
         
-        return try HBResponse(
-            status: .ok,
-            headers: [.contentType: "application/json"],
-            body: .init(data: JSONEncoder().encode(response))
-        )
+        do {
+            let data = try JSONEncoder().encode(response)
+            var buffer = ByteBuffer(data: data)
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json"],
+                body: .init(byteBuffer: buffer)
+            )
+        } catch {
+            var errorBuffer = ByteBuffer(string: "Encoding error")
+            return Response(status: .internalServerError, body: .init(byteBuffer: errorBuffer))
+        }
     }
     
     private func handleStreaming(
         request: ChatCompletionRequest,
         model: ModelContainer,
-        context: HBRequestContext
-    ) async throws -> HBResponse {
+        context: RequestContext
+    ) async throws -> Response {
         // Create async stream for SSE
         let stream = AsyncStream<String> { continuation in
             Task {
@@ -222,7 +256,7 @@ struct ZLXServer: AsyncParsableCommand {
             body.writeString(chunk)
         }
         
-        return HBResponse(
+        return Response(
             status: .ok,
             headers: [
                 .contentType: "text/event-stream",
@@ -334,3 +368,8 @@ struct ChunkChoice: Codable {
 struct Delta: Codable {
     let content: String
 }
+
+// MARK: - Entry Point
+
+// Run the server
+ZLXServer.main()
