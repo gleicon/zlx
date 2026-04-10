@@ -126,6 +126,77 @@ Do not make direct repo edits outside a GSD workflow unless the user explicitly 
 
 
 
+<!-- GSD:learnings-start -->
+## Key Learnings from Development (Updated: 2025-01-10)
+
+### 1. Model Architecture Assumptions Are Dangerous
+**Context:** Gemma 4 E4B implementation loop  
+**Learning:** Not all models fit the standard Transformer pattern (embed → layers → norm → head)
+
+Gemma 4 uses Per-Layer Embeddings (PLE):
+- Separate 256-dim embedding per layer (42 layers × 256 = 10,752 dims total)
+- Per-layer gating, projection, and normalization
+- Cannot use standard `Transformer(embed, hidden, layers)` pattern
+
+**Impact:** 3+ days spent, still not working. Need dedicated PLE architecture implementation.
+
+### 2. MLX C Bindings Are The Bottleneck
+**Problem:** Every MLX feature requires manual C bindings  
+**Examples:**
+- New RoPE variant → need C header update
+- New attention mask → need binding declaration
+- Error handling → manual C error code translation
+
+**Alternative considered:** Swift MLX has direct `import MLX` with no bindings needed.
+
+### 3. Weight Loading Complexity
+**Issue:** Model files have inconsistent conventions:
+- Key prefixes (`language_model.`, `model.`)
+- Per-tensor quantization scales/biases
+- Different naming per model family (Gemma vs Qwen vs Llama)
+
+**Current hack:** Regex-based prefix stripping in `loadSafetensors()`
+**Need:** Proper abstraction for model-specific weight loading strategies
+
+### 4. Quantization + Special Architectures = Problems
+**Finding:** Standard quantization breaks PLE layers (ScaledLinear)
+- PLE layers multiply by learned scalar
+- Quantization error gets amplified by scalar
+- Solution: Keep PLE in bf16, quantize only attention/MLP
+
+**Resource:** FakeRocket543's PLE-safe weights work correctly.
+
+### 5. Swift vs Zig Decision Looms
+**Current (Zig):**
+- ✅ Working for Qwen, GPT-OSS
+- ✅ Single binary, `zig build`
+- ✅ Fine-grained memory control
+- ❌ Manual bindings forever
+- ❌ PLE takes 3-5 days to implement
+
+**Alternative (Swift):**
+- ✅ Native `import MLX` (no bindings)
+- ✅ Gemma 4 works today via mlx-swift-models
+- ✅ Better debugging (Xcode, LLDB)
+- ❌ Full rewrite (1-2 weeks)
+- ❌ Lose TurboQuant, prompt cache (temporarily)
+
+**Decision needed:** See ARCHITECTURE_ANALYSIS.md for full comparison
+
+### 6. Recommendation: Better Abstractions Needed
+Current coupling is too tight:
+```
+HTTP → Registry → MLX.zig → C bindings → MLX → Metal
+```
+
+Desired:
+```
+HTTP → Model Interface → Tensor Backend (MLX/Swift/Other)
+```
+
+**Need:** Clean separation between HTTP API and inference engine.
+<!-- GSD:learnings-end -->
+
 <!-- GSD:profile-start -->
 ## Developer Profile
 
