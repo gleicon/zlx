@@ -14,7 +14,7 @@ import NIOCore
 /// - Native MLX inference on Apple Silicon
 /// - OpenAI-compatible /v1/chat/completions endpoint
 /// - Streaming and non-streaming responses
-@available(macOS 14.0, *)
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
 struct ZLXServer: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Model path or HuggingFace ID")
     var model: String = "qwen2.5-coder-1.5b"
@@ -25,7 +25,7 @@ struct ZLXServer: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Port to listen on")
     var port: Int = 8080
     
-    @Option(name: .shortAndLong, help: "Maximum KV cache size")
+    @Option(name: [.long, .customShort("k")], help: "Maximum KV cache size")
     var maxKVSize: Int = 4096
     
     @Flag(name: .shortAndLong, help: "Enable verbose logging")
@@ -372,4 +372,11 @@ struct Delta: Codable {
 // MARK: - Entry Point
 
 // Run the server
-ZLXServer.main()
+Task {
+    if #available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *) {
+        try await ZLXServer.main()
+    }
+}
+
+// Keep main thread alive
+RunLoop.main.run()
