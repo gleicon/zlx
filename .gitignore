@@ -2,6 +2,15 @@
 zig-out/
 .zig-cache/
 
+# Swift build artifacts
+.build/
+Package.resolved
+*.swiftmodule
+*.swiftdoc
+*.swiftinterface
+*.swiftsourceinfo
+DerivedData/
+
 # Model weights (large binaries - download separately)
 models/
 *.safetensors
