@@ -278,6 +278,11 @@ pub const PromptCache = struct {
             key.slice(),
             size_bytes / (1024 * 1024),
         });
+
+        // Flush index to disk immediately so cache survives unclean shutdown (SIGTERM)
+        self.saveIndex() catch |err| {
+            std.log.warn("Failed to flush cache index after save: {s}", .{@errorName(err)});
+        };
     }
 
     /// Get the path where a cache entry should be stored
@@ -333,7 +338,8 @@ pub const PromptCache = struct {
             // Remove from all structures
             try self.removeFromLru(tail);
             if (self.entries.fetchRemove(key_str)) |kv| {
-                kv.value.deinit(self.allocator);
+                var val = kv.value;
+                val.deinit(self.allocator);
                 self.allocator.free(kv.key);
             }
         }
@@ -420,6 +426,7 @@ pub const PromptCache = struct {
     }
 
     /// Load cache index from disk
+    // real index.json load per D-05 — called once at init, no per-request I/O
     fn loadIndex(self: *Self) !void {
         const index_path = try std.fs.path.join(self.allocator, &.{ self.cache_dir, "index.json" });
         defer self.allocator.free(index_path);
@@ -430,8 +437,53 @@ pub const PromptCache = struct {
             return;
         };
 
-        // TODO: Parse index.json and populate entries
-        std.log.info("Loading cache index from {s}", .{index_path});
+        const file = try std.fs.openFileAbsolute(index_path, .{});
+        defer file.close();
+
+        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024); // 1MB max
+        defer self.allocator.free(content);
+
+        const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, content, .{});
+        defer parsed.deinit();
+
+        const root_obj = parsed.value.object;
+        const entries_val = root_obj.get("entries") orelse return;
+        const entries_arr = entries_val.array;
+
+        try self.entries.ensureTotalCapacity(@intCast(entries_arr.items.len));
+
+        for (entries_arr.items) |item| {
+            const obj = item.object;
+            const key_str = obj.get("key").?.string;
+            const size_bytes: u64 = @intCast(obj.get("size_bytes").?.integer);
+            const created_at: i64 = obj.get("created_at").?.integer;
+            const access_count_val: u64 = @intCast(obj.get("access_count").?.integer);
+
+            // Dupe key string before parsed.deinit() frees it
+            const key_copy = try self.allocator.dupe(u8, key_str);
+            errdefer self.allocator.free(key_copy);
+
+            // file_path is not stored in index.json — default to empty string
+            const file_path_copy = try self.allocator.dupe(u8, "");
+            errdefer self.allocator.free(file_path_copy);
+
+            const now = std.time.timestamp();
+            const entry = CacheEntry{
+                .key = undefined, // key is reconstructed from map key; not serialized
+                .file_path = file_path_copy,
+                .size_bytes = size_bytes,
+                .created_at = created_at,
+                .last_accessed = std.atomic.Value(i64).init(now),
+                .access_count = std.atomic.Value(u64).init(access_count_val),
+            };
+
+            try self.entries.put(key_copy, entry);
+
+            // Also add to LRU tracking so eviction works correctly
+            try self.addToLru(key_copy);
+        }
+
+        std.log.info("Loaded {d} cache entries from {s}", .{ entries_arr.items.len, index_path });
     }
 
     /// Save cache index to disk

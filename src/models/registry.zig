@@ -5,6 +5,255 @@
 
 const std = @import("std");
 
+/// Model architecture types
+pub const ModelArchitecture = enum {
+    qwen,
+    llama,
+    phi,
+    deepseek_v2_moe,
+    deepseek_v1,
+    gpt_oss,
+    gemma4,
+    unknown,
+};
+
+/// Known model metadata for pre-configured models
+pub const KnownModelInfo = struct {
+    id: []const u8,
+    aliases: []const []const u8,
+    architecture: ModelArchitecture,
+    total_params: u64,
+    active_params: ?u64, // For MoE models (sparse)
+    memory_required_gb: f32,
+    max_context: u32,
+    quantization: []const u8,
+    recommended: bool,
+    description: []const u8,
+    // PHASE-14: Backend selection and download support
+    preferred_backend: ?BackendType = null, // null = use default
+    download_urls: ?[]const []const u8 = null,
+    gguf_filename: ?[]const u8 = null,
+};
+
+/// Backend type for preferred_backend field
+pub const BackendType = enum {
+    mlx,
+    llama_cpp,
+};
+
+/// Pre-configured known models
+pub const KNOWN_MODELS = &[_]KnownModelInfo{
+    // DeepSeek-Coder-V2-Lite (15.7B total, 2B active MoE)
+    .{
+        .id = "deepseek-coder-v2-lite",
+        .aliases = &.{ "deepseek", "deepseek-v2", "deepseek-coder", "deepseek-coder-v2-lite-instruct", "deepseek-coder-v2-lite-gguf" },
+        .architecture = .deepseek_v2_moe,
+        .total_params = 15_700_000_000,
+        .active_params = 2_000_000_000,
+        .memory_required_gb = 2.5,
+        .max_context = 128_000,
+        .quantization = "Q4_K_M_GGUF", // Primary format via llama.cpp
+        .recommended = true,
+        .description = "DeepSeek-Coder-V2-Lite 15.7B MoE (2B active) - llama.cpp backend recommended",
+        .preferred_backend = .llama_cpp,
+        .download_urls = &.{
+            "https://huggingface.co/TheBloke/deepseek-coder-v2-lite-GGUF/resolve/main/deepseek-coder-v2-lite.Q4_K_M.gguf",
+        },
+        .gguf_filename = "deepseek-coder-v2-lite.Q4_K_M.gguf",
+    },
+    // GPT-OSS-20B (20B total, ~5B active MoE)
+    .{
+        .id = "gpt-oss-20b",
+        .aliases = &.{ "gpt-oss", "gptoss", "gpt-oss-20b-mxfp4", "gpt-oss-20b-gguf" },
+        .architecture = .gpt_oss,
+        .total_params = 20_000_000_000,
+        .active_params = 5_000_000_000,
+        .memory_required_gb = 11.0,
+        .max_context = 131_072,
+        .quantization = "Q4_K_M_GGUF", // Primary format via llama.cpp
+        .recommended = true,
+        .description = "GPT-OSS-20B MoE (5B active) - llama.cpp backend recommended for best compatibility",
+        .preferred_backend = .llama_cpp,
+        .download_urls = &.{
+            "https://huggingface.co/bartowski/GPT-OSS-20B-GGUF/resolve/main/GPT-OSS-20B-Q4_K_M.gguf",
+        },
+        .gguf_filename = "GPT-OSS-20B-Q4_K_M.gguf",
+    },
+};
+
+/// Detect architecture from model configuration
+pub fn detectArchitecture(config: *const ConfigInfo) ModelArchitecture {
+    // First check model_type field from config.json
+    if (config.model_type.len > 0) {
+        // Check for DeepSeek models
+        if (std.mem.indexOf(u8, config.model_type, "deepseek")) |_| {
+            // Check if V2 with MLA/MoE
+            if (std.mem.indexOf(u8, config.model_type, "v2")) |_| {
+                return .deepseek_v2_moe;
+            }
+            return .deepseek_v1;
+        }
+
+        // Check for other known model types
+        if (std.mem.indexOf(u8, config.model_type, "qwen")) |_| {
+            return .qwen;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "llama")) |_| {
+            return .llama;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "phi")) |_| {
+            return .phi;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "gpt_oss")) |_| {
+            return .gpt_oss;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "gpt-oss")) |_| {
+            return .gpt_oss;
+        }
+        if (std.mem.indexOf(u8, config.model_type, "gemma4")) |_| {
+            return .gemma4;
+        }
+    }
+
+    // Check for GPT-OSS heuristics: MoE with sliding window
+    if (config.num_experts > 0 and config.sliding_window != null) {
+        if (config.sliding_window.? > 0) {
+            return .gpt_oss;
+        }
+    }
+
+    // Fallback: use heuristics based on architecture characteristics
+    // Check for DeepSeek-V2 MoE indicators
+    const gqa_ratio = @as(f32, @floatFromInt(config.num_attention_heads)) / @as(f32, @floatFromInt(config.hidden_size)) * 4096.0;
+
+    // DeepSeek has 128 attention heads with 4096 hidden = 32:1 ratio
+    if (gqa_ratio > 20.0 and config.num_layers >= 20) {
+        return .deepseek_v2_moe;
+    }
+
+    // Fallback: use parameter count as heuristic
+    const params = config.estimateParameterCount();
+
+    if (params < 3_000_000_000) {
+        return .qwen; // Small models often Qwen
+    } else if (params > 10_000_000_000 and params < 20_000_000_000) {
+        // 10-20B range could be DeepSeek or other MoE
+        if (config.num_layers > 25) {
+            return .deepseek_v2_moe; // DeepSeek has 27 layers
+        }
+    }
+
+    return .qwen; // Default
+}
+
+/// Get known model info by ID or alias
+pub fn getKnownModel(id: []const u8) ?KnownModelInfo {
+    for (KNOWN_MODELS) |model| {
+        if (std.mem.eql(u8, model.id, id)) {
+            return model;
+        }
+        for (model.aliases) |alias| {
+            if (std.mem.eql(u8, alias, id)) {
+                return model;
+            }
+        }
+    }
+    return null;
+}
+
+/// Estimate memory for MoE models using active parameters
+pub fn estimateDeepSeekMemory(config: ConfigInfo, _total_params: u64, active_params: u64) u32 {
+    // For DeepSeek MoE: memory is based on active params, not total
+    // Note: total_params is provided for reference but not used in calculation
+    _ = _total_params; // Silence unused parameter warning
+    // Formula: embeddings + active_params + compressed_KV + overhead
+
+    const bytes_per_param: u8 = switch (config.quantization_bits) {
+        8 => 1,
+        16 => 2,
+        32 => 4,
+        else => 2, // Default to FP16
+    };
+
+    // Embedding weights (always loaded, not sparse)
+    const embedding_params = @as(u64, config.vocab_size) * @as(u64, config.hidden_size);
+
+    // Active parameter memory (not total!)
+    const active_weights_bytes = active_params * bytes_per_param;
+
+    // Compressed KV cache (MLA reduces this significantly)
+    // DeepSeek uses 512-dim latent per layer (8x compression vs standard)
+    const latent_dim: u32 = 512; // DeepSeek MLA latent dimension
+    const kv_bytes_per_token = 2 * @as(u64, config.num_layers) * @as(u64, latent_dim) * bytes_per_param;
+    const kv_cache_bytes = kv_bytes_per_token * @as(u64, config.max_position_embeddings);
+
+    // Activations overhead (20% buffer)
+    const base_memory = (embedding_params * bytes_per_param) + active_weights_bytes + kv_cache_bytes;
+    const overhead_bytes = base_memory / 5;
+
+    const total_bytes = base_memory + overhead_bytes;
+    const total_mb = @as(u32, @intCast(total_bytes / (1024 * 1024)));
+
+    return total_mb;
+}
+
+/// Get architecture string for API responses
+pub fn architectureToString(arch: ModelArchitecture) []const u8 {
+    return switch (arch) {
+        .qwen => "qwen",
+        .llama => "llama",
+        .phi => "phi",
+        .deepseek_v2_moe => "deepseek_v2_moe",
+        .deepseek_v1 => "deepseek_v1",
+        .gpt_oss => "gpt_oss",
+        .gemma4 => "gemma4",
+        .unknown => "unknown",
+    };
+}
+
+/// Download information for model fetching
+pub const DownloadInfo = struct {
+    urls: []const []const u8,
+    filename: []const u8,
+    expected_size_bytes: u64,
+    checksum: ?[]const u8,
+};
+
+/// Get download info for a model by ID
+pub fn getDownloadInfo(model_id: []const u8) ?DownloadInfo {
+    const model = getKnownModel(model_id) orelse return null;
+
+    if (std.mem.eql(u8, model.id, "deepseek-coder-v2-lite")) {
+        return DownloadInfo{
+            .urls = &.{
+                "https://huggingface.co/TheBloke/deepseek-coder-v2-lite-GGUF/resolve/main/deepseek-coder-v2-lite.Q4_K_M.gguf",
+            },
+            .filename = "deepseek-coder-v2-lite.Q4_K_M.gguf",
+            .expected_size_bytes = 4_500_000_000, // ~4.5GB
+            .checksum = null,
+        };
+    }
+
+    if (std.mem.eql(u8, model.id, "gpt-oss-20b")) {
+        return DownloadInfo{
+            .urls = &.{
+                "https://huggingface.co/bartowski/GPT-OSS-20B-GGUF/resolve/main/GPT-OSS-20B-Q4_K_M.gguf",
+            },
+            .filename = "GPT-OSS-20B-Q4_K_M.gguf",
+            .expected_size_bytes = 11_500_000_000, // ~11GB
+            .checksum = null,
+        };
+    }
+
+    return null;
+}
+
+/// Get preferred backend for a model
+pub fn getPreferredBackend(model_id: []const u8) ?BackendType {
+    const model = getKnownModel(model_id) orelse return null;
+    return model.preferred_backend;
+}
+
 /// Model status states
 pub const ModelStatus = enum {
     available, // Model files present, not loaded
@@ -21,6 +270,9 @@ pub const ConfigInfo = struct {
     max_position_embeddings: u32 = 8192, // Default context length
     vocab_size: u32 = 32000, // Default vocab size
     quantization_bits: u8 = 16, // Default to FP16
+    model_type: []const u8 = "", // Model type from config (e.g., "deepseek_v2", "qwen2")
+    num_experts: u32 = 0, // For MoE models (0 = not MoE)
+    sliding_window: ?u32 = null, // For sliding window attention (null = not used)
 
     /// Calculate total parameter count (rough estimate)
     pub fn estimateParameterCount(self: ConfigInfo) u64 {
@@ -73,6 +325,7 @@ pub const ModelMetadata = struct {
     pub fn deinit(self: *ModelMetadata) void {
         self.allocator.free(self.id);
         self.allocator.free(self.path);
+        if (self.config.model_type.len > 0) self.allocator.free(self.config.model_type);
     }
 };
 
@@ -125,7 +378,7 @@ pub const ModelRegistry = struct {
         // Iterate subdirectories
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
-            if (entry.kind != .directory) continue;
+            if (entry.kind != .directory and entry.kind != .sym_link) continue;
 
             const model_path = try std.fs.path.join(self.allocator, &.{ path, entry.name });
             defer self.allocator.free(model_path);
@@ -169,8 +422,6 @@ pub const ModelRegistry = struct {
 
     /// Validate a model directory has required files
     fn validateModelDirectory(self: *Self, path: []const u8) !ConfigInfo {
-        _ = self;
-
         var dir = try std.fs.cwd().openDir(path, .{});
         defer dir.close();
 
@@ -196,19 +447,19 @@ pub const ModelRegistry = struct {
         // Parse config.json
         var buf: [1024]u8 = undefined;
         const config_path = try std.fmt.bufPrint(&buf, "{s}/config.json", .{path});
-        return parseConfigFile(config_path);
+        return parseConfigFile(self.allocator, config_path);
     }
 
     /// Parse config.json to extract model configuration
-    fn parseConfigFile(config_path: []const u8) !ConfigInfo {
+    fn parseConfigFile(allocator: std.mem.Allocator, config_path: []const u8) !ConfigInfo {
         const file = try std.fs.cwd().openFile(config_path, .{});
         defer file.close();
 
-        const content = try file.readToEndAlloc(std.heap.page_allocator, 1024 * 1024);
-        defer std.heap.page_allocator.free(content);
+        const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+        defer allocator.free(content);
 
         // Parse JSON
-        const parsed = try std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, content, .{});
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, content, .{});
         defer parsed.deinit();
 
         const root = parsed.value;
@@ -218,39 +469,77 @@ pub const ModelRegistry = struct {
             .hidden_size = 0,
             .num_layers = 0,
             .num_attention_heads = 0,
+            .model_type = "", // Will be set below if present
         };
 
-        // Extract hidden_size
+        // Extract model_type
+        if (root.object.get("model_type")) |v| {
+            if (v == .string) {
+                config.model_type = try allocator.dupe(u8, v.string);
+            }
+        }
+
+        // Extract hidden_size (check root first, then text_config for multimodal models)
         if (root.object.get("hidden_size")) |v| {
             config.hidden_size = @intCast(v.integer);
         } else if (root.object.get("d_model")) |v| {
             config.hidden_size = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("hidden_size")) |v| {
+                    config.hidden_size = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract num_layers
+        // Extract num_layers (check root first, then text_config for multimodal models)
         if (root.object.get("num_hidden_layers")) |v| {
             config.num_layers = @intCast(v.integer);
         } else if (root.object.get("n_layer")) |v| {
             config.num_layers = @intCast(v.integer);
         } else if (root.object.get("num_layers")) |v| {
             config.num_layers = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("num_hidden_layers")) |v| {
+                    config.num_layers = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract num_attention_heads
+        // Extract num_attention_heads (check root first, then text_config for multimodal models)
         if (root.object.get("num_attention_heads")) |v| {
             config.num_attention_heads = @intCast(v.integer);
         } else if (root.object.get("n_head")) |v| {
             config.num_attention_heads = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("num_attention_heads")) |v| {
+                    config.num_attention_heads = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract max_position_embeddings
+        // Extract max_position_embeddings (check root first, then text_config)
         if (root.object.get("max_position_embeddings")) |v| {
             config.max_position_embeddings = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("max_position_embeddings")) |v| {
+                    config.max_position_embeddings = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract vocab_size
+        // Extract vocab_size (check root first, then text_config)
         if (root.object.get("vocab_size")) |v| {
             config.vocab_size = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("vocab_size")) |v| {
+                    config.vocab_size = @intCast(v.integer);
+                }
+            }
         }
 
         // Validate required fields
@@ -312,20 +601,22 @@ pub const ModelRegistry = struct {
         // - KV cache: 2 * num_layers * hidden_size * max_seq_len * bytes_per_param
         // - Activations: ~20% overhead buffer
 
-        const bytes_per_param: u8 = switch (config.quantization_bits) {
-            8 => 1,
-            16 => 2,
-            32 => 4,
-            else => 2, // Default to FP16
-        };
-
         const num_params = config.estimateParameterCount();
 
-        // Weights memory
-        const weights_bytes = num_params * bytes_per_param;
+        // Weights memory — handle sub-byte quantization (4-bit = 0.5 bytes/param)
+        const weights_bytes: u64 = switch (config.quantization_bits) {
+            4 => num_params / 2, // 2 values packed per byte
+            8 => num_params * 1,
+            16 => num_params * 2,
+            32 => num_params * 4,
+            else => num_params * 2, // Default to FP16
+        };
 
-        // KV cache memory (2 for K and V, per layer)
-        const kv_bytes_per_token = 2 * @as(u64, config.num_layers) * @as(u64, config.hidden_size) * bytes_per_param;
+        // KV cache bytes_per_param (always FP16 at runtime regardless of weight quant)
+        const kv_bytes_per_param: u64 = 2;
+
+        // KV cache memory (2 for K and V, per layer) — always FP16 at runtime
+        const kv_bytes_per_token = 2 * @as(u64, config.num_layers) * @as(u64, config.hidden_size) * kv_bytes_per_param;
         const kv_cache_bytes = kv_bytes_per_token * self.max_context_length;
 
         // Activations overhead (20% buffer)

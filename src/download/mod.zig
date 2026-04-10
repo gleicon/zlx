@@ -6,6 +6,8 @@ const std = @import("std");
 
 pub const huggingface = @import("huggingface.zig");
 pub const manager = @import("manager.zig");
+pub const deepseek = @import("deepseek.zig");
+pub const gptoss = @import("gptoss.zig");
 
 // Re-export key types
 pub const HuggingFaceId = huggingface.HuggingFaceId;
@@ -14,6 +16,15 @@ pub const DownloadStatus = manager.DownloadStatus;
 pub const DownloadProgress = manager.DownloadProgress;
 pub const DownloadTask = manager.DownloadTask;
 pub const FileInfo = huggingface.FileInfo;
+
+// Re-export deepseek functions
+pub const downloadDeepSeekModel = deepseek.downloadDeepSeekModel;
+pub const verifyDeepSeekModel = deepseek.verifyDeepSeekModel;
+
+// Re-export gptoss functions
+pub const downloadGptOssModel = gptoss.downloadGptOssModel;
+pub const verifyGptOssModel = gptoss.verifyGptOssModel;
+pub const isGptOssAvailable = gptoss.isGptOssAvailable;
 
 // Re-export global functions
 pub const initGlobalManager = manager.initGlobalManager;
@@ -46,7 +57,7 @@ pub const KNOWN_MODELS = [_]ModelAlias{
     .{
         .alias = "gpt-oss-20b",
         .hf_id = "mlx-community/gpt-oss-20b-MXFP4-Q4",
-        .description = "OpenAI GPT-OSS 20B - General chat & tool use",
+        .description = "OpenAI GPT-OSS 20B - General chat & tool use (PENDING: requires MoE support)",
         .size_gb = 11.2,
     },
     .{
@@ -54,6 +65,18 @@ pub const KNOWN_MODELS = [_]ModelAlias{
         .hf_id = "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx",
         .description = "DeepSeek Coder V2 Lite - MoE coding model (PENDING: requires MoE support)",
         .size_gb = 8.84,
+    },
+    .{
+        .alias = "gemma4-e4b",
+        .hf_id = "unsloth/gemma-4-e4b-it-UD-MLX-4bit",
+        .description = "Google Gemma 4 E4B IT - Long-context model with reasoning tokens",
+        .size_gb = 2.5,
+    },
+    .{
+        .alias = "gemma4-e4b",
+        .hf_id = "gemma4-e4b-fixed", // Local path to PLE-safe quantized model
+        .description = "Google Gemma 4 E4B - PLE-safe 4-bit (FakeRocket543)",
+        .size_gb = 10.3,
     },
 };
 

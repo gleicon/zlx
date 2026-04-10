@@ -10,6 +10,7 @@ const qwen = @import("../mlx.zig/src/qwen.zig");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const generator = @import("../inference/generator.zig");
 const metrics = @import("metrics.zig");
+const templates = @import("../chat/templates.zig");
 
 /// Check if a string is valid UTF-8
 fn isValidUtf8(str: []const u8) bool {
@@ -78,9 +79,16 @@ pub fn streamResponse(
     const completion_id = try types.generateCompletionId(allocator);
     defer allocator.free(completion_id);
 
-    // Build prompt from messages
-    const prompt = try types.buildPromptFromMessages(allocator, request.messages);
+    // Build prompt from messages using model-specific template
+    const arch = detectModelArchitecture(request.model);
+    const prompt = try templates.formatChatByArchitecture(allocator, arch, request.messages);
     defer allocator.free(prompt);
+
+    // Log template selection
+    std.log.info("[streaming] Using {s} chat template for model: {s}", .{
+        @tagName(arch),
+        request.model,
+    });
 
     // Tokenize the prompt
     const tokenizer_ref = &ctx.tokenizer.?;
@@ -123,15 +131,14 @@ pub fn streamResponse(
     defer transformer.deinit();
 
     // Use generation state with full sampling support
-    var state = try generator.GenerationState.init(
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+    var state = try generator.GenerationState(qwen.Transformer).init(
         allocator,
         &transformer,
         input_tokens,
         transformer.eos_token_ids,
         gen_options,
         &ctx.tokenizer.?, // Pass tokenizer for stop sequence detection
-        null, // draft_model
-        0, // speculation_depth
     );
     defer state.deinit();
 
@@ -338,9 +345,16 @@ pub fn generateNonStreamingResponse(
     const completion_id = try types.generateCompletionId(allocator);
     defer allocator.free(completion_id);
 
-    // Build prompt from messages
-    const prompt = try types.buildPromptFromMessages(allocator, request.messages);
+    // Build prompt from messages using model-specific template
+    const arch = detectModelArchitecture(request.model);
+    const prompt = try templates.formatChatByArchitecture(allocator, arch, request.messages);
     defer allocator.free(prompt);
+
+    // Log template selection
+    std.log.info("[streaming-v2] Using {s} chat template for model: {s}", .{
+        @tagName(arch),
+        request.model,
+    });
 
     // Tokenize the prompt
     const tokenizer_ref = &ctx.tokenizer.?;
@@ -385,15 +399,14 @@ pub fn generateNonStreamingResponse(
     const eos_token_ids = transformer.eos_token_ids;
 
     // Initialize generation state
-    var state = try generator.GenerationState.init(
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+    var state = try generator.GenerationState(qwen.Transformer).init(
         allocator,
         &transformer,
         input_tokens,
         eos_token_ids,
         gen_options,
         &ctx.tokenizer.?, // Pass tokenizer for stop sequence detection
-        null, // draft_model
-        0, // speculation_depth
     );
     defer state.deinit();
 
@@ -514,4 +527,42 @@ fn stripSpecialTokens(allocator: std.mem.Allocator, text: []const u8) ![]const u
     }
 
     return result;
+}
+
+/// Detect model architecture from model name
+fn detectModelArchitecture(model_name: []const u8) templates.ModelArchitecture {
+    // Check for DeepSeek models
+    if (std.mem.indexOf(u8, model_name, "deepseek") != null) {
+        if (std.mem.indexOf(u8, model_name, "v2") != null or
+            std.mem.indexOf(u8, model_name, "coder-v2") != null)
+        {
+            return .deepseek_v2_moe;
+        }
+        return .deepseek_v2_moe; // Default DeepSeek to V2 MoE
+    }
+
+    // Check for Qwen models
+    if (std.mem.indexOf(u8, model_name, "qwen") != null) {
+        return .qwen;
+    }
+
+    // Check for Llama models
+    if (std.mem.indexOf(u8, model_name, "llama") != null) {
+        return .llama;
+    }
+
+    // Check for Phi models
+    if (std.mem.indexOf(u8, model_name, "phi") != null) {
+        return .phi;
+    }
+
+    // Check for Gemma 4 models
+    if (std.mem.indexOf(u8, model_name, "gemma4") != null or
+        std.mem.indexOf(u8, model_name, "gemma-4") != null)
+    {
+        return .gemma4;
+    }
+
+    // Default to Qwen (most common in this codebase)
+    return .qwen;
 }

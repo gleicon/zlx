@@ -4,6 +4,10 @@
 
 const std = @import("std");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
+const qwen = @import("../mlx.zig/src/qwen.zig");
+const deepseek = @import("../deepseek.zig");
+const gemma4 = @import("../mlx.zig/src/gemma4.zig");
+const mlx = @import("../mlx.zig/src/mlx.zig");
 
 // Maximum total context length to prevent memory exhaustion
 // Qwen 2.5 1.5B has 28 layers, hidden_size=1536, KV cache grows quickly
@@ -19,11 +23,108 @@ pub const Tokenizer = mlx_tokenizer.Tokenizer;
 pub const ModelInfo = loader.ModelInfo;
 pub const ModelType = loader.ModelType;
 pub const LoadError = loader.LoadError;
-pub const GenerationState = generator.GenerationState;
+// GenerationState is now generic - use GenerationState(TransformerType)
+// pub const GenerationState = generator.GenerationState;
 pub const GenerationOptions = generator.GenerationOptions;
 pub const Token = generator.Token;
 pub const LogprobEntry = generator.LogprobEntry;
 pub const StopReason = generator.StopReason;
+
+/// Union type for different model implementations
+pub const ModelUnion = union(enum) {
+    qwen: *qwen.Transformer,
+    deepseek: *deepseek.DeepSeekTransformer,
+    // llama: *llama.Transformer, // TODO: Add when implemented
+    // phi: *phi.Transformer, // TODO: Add when implemented
+
+    /// Generate tokens from a model
+    pub fn generate(
+        self: *ModelUnion,
+        allocator: std.mem.Allocator,
+        prompt_tokens: []const u32,
+        max_tokens: usize,
+        eos_token_ids: []const u32,
+    ) ![]u32 {
+        _ = eos_token_ids;
+        switch (self.*) {
+            .qwen => |transformer| {
+                return try transformer.generate(prompt_tokens, max_tokens);
+            },
+            .deepseek => |transformer| {
+                // Convert token slice to MLX array
+                const prompt_array = try mlx.arrayNewData(
+                    prompt_tokens.ptr,
+                    .{ 1, @intCast(prompt_tokens.len) },
+                    mlx.UINT32,
+                );
+                defer mlx.arrayFree(prompt_array);
+
+                // Generate with DeepSeek
+                const result = try transformer.generate(prompt_array, max_tokens, 1.0);
+                defer mlx.arrayFree(result);
+
+                // Convert back to slice
+                const result_len = @as(usize, @intCast(mlx.arrayDim(result, 1)));
+                var tokens = try allocator.alloc(u32, result_len);
+                errdefer allocator.free(tokens);
+
+                // Extract values from MLX array
+                for (0..result_len) |i| {
+                    var token: i32 = 0;
+                    try mlx.item(&token, result);
+                    tokens[i] = @intCast(token);
+                }
+
+                return tokens;
+            },
+        }
+    }
+
+    /// Get model information
+    pub fn getInfo(self: ModelUnion) ModelMetadata {
+        switch (self) {
+            .qwen => {
+                return .{
+                    .name = "qwen",
+                    .architecture = .qwen,
+                    .parameters = 1_500_000_000, // Placeholder
+                    .active_parameters = 1_500_000_000,
+                    .context_length = 8192,
+                };
+            },
+            .deepseek => |t| {
+                return .{
+                    .name = "deepseek-coder-v2-lite",
+                    .architecture = .deepseek_v2_moe,
+                    .parameters = 15_700_000_000,
+                    .active_parameters = 2_000_000_000,
+                    .context_length = t.config.max_position_embeddings,
+                };
+            },
+        }
+    }
+
+    /// Deinitialize the model
+    pub fn deinit(self: *ModelUnion) void {
+        switch (self.*) {
+            .qwen => |transformer| {
+                transformer.deinit();
+            },
+            .deepseek => |*transformer| {
+                transformer.deinit();
+            },
+        }
+    }
+};
+
+/// Metadata about a loaded model
+pub const ModelMetadata = struct {
+    name: []const u8,
+    architecture: ModelType,
+    parameters: u64,
+    active_parameters: u64,
+    context_length: usize,
+};
 
 /// Inference context that holds loaded model and tokenizer
 pub const InferenceContext = struct {
@@ -139,70 +240,131 @@ pub const InferenceContext = struct {
             std.log.warn("Input truncated from {d} to {d} tokens to fit context limit", .{ input_tokens.len + max_input_tokens, max_input_tokens });
         }
 
-        // Initialize transformer
-        var transformer = try qwen.Transformer.init(self.allocator, self.model_path);
-        defer transformer.deinit();
+        // Initialize transformer based on model type
+        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+        switch (self.model_type) {
+            .gemma4 => {
+                // Gemma 4 uses its own transformer with sliding window attention
+                var transformer = try gemma4.Transformer.init(self.allocator, self.model_path);
+                defer transformer.deinit();
 
-        // Update options with adjusted max_tokens
-        var gen_options = options;
-        gen_options.max_tokens = max_new_tokens;
+                // Update options with adjusted max_tokens
+                var gen_options = options;
+                gen_options.max_tokens = max_new_tokens;
 
-        // Initialize generation state
-        var state = try generator.GenerationState.init(
-            self.allocator,
-            &transformer,
-            input_tokens,
-            self.getEosTokenIds(),
-            gen_options,
-            &self.tokenizer.?, // Pass tokenizer for stop sequence detection
-            null, // draft_model - not yet integrated
-            0, // speculation_depth - disabled for now
-        );
-        defer state.deinit();
+                // Initialize generation state with Gemma4 transformer type
+                var state = try generator.GenerationState(gemma4.Transformer).init(
+                    self.allocator,
+                    &transformer,
+                    input_tokens,
+                    self.getEosTokenIds(),
+                    gen_options,
+                    &self.tokenizer.?,
+                );
+                defer state.deinit();
 
-        // Collect tokens with timeout checking
-        var output_tokens = std.ArrayList(u32).empty;
-        errdefer output_tokens.deinit(self.allocator);
+                // Collect tokens with timeout checking
+                var output_tokens = std.ArrayList(u32).empty;
+                errdefer output_tokens.deinit(self.allocator);
 
-        while (try state.next()) |token| {
-            try output_tokens.append(self.allocator, token);
+                while (try state.next()) |token| {
+                    try output_tokens.append(self.allocator, token);
 
-            // Check timeout every token (D-33: measured from request start)
-            const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
-            if (elapsed >= timeout_ms) {
-                std.log.warn("Generation timed out after {d}ms, returning partial result", .{elapsed});
-                timed_out = true;
-                state.setStopReason(.timeout);
-                break;
-            }
+                    const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
+                    if (elapsed >= timeout_ms) {
+                        std.log.warn("Generation timed out after {d}ms, returning partial result", .{elapsed});
+                        timed_out = true;
+                        state.setStopReason(.timeout);
+                        break;
+                    }
+                }
+
+                const text = try tokenizer_ref.decode(output_tokens.items);
+                const logprobs = if (options.logprobs_enabled) state.getLogprobs() else null;
+
+                var stop_reason = state.getStopReason();
+                if (timed_out) stop_reason = .timeout;
+
+                const result = GenerationResult{
+                    .text = text,
+                    .logprobs = logprobs,
+                    .prompt_tokens = @intCast(input_tokens.len),
+                    .completion_tokens = @intCast(output_tokens.items.len),
+                    .stop_reason = stop_reason,
+                };
+
+                self.allocator.free(input_tokens);
+
+                return TimeoutResult{
+                    .result = result,
+                    .timed_out = timed_out,
+                };
+            },
+            else => {
+                // Qwen and other models use standard MLX loader
+                var transformer = try qwen.Transformer.init(self.allocator, self.model_path);
+                defer transformer.deinit();
+
+                // Update options with adjusted max_tokens
+                var gen_options = options;
+                gen_options.max_tokens = max_new_tokens;
+
+                // Initialize generation state with Qwen transformer type
+                var state = try generator.GenerationState(qwen.Transformer).init(
+                    self.allocator,
+                    &transformer,
+                    input_tokens,
+                    self.getEosTokenIds(),
+                    gen_options,
+                    &self.tokenizer.?, // Pass tokenizer for stop sequence detection
+                );
+                defer state.deinit();
+
+                // Collect tokens with timeout checking
+                var output_tokens = std.ArrayList(u32).empty;
+                errdefer output_tokens.deinit(self.allocator);
+
+                while (try state.next()) |token| {
+                    try output_tokens.append(self.allocator, token);
+
+                    // Check timeout every token (D-33: measured from request start)
+                    const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
+                    if (elapsed >= timeout_ms) {
+                        std.log.warn("Generation timed out after {d}ms, returning partial result", .{elapsed});
+                        timed_out = true;
+                        state.setStopReason(.timeout);
+                        break;
+                    }
+                }
+
+                // Decode output tokens only (not full context like regular generate)
+                const text = try tokenizer_ref.decode(output_tokens.items);
+
+                // Get logprobs if enabled
+                const logprobs = if (options.logprobs_enabled) state.getLogprobs() else null;
+
+                // Set stop reason based on timeout
+                var stop_reason = state.getStopReason();
+                if (timed_out) {
+                    stop_reason = .timeout;
+                }
+
+                const result = GenerationResult{
+                    .text = text,
+                    .logprobs = logprobs,
+                    .prompt_tokens = @intCast(input_tokens.len),
+                    .completion_tokens = @intCast(output_tokens.items.len),
+                    .stop_reason = stop_reason,
+                };
+
+                self.allocator.free(input_tokens);
+
+                return TimeoutResult{
+                    .result = result,
+                    .timed_out = timed_out,
+                };
+            },
         }
-
-        // Decode output tokens only (not full context like regular generate)
-        const text = try tokenizer_ref.decode(output_tokens.items);
-
-        // Get logprobs if enabled
-        const logprobs = if (options.logprobs_enabled) state.getLogprobs() else null;
-
-        // Set stop reason based on timeout
-        var stop_reason = state.getStopReason();
-        if (timed_out) {
-            stop_reason = .timeout;
-        }
-
-        const result = GenerationResult{
-            .text = text,
-            .logprobs = logprobs,
-            .prompt_tokens = @intCast(input_tokens.len),
-            .completion_tokens = @intCast(output_tokens.items.len),
-            .stop_reason = stop_reason,
-        };
-
-        self.allocator.free(input_tokens);
-
-        return TimeoutResult{
-            .result = result,
-            .timed_out = timed_out,
-        };
     }
 
     fn getTransformer(self: *Self) !*qwen.Transformer {
@@ -268,15 +430,14 @@ pub fn generateWithLogprobs(
     const eos_token_ids = &[_]u32{ 151645, 151643 };
 
     // Initialize generation state
-    var state = try generator.GenerationState.init(
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+    var state = try generator.GenerationState(qwen.Transformer).init(
         allocator,
         transformer,
         input_tokens,
         eos_token_ids,
         adjusted_options,
         tokenizer, // Pass tokenizer for stop sequence detection
-        null, // draft_model
-        0, // speculation_depth
     );
     defer state.deinit();
 
@@ -308,6 +469,3 @@ pub fn generateWithLogprobs(
         .stop_reason = state.getStopReason(),
     };
 }
-
-// Import qwen for transformer access
-const qwen = @import("../mlx.zig/src/qwen.zig");

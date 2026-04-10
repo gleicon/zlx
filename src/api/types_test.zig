@@ -136,7 +136,7 @@ test "ChatCompletionRequest serializes and deserializes" {
         .content = .{ .string = "Hello" },
     };
 
-    const json = try std.json.stringifyAlloc(allocator, request, .{});
+    const json = try std.json.Stringify.valueAlloc(allocator, request, .{});
     defer allocator.free(json);
 
     // Parse it back

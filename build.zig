@@ -66,6 +66,71 @@ pub fn build(b: *std.Build) !void {
     }));
     exe.root_module.addImport("turboquant", turboquant_mod);
 
+    // Wire backends module (PHASE-14-01)
+    const backends_mod = b.createModule(.{
+        .root_source_file = b.path("src/backends/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("backends", backends_mod);
+
+    // llama.cpp build integration (PHASE-14-02)
+    // Build llama.cpp as static library using CMake
+    const llama_cpp_path = "src/llama.cpp";
+    const llama_build_path = b.pathJoin(&.{ llama_cpp_path, "build" });
+
+    // CMake configuration step
+    const cmake_cmd = b.addSystemCommand(&.{
+        "cmake",
+        "-B",
+        llama_build_path,
+        "-S",
+        llama_cpp_path,
+        "-DLLAMA_METAL=ON",
+        "-DLLAMA_METAL_EMBED_LIBRARY=ON",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DLLAMA_STANDALONE=OFF",
+        "-DLLAMA_BUILD_TESTS=OFF",
+        "-DLLAMA_BUILD_EXAMPLES=OFF",
+    });
+
+    // CMake build step
+    const build_cmd = b.addSystemCommand(&.{
+        "cmake",
+        "--build",
+        llama_build_path,
+        "--config",
+        "Release",
+        "--parallel",
+    });
+    build_cmd.step.dependOn(&cmake_cmd.step);
+
+    // Make main executable depend on llama.cpp build
+    exe.step.dependOn(&build_cmd.step);
+
+    // Add include paths for llama.cpp headers
+    exe.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ llama_cpp_path, "include" }) });
+    exe.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ llama_cpp_path, "ggml", "include" }) });
+
+    // Link llama.cpp static library
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "src" }) });
+    exe.linkSystemLibrary("llama");
+
+    // Link ggml libraries (required by libllama.a; ggml symbols split across multiple archives)
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "ggml", "src" }) });
+    exe.linkSystemLibrary("ggml");
+    exe.linkSystemLibrary("ggml-base");
+    exe.linkSystemLibrary("ggml-cpu");
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "ggml", "src", "ggml-blas" }) });
+    exe.linkSystemLibrary("ggml-blas");
+    exe.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ llama_build_path, "ggml", "src", "ggml-metal" }) });
+    exe.linkSystemLibrary("ggml-metal");
+
+    // Add llama.cpp-only build step
+    const llama_step = b.step("llama", "Build llama.cpp library only");
+    llama_step.dependOn(&build_cmd.step);
+
     // Wire MLX-C + frameworks + pcre2 (BUILD-02)
     configureExecutable(exe, b, deps);
 
@@ -130,6 +195,34 @@ pub fn build(b: *std.Build) !void {
 
     const run_cache_test = b.addRunArtifact(cache_test);
     test_step.dependOn(&run_cache_test.step);
+
+    // Test backends module (PHASE-14-02)
+    const backends_test = b.addTest(.{
+        .name = "backends_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/backends/mod.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_backends_test = b.addRunArtifact(backends_test);
+    test_step.dependOn(&run_backends_test.step);
+
+    // Test backend integration (PHASE-14-05)
+    const backend_integration_test = b.addTest(.{
+        .name = "backend_integration_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test_backend_integration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    backend_integration_test.root_module.addImport("backends", backends_mod);
+    configureExecutable(backend_integration_test, b, deps);
+
+    const run_backend_integration_test = b.addRunArtifact(backend_integration_test);
+    test_step.dependOn(&run_backend_integration_test.step);
 
     // Test turboquant integration (PHASE-07-02)
     const turboquant_test_mod = b.createModule(.{
@@ -206,9 +299,444 @@ pub fn build(b: *std.Build) !void {
     const run_config_test = b.addRunArtifact(config_test);
     test_step.dependOn(&run_config_test.step);
 
+    // Test mlx_v4 module (PHASE-11-01)
+    const mlx_v4_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx_v4_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Add v0.4.x include paths for test compilation (use absolute path)
+    const mlx_c_v4_absolute = b.pathJoin(&.{ "/Users/gleicon/code/zig/zlx", deps.mlx_c_v4_path });
+    mlx_v4_test_mod.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    mlx_v4_test_mod.addObjectFile(.{ .cwd_relative = deps.mlx_c_v4_lib_path });
+    mlx_v4_test_mod.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_v4_build_path, "_deps/mlx-build/libmlx.a" }) });
+
+    const mlx_v4_test = b.addTest(.{
+        .name = "mlx_v4_test",
+        .root_module = mlx_v4_test_mod,
+    });
+    mlx_v4_test.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    mlx_v4_test.addObjectFile(.{ .cwd_relative = deps.mlx_c_v4_lib_path });
+    mlx_v4_test.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_v4_build_path, "_deps/mlx-build/libmlx.a" }) });
+    mlx_v4_test.addLibraryPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib" });
+    mlx_v4_test.addFrameworkPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks" });
+    mlx_v4_test.linkLibCpp();
+    mlx_v4_test.linkFramework("Metal");
+    mlx_v4_test.linkFramework("Foundation");
+    mlx_v4_test.linkFramework("QuartzCore");
+    mlx_v4_test.linkFramework("Accelerate");
+
+    const run_mlx_v4_test = b.addRunArtifact(mlx_v4_test);
+    test_step.dependOn(&run_mlx_v4_test.step);
+
+    // Shared MLX module — one instance reused across all test modules to prevent
+    // "file exists in modules" collision errors in zig build test.
+    // utils.zig and regex.zig are created FIRST so mlx.zig, qwen.zig, and tokenizer.zig
+    // all share the same compilation units (avoids "file exists in modules" collision).
+    const shared_utils_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/utils.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const shared_regex_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/regex.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // regex.zig has @cImport(<pcre2.h>) — add include path at module level
+    shared_regex_mod.addIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/pcre2/include" });
+    const shared_mlx_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    shared_mlx_mod.addImport("utils.zig", shared_utils_mod);
+    // mlx.zig has @cImport(<mlx/c/mlx.h>) — add include path at module level so any
+    // test compile step that uses shared_mlx_mod can find the header without needing
+    // configureExecutable to pass the path to every individual compile step.
+    const mlx_c_absolute = std.fs.cwd().realpathAlloc(b.allocator, deps.mlx_c_path) catch deps.mlx_c_path;
+    shared_mlx_mod.addIncludePath(.{ .cwd_relative = mlx_c_absolute });
+
+    // Test MoE module (PHASE-11-03)
+    const moe_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/moe_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Add dependencies for moe tests
+    moe_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    // c_v4_mod and mlx_v4_mod must be created BEFORE moe_mod because moe.zig
+    // imports @import("mlx_v4.zig") at line 12 — moe_mod needs mlx_v4_mod wired.
+    // mlx_c_v4_absolute defined above at line ~310 — reuse it here for c_v4_mod
+    const c_v4_mod = b.createModule(.{
+        .root_source_file = b.path("src/c_v4.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    c_v4_mod.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    const mlx_v4_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx_v4.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mlx_v4_mod.addImport("c_v4.zig", c_v4_mod);
+    mlx_v4_mod.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    const moe_mod = b.createModule(.{
+        .root_source_file = b.path("src/moe.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    moe_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    moe_mod.addImport("mlx_v4.zig", mlx_v4_mod); // moe.zig:12 uses @import("mlx_v4.zig")
+    moe_test_mod.addImport("moe.zig", moe_mod);
+    moe_test_mod.addImport("mlx_v4.zig", mlx_v4_mod);
+
+    const moe_test = b.addTest(.{
+        .name = "moe_test",
+        .root_module = moe_test_mod,
+    });
+    configureExecutable(moe_test, b, deps);
+
+    const run_moe_test = b.addRunArtifact(moe_test);
+    test_step.dependOn(&run_moe_test.step);
+
+    // Shared mla_mod — mla.zig imports @import("mlx.zig") (short path)
+    const mla_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/mla.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mla_mod.addImport("mlx.zig", shared_mlx_mod);
+
+    // Shared tokenizer module — mlx_gptoss_backend.zig:10 imports "../mlx.zig/src/tokenizer.zig"
+    // tokenizer.zig imports regex.zig and utils.zig (verified from source lines 6-8)
+    const shared_tokenizer_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/tokenizer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    shared_tokenizer_mod.addImport("regex.zig", shared_regex_mod);
+    shared_tokenizer_mod.addImport("utils.zig", shared_utils_mod);
+
+    // Shared qwen module — inference/loader.zig:7 imports "../mlx.zig/src/qwen.zig"
+    // qwen.zig imports @import("mlx.zig") and @import("utils.zig") (verified from source lines 6-7)
+    const shared_qwen_mod = b.createModule(.{
+        .root_source_file = b.path("src/mlx.zig/src/qwen.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    shared_qwen_mod.addImport("mlx.zig", shared_mlx_mod); // qwen.zig:6 uses @import("mlx.zig")
+    shared_qwen_mod.addImport("utils.zig", shared_utils_mod); // qwen.zig:7 uses @import("utils.zig")
+
+    // Shared dequantize_module — prevents dequantize.zig from being in two compilation units:
+    // deepseek.zig imports it as "inference/dequantize.zig" (file-relative from src/)
+    // loader.zig imports it as "dequantize.zig" (file-relative from src/inference/)
+    // By making it a named module, both can point to the same compilation unit.
+    const dequantize_module = b.createModule(.{
+        .root_source_file = b.path("src/inference/dequantize.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    dequantize_module.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+
+    // Shared deepseek_mod — deepseek.zig imports mlx, mla, moe, inference/dequantize.zig
+    const deepseek_mod = b.createModule(.{
+        .root_source_file = b.path("src/deepseek.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    deepseek_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    deepseek_mod.addImport("mlx.zig/src/mla.zig", mla_mod);
+    deepseek_mod.addImport("moe.zig", moe_mod);
+    deepseek_mod.addImport("inference/dequantize.zig", dequantize_module);
+
+    // Shared gpt_oss_mod — gpt_oss.zig imports mlx, moe
+    const gpt_oss_mod = b.createModule(.{
+        .root_source_file = b.path("src/gpt_oss.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gpt_oss_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    gpt_oss_mod.addImport("moe.zig", moe_mod);
+
+    // Test DeepSeek module (PHASE-11-04)
+    const deepseek_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/deepseek_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Add dependencies for deepseek tests
+    deepseek_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+    deepseek_test_mod.addImport("mlx.zig/src/mla.zig", mla_mod);
+    deepseek_test_mod.addImport("moe.zig", moe_mod);
+    deepseek_test_mod.addImport("deepseek.zig", deepseek_mod);
+    deepseek_test_mod.addImport("../deepseek.zig", deepseek_mod);
+    // inference sub-modules: wire shared_mlx_mod to prevent "file exists" collision.
+    // Other transitive deps (tokenizer, qwen, generator) are not fully wired here —
+    // their failures will be semantic (module not found), not collision errors.
+    const inference_loader_mod = b.createModule(.{
+        .root_source_file = b.path("src/inference/loader.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    inference_loader_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    inference_loader_mod.addImport("../mlx.zig/src/mla.zig", mla_mod);
+    inference_loader_mod.addImport("../moe.zig", moe_mod);
+    inference_loader_mod.addImport("../deepseek.zig", deepseek_mod);
+    inference_loader_mod.addImport("../gpt_oss.zig", gpt_oss_mod);
+    // dequantize.zig is used file-relatively in loader.zig as "dequantize.zig", and
+    // deepseek.zig uses it as "inference/dequantize.zig". Register as named module so
+    // both paths point to the same compilation unit, preventing collision.
+    inference_loader_mod.addImport("dequantize.zig", dequantize_module);
+    inference_loader_mod.addImport("../mlx.zig/src/qwen.zig", shared_qwen_mod);
+
+    const inference_mod_module = b.createModule(.{
+        .root_source_file = b.path("src/inference/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    inference_mod_module.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    inference_mod_module.addImport("loader.zig", inference_loader_mod);
+    inference_mod_module.addImport("../mlx.zig/src/tokenizer.zig", shared_tokenizer_mod);
+    inference_mod_module.addImport("../mlx.zig/src/qwen.zig", shared_qwen_mod);
+    inference_mod_module.addImport("../deepseek.zig", deepseek_mod);
+
+    // shared_registry_mod — named to avoid "file exists in modules" collision
+    const shared_registry_mod = b.createModule(.{
+        .root_source_file = b.path("src/models/registry.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const inference_generator_mod = b.createModule(.{
+        .root_source_file = b.path("src/inference/generator.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    inference_generator_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    inference_generator_mod.addImport("../mlx.zig/src/qwen.zig", shared_qwen_mod);
+    inference_generator_mod.addImport("../mlx.zig/src/tokenizer.zig", shared_tokenizer_mod);
+    inference_generator_mod.addImport("../backends/mod.zig", backends_mod);
+    inference_generator_mod.addImport("../models/registry.zig", shared_registry_mod);
+    inference_mod_module.addImport("generator.zig", inference_generator_mod);
+
+    deepseek_test_mod.addImport("inference/mod.zig", inference_mod_module);
+    deepseek_test_mod.addImport("inference/loader.zig", inference_loader_mod);
+
+    const deepseek_test = b.addTest(.{
+        .name = "deepseek_test",
+        .root_module = deepseek_test_mod,
+    });
+    configureExecutable(deepseek_test, b, deps);
+
+    const run_deepseek_test = b.addRunArtifact(deepseek_test);
+    test_step.dependOn(&run_deepseek_test.step);
+
+    // Integration tests for MoE models (13-03)
+    const integration_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/test_integration.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // Add required imports — use shared module objects to prevent collision
+    integration_test_mod.addImport("mlx.zig", shared_mlx_mod);
+    integration_test_mod.addImport("deepseek.zig", deepseek_mod);
+    integration_test_mod.addImport("gpt_oss.zig", gpt_oss_mod);
+    integration_test_mod.addImport("models/registry.zig", b.createModule(.{
+        .root_source_file = b.path("src/models/registry.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    integration_test_mod.addImport("inference/loader.zig", inference_loader_mod);
+    // Note: test_integration.zig imports "mlx.zig/src/mlx.zig" but integration_test_mod
+    // registers it as "mlx.zig" — fix key to match source import string
+    integration_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+
+    const integration_test = b.addTest(.{
+        .name = "integration_test",
+        .root_module = integration_test_mod,
+    });
+    configureExecutable(integration_test, b, deps);
+
+    const run_integration_test = b.addRunArtifact(integration_test);
+    const test_integration_step = b.step("test-integration", "Run MoE model integration tests");
+    test_integration_step.dependOn(&run_integration_test.step);
+    test_step.dependOn(&run_integration_test.step);
+
     // Note: manager.zig tests are compiled as part of main build
     // due to cross-module dependencies
     // due to cross-module dependencies
+
+    // ── GPT-OSS integration tests (Phase 15-05) ─────────────────────────────
+    //
+    // Creates sub-modules for all GPT-OSS dependencies so the test file can
+    // import them with bare @import() paths.
+
+    const gptoss_mod = b.createModule(.{
+        .root_source_file = b.path("src/gptoss_mlx.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // gptoss_mlx.zig imports mlx.zig — wire it in
+    gptoss_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+
+    const harmony_mod = b.createModule(.{
+        .root_source_file = b.path("src/harmony/harmony.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const harmony_template_mod = b.createModule(.{
+        .root_source_file = b.path("src/harmony/template.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    harmony_template_mod.addImport("harmony.zig", harmony_mod);
+
+    const harmony_parser_mod = b.createModule(.{
+        .root_source_file = b.path("src/harmony/parser.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    harmony_parser_mod.addImport("harmony.zig", harmony_mod);
+
+    // Tools modules
+    const tools_types_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/types.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const browser_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/browser.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    browser_mod.addImport("types.zig", tools_types_mod);
+
+    const python_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/python.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    python_mod.addImport("types.zig", tools_types_mod);
+
+    const tool_executor_mod = b.createModule(.{
+        .root_source_file = b.path("src/tools/tool_executor.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tool_executor_mod.addImport("types.zig", tools_types_mod);
+    tool_executor_mod.addImport("browser.zig", browser_mod);
+    tool_executor_mod.addImport("python.zig", python_mod);
+
+    // Weight loading modules
+    const mxfp4_mod = b.createModule(.{
+        .root_source_file = b.path("src/mxfp4.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mxfp4_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+
+    const safetensors_mod = b.createModule(.{
+        .root_source_file = b.path("src/weight/safetensors.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const gptoss_loader_mod = b.createModule(.{
+        .root_source_file = b.path("src/weight/gptoss_loader.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_loader_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    gptoss_loader_mod.addImport("safetensors.zig", safetensors_mod);
+    gptoss_loader_mod.addImport("../mxfp4.zig", mxfp4_mod);
+
+    // Backend module
+    const backend_base_mod = b.createModule(.{
+        .root_source_file = b.path("src/backends/backend.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const mlx_gptoss_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/backends/mlx_gptoss_backend.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mlx_gptoss_backend_mod.addImport("backend.zig", backend_base_mod);
+    mlx_gptoss_backend_mod.addImport("../gptoss_mlx.zig", gptoss_mod);
+    mlx_gptoss_backend_mod.addImport("../harmony/harmony.zig", harmony_mod);
+    mlx_gptoss_backend_mod.addImport("../harmony/template.zig", harmony_template_mod);
+    mlx_gptoss_backend_mod.addImport("../tools/tool_executor.zig", tool_executor_mod);
+    mlx_gptoss_backend_mod.addImport("../tools/browser.zig", browser_mod);
+    mlx_gptoss_backend_mod.addImport("../tools/python.zig", python_mod);
+    mlx_gptoss_backend_mod.addImport("../weight/gptoss_loader.zig", gptoss_loader_mod);
+    mlx_gptoss_backend_mod.addImport("../mlx.zig/src/mlx.zig", shared_mlx_mod);
+    mlx_gptoss_backend_mod.addImport("../mlx.zig/src/tokenizer.zig", shared_tokenizer_mod);
+
+    // Model manager module
+    const gptoss_manager_mod = b.createModule(.{
+        .root_source_file = b.path("src/model/gptoss_manager.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_manager_mod.addImport("../backends/mlx_gptoss_backend.zig", mlx_gptoss_backend_mod);
+
+    // GPT-OSS integration test module
+    const gptoss_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/test_models_gptoss.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_test_mod.addImport("gptoss_mlx.zig", gptoss_mod);
+    gptoss_test_mod.addImport("harmony/harmony.zig", harmony_mod);
+    gptoss_test_mod.addImport("harmony/template.zig", harmony_template_mod);
+    gptoss_test_mod.addImport("harmony/parser.zig", harmony_parser_mod);
+    gptoss_test_mod.addImport("backends/backend.zig", backend_base_mod);
+    gptoss_test_mod.addImport("backends/mlx_gptoss_backend.zig", mlx_gptoss_backend_mod);
+    gptoss_test_mod.addImport("model/gptoss_manager.zig", gptoss_manager_mod);
+    gptoss_test_mod.addImport("mlx.zig/src/mlx.zig", shared_mlx_mod);
+
+    const gptoss_test = b.addTest(.{
+        .name = "gptoss_test",
+        .root_module = gptoss_test_mod,
+    });
+    configureExecutable(gptoss_test, b, deps);
+
+    const run_gptoss_test = b.addRunArtifact(gptoss_test);
+    const test_gptoss_step = b.step("test-gptoss", "Run GPT-OSS integration tests (Phase 15)");
+    test_gptoss_step.dependOn(&run_gptoss_test.step);
+    test_step.dependOn(&run_gptoss_test.step);
+
+    // GPT-OSS model manager standalone test
+    const gptoss_manager_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/model/gptoss_manager.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gptoss_manager_test_mod.addImport("../backends/mlx_gptoss_backend.zig", mlx_gptoss_backend_mod);
+
+    const gptoss_manager_test = b.addTest(.{
+        .name = "gptoss_manager_test",
+        .root_module = gptoss_manager_test_mod,
+    });
+    configureExecutable(gptoss_manager_test, b, deps);
+
+    const run_gptoss_manager_test = b.addRunArtifact(gptoss_manager_test);
+    test_step.dependOn(&run_gptoss_manager_test.step);
+
+    // E2E tests — Phase 17 human UAT automation
+    // Requires model files; skips gracefully if missing.
+    // Run `scripts/download_test_models.sh` first to fetch weights.
+    // Usage: zig build test-e2e
+    const e2e_step = b.step("test-e2e", "Run E2E tests (Phase 17 UAT — requires model files)");
+    const run_e2e = b.addSystemCommand(&.{ "bash", "scripts/e2e_test.sh" });
+    run_e2e.step.dependOn(&exe.step); // ensure binary is built first
+    e2e_step.dependOn(&run_e2e.step);
 }
 
 // ── Inlined from src/mlx.zig/build.zig ────────────────────────────────────────
@@ -217,7 +745,11 @@ const Dependencies = struct {
     mlx_c_path: []const u8,
     mlx_c_build_path: []const u8,
     mlx_c_lib_path: []const u8,
+    mlx_c_v4_path: []const u8,
+    mlx_c_v4_build_path: []const u8,
+    mlx_c_v4_lib_path: []const u8,
     install_step: *std.Build.Step,
+    install_v4_step: *std.Build.Step,
 };
 
 fn setupDependencies(
@@ -227,9 +759,16 @@ fn setupDependencies(
 ) !Dependencies {
     _ = target;
     _ = optimize;
+
+    // v0.1.2 paths
     const mlx_c_path = b.pathJoin(&.{ b.cache_root.path.?, "mlx-c" });
     const mlx_c_build_path = b.pathJoin(&.{ mlx_c_path, "build" });
     const mlx_c_lib_path = b.pathJoin(&.{ mlx_c_build_path, "libmlxc.a" });
+
+    // v0.4.1 paths
+    const mlx_c_v4_path = b.pathJoin(&.{ b.cache_root.path.?, "mlx-c-v4" });
+    const mlx_c_v4_build_path = b.pathJoin(&.{ mlx_c_v4_path, "build" });
+    const mlx_c_v4_lib_path = b.pathJoin(&.{ mlx_c_v4_build_path, "libmlxc-v4.a" });
 
     const install_step = b.step("install-mlx-c", "Download and build libmlxc.a if not cached");
     const needs_install = !doesFileExist(mlx_c_lib_path);
@@ -260,6 +799,45 @@ fn setupDependencies(
         install_step.dependOn(&make_cmd.step);
     }
 
+    // v0.4.1 install step
+    const install_v4_step = b.step("install-mlx-c-v4", "Download and build libmlxc-v4.a if not cached");
+    const needs_v4_install = !doesFileExist(mlx_c_v4_lib_path);
+
+    if (needs_v4_install) {
+        // Download mlx-c v0.4.1 tarball and extract to cache
+        const clone_v4_cmd = b.addSystemCommand(&[_][]const u8{
+            "sh", "-c",
+            b.fmt(
+                "if [ ! -d {s} ]; then mkdir -p $(dirname {s}) && " ++
+                    "curl -L https://github.com/ml-explore/mlx-c/archive/refs/tags/v0.4.1.tar.gz " ++
+                    "| tar xz -C $(dirname {s}) && mv $(dirname {s})/mlx-c-0.4.1 {s}; fi",
+                .{ mlx_c_v4_path, mlx_c_v4_path, mlx_c_v4_path, mlx_c_v4_path, mlx_c_v4_path },
+            ),
+        });
+        const mkdir_v4_cmd = b.addSystemCommand(&[_][]const u8{ "mkdir", "-p", mlx_c_v4_build_path });
+        mkdir_v4_cmd.step.dependOn(&clone_v4_cmd.step);
+        const cmake_v4_cmd = b.addSystemCommand(&[_][]const u8{
+            "cmake",                      "..",
+            "-DCMAKE_BUILD_TYPE=Release", "-DMLX_BUILD_METAL=ON",
+            "-DCMAKE_CXX_FLAGS=-w",
+        });
+        cmake_v4_cmd.setCwd(.{ .cwd_relative = mlx_c_v4_build_path });
+        cmake_v4_cmd.step.dependOn(&mkdir_v4_cmd.step);
+        const make_v4_cmd = b.addSystemCommand(&[_][]const u8{ "make", "-j" });
+        make_v4_cmd.setCwd(.{ .cwd_relative = mlx_c_v4_build_path });
+        make_v4_cmd.step.dependOn(&cmake_v4_cmd.step);
+        // Rename libmlxc.a to libmlxc-v4.a to avoid symbol conflicts
+        const rename_v4_cmd = b.addSystemCommand(&[_][]const u8{
+            "sh", "-c",
+            b.fmt(
+                "if [ -f {s}/libmlxc.a ] && [ ! -f {s} ]; then mv {s}/libmlxc.a {s}; fi",
+                .{ mlx_c_v4_build_path, mlx_c_v4_lib_path, mlx_c_v4_build_path, mlx_c_v4_lib_path },
+            ),
+        });
+        rename_v4_cmd.step.dependOn(&make_v4_cmd.step);
+        install_v4_step.dependOn(&rename_v4_cmd.step);
+    }
+
     // Copy mlx.metallib to install dir if present
     if (doesFileExist(b.pathJoin(&.{ mlx_c_build_path, "_deps/mlx-build/mlx.metallib" }))) {
         const dest_dir = b.pathJoin(&.{ b.install_path, "lib", "metal" });
@@ -277,7 +855,11 @@ fn setupDependencies(
         .mlx_c_path = mlx_c_path,
         .mlx_c_build_path = mlx_c_build_path,
         .mlx_c_lib_path = mlx_c_lib_path,
+        .mlx_c_v4_path = mlx_c_v4_path,
+        .mlx_c_v4_build_path = mlx_c_v4_build_path,
+        .mlx_c_v4_lib_path = mlx_c_v4_lib_path,
         .install_step = install_step,
+        .install_v4_step = install_v4_step,
     };
 }
 
@@ -287,13 +869,28 @@ fn configureExecutable(
     deps: Dependencies,
 ) void {
     exe.step.dependOn(deps.install_step);
+    exe.step.dependOn(deps.install_v4_step);
+
+    // Get absolute paths for C imports
+    const cwd = std.fs.cwd();
+    const mlx_c_absolute = cwd.realpathAlloc(b.allocator, deps.mlx_c_path) catch deps.mlx_c_path;
+    const mlx_c_v4_absolute = cwd.realpathAlloc(b.allocator, deps.mlx_c_v4_path) catch deps.mlx_c_v4_path;
+
     // macOS SDK framework path — required on macOS 26 / Xcode 21 where Zig doesn't auto-detect it
     exe.addFrameworkPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks" });
     // macOS SDK library path — needed for libobjc and other system libraries
     exe.addLibraryPath(.{ .cwd_relative = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib" });
-    exe.addIncludePath(.{ .cwd_relative = deps.mlx_c_path });
+
+    // v0.1.2 includes and library
+    exe.addIncludePath(.{ .cwd_relative = mlx_c_absolute });
     exe.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_build_path, "libmlxc.a" }) });
     exe.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ deps.mlx_c_build_path, "_deps/mlx-build/libmlx.a" }) });
+
+    // v0.4.x includes and library (separate to avoid conflicts)
+    exe.addIncludePath(.{ .cwd_relative = mlx_c_v4_absolute });
+    exe.addLibraryPath(.{ .cwd_relative = deps.mlx_c_v4_build_path });
+    exe.linkSystemLibrary("mlxc-v4");
+
     exe.linkFramework("Metal");
     exe.linkFramework("Foundation");
     exe.linkFramework("QuartzCore");

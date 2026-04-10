@@ -1,7 +1,7 @@
-//! tokenizer.zig - Minimal tokenizer stub for Zig 0.15 compatibility
+//! tokenizer.zig - Minimal tokenizer stub
 //!
 //! This is a simplified tokenizer that provides the basic interface.
-//! The full MLX.zig tokenizer needs porting from Zig 0.13 to 0.15.
+//! Ported to Zig 0.15.2. Uses stdlib JSON and file I/O directly.
 
 const std = @import("std");
 

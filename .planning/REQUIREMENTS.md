@@ -43,7 +43,7 @@
 
 ## v1.1 Requirements — Production-Ready Inference Server
 
-**Status:** Active (defining)  
+**Status:** Active (defining)
 **Goal:** Transform zlx into a production-ready local LLM server with advanced performance, multi-model support, and complete API compatibility.
 
 ### Priority 1 — API Completeness (Table Stakes)
@@ -207,7 +207,73 @@ These requirements improve reliability, monitoring, and operations.
 
 ---
 
-## Out of Scope (v1.1)
+---
+
+## v2.0 Requirements — "It Just Works"
+
+**Status:** Active
+**Goal:** Close every stub and mock, ship verified inference for all claimed models, add Gemma 4 E4B, implement TurboQuant Metal kernels, wire tool APIs end-to-end, and produce a project history document.
+
+### Gap Closure & Honest Inventory
+
+- [x] **GAP-01**: Every `error.NotImplemented` return in claimed production paths is either fully implemented or replaced by explicit removal with documentation — no silent stubs in the inference pipeline
+- [x] **GAP-02**: All hardcoded mock values (vocab_size=32000, EOS=2, BOS=1, disk space=100GB) replaced with values read from actual model config or system APIs
+- [x] **GAP-03**: GPT-OSS native MLX forward pass implemented with real tensor computation (layer embeddings, attention, FFN) — not returning `mlx.zeros()`
+- [x] **GAP-04**: GPT-OSS tokenizer wired to real tokenizer (tiktoken or Qwen-compatible) — `tokenize()` does not return empty slice
+- [x] **GAP-05**: MLX backend factory (`createMlxBackend`) creates a real backend object, not a stub `u8` pointer
+- [x] **GAP-06**: Prompt cache `parseIndex()` reads actual cache index entries from disk — not returning empty
+- [x] **GAP-07**: Speculative decoding wired to main generation path (or explicitly removed with clear documentation if deferred)
+- [x] **GAP-08**: Build system compiles without deprecation errors on Zig 0.15.2 (`b.pathJoin` → correct API, all `@compileError` and deprecated paths resolved)
+- [x] **GAP-09**: `mlx.arrayIsEmpty()` calls removed or replaced with a valid MLX.zig API call — no undefined symbol at link time
+- [x] **GAP-10**: `MultiHeadLatentAttention` struct field mismatch in `loader.zig` resolved — struct definition and initialization agree
+
+### Model Verification & Gemma 4 E4B
+
+- [x] **MODEL-01**: User can run Qwen2.5-Coder end-to-end with a verified passing integration test (`zig build test`)
+- [x] **MODEL-02**: User can run DeepSeek-Coder-V2-Lite end-to-end via llama.cpp backend with a verified passing integration test
+- [x] **MODEL-03**: User can run GPT-OSS-20B end-to-end via native MLX — generates real output tokens (not hardcoded token 1)
+- [x] **MODEL-04**: Gemma 4 E4B architecture implemented in Zig/MLX — 42 layers, hybrid sliding-window (512-token) + global attention with Proportional RoPE, 128K context, 262K-token vocabulary, Per-Layer Embeddings loading
+- [x] **MODEL-05**: Gemma 4 E4B chat template implemented per Google spec — `<|turn>` / `<turn|>` control tokens, system/user/model roles, no-think variant supported
+- [x] **MODEL-06**: Gemma 4 E4B verbosity-reduction config available — `temperature=0.3`, `<|think|>` block suppression in system prompt achieves ~83% token reduction vs default
+- [x] **MODEL-07**: User can load Gemma 4 E4B 4-bit (MLX quantized format, ~5GB VRAM) and receive completions via `/v1/chat/completions`
+
+### TurboQuant Metal Compression
+
+- [ ] **TURBO-01**: Walsh-Hadamard Transform Metal kernel implemented in Zig/Metal C — logic ported from Python source, no Python runtime dependency
+- [ ] **TURBO-02**: KV cache compression and decompression produces correct output — Lloyd-Max codebook quantization verified against reference values
+- [ ] **TURBO-03**: TurboQuant active on Qwen with measured memory reduction ≥4x vs uncompressed KV cache
+- [ ] **TURBO-04**: `--turboquant` flag enables compression; memory savings visible in logs; automatic fallback if compression fails
+
+### Tool API
+
+- [ ] **TOOLS-01**: `browser.zig` and `python.zig` compile cleanly against Zig 0.15.2 — `parseFree` and other removed APIs replaced with `Parsed(T).deinit()` and equivalent
+- [ ] **TOOLS-02**: Tool routes registered in main HTTP server — browser search and Python execution are reachable HTTP endpoints
+- [ ] **TOOLS-03**: User can POST to browser tool and receive real search results from at least one provider (DuckDuckGo)
+- [ ] **TOOLS-04**: User can POST to Python tool and have code executed in a subprocess with captured stdout/stderr output
+
+### Project Documentation
+
+- [ ] **DOCS-01**: Human-readable project history document — milestone timeline, model inventory (what works, what was stubbed, what was deferred), key design decisions and why
+- [ ] **DOCS-02**: Zig ecosystem extraction candidates documented — MLX C bindings layer, safetensors parser, BPE tokenizer, httpz SSE helper — each with scope estimate and contribution path
+- [ ] **DOCS-03**: Working model setup guide — download commands, directory layout, test invocations for each supported model (Qwen, DeepSeek, GPT-OSS, Gemma 4 E4B)
+
+---
+
+## Out of Scope (v2.0)
+
+| Feature | Reason |
+|---------|--------|
+| Vision / multimodal | Gemma 4 E4B has vision encoder but text-only scope for v2.0; audio similarly deferred |
+| Custom Web UI | Use Open WebUI instead |
+| Continuous batching | Not beneficial for single-user server |
+| PagedAttention | vLLM optimization, not applicable to MLX unified memory |
+| Auth / API keys | Personal use only |
+| TLS / HTTPS | Localhost only |
+| Embeddings endpoint | Out of scope for chat completions focus |
+| Fine-tuning | Inference only |
+| Distributed inference | Single-machine Metal GPU only |
+
+## Out of Scope (v1.1, historical)
 
 | Feature | Reason |
 |---------|--------|
@@ -279,6 +345,46 @@ These requirements improve reliability, monitoring, and operations.
 - Mapped to phases: 19 ✓
 - Unmapped: 0
 
+### v2.0 Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| GAP-08 | Phase 16 | Not started |
+| GAP-09 | Phase 16 | Not started |
+| GAP-10 | Phase 16 | Not started |
+| GAP-01 | Phase 17 | Not started |
+| GAP-02 | Phase 17 | Not started |
+| GAP-03 | Phase 17 | Not started |
+| GAP-04 | Phase 17 | Not started |
+| GAP-05 | Phase 17 | Not started |
+| GAP-06 | Phase 17 | Not started |
+| GAP-07 | Phase 17 | Not started |
+| MODEL-01 | Phase 17 | Not started |
+| MODEL-02 | Phase 17 | Not started |
+| MODEL-03 | Phase 17 | Not started |
+| MODEL-04 | Phase 18 | Not started |
+| MODEL-05 | Phase 18 | Not started |
+| MODEL-06 | Phase 18 | Not started |
+| MODEL-07 | Phase 18 | Not started |
+| TURBO-01 | Phase 19 | Not started |
+| TURBO-02 | Phase 19 | Not started |
+| TURBO-03 | Phase 19 | Not started |
+| TURBO-04 | Phase 19 | Not started |
+| TOOLS-01 | Phase 20 | Not started |
+| TOOLS-02 | Phase 20 | Not started |
+| TOOLS-03 | Phase 20 | Not started |
+| TOOLS-04 | Phase 20 | Not started |
+| DOCS-01 | Phase 21 | Not started |
+| DOCS-02 | Phase 21 | Not started |
+| DOCS-03 | Phase 21 | Not started |
+
+**Coverage:**
+- v2.0 requirements: 28 total
+- Mapped to phases: 28 ✓
+- Unmapped: 0
+
 ---
-*Requirements defined: 2026-03-30 (v1.0)*  
+*Requirements defined: 2026-03-30 (v1.0)*
 *Updated: 2026-04-01 (v1.1 requirements added)*
+*Updated: 2026-04-05 (v2.0 requirements added — 28 requirements across 5 categories)*
+*Updated: 2026-04-05 (v2.0 traceability filled — Phases 16-21)*

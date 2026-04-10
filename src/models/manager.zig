@@ -97,6 +97,15 @@ pub const ModelManager = struct {
         const model_opt = self.registry.getModel(model_id);
         if (model_opt == null) return false;
 
+        // Check for environment variable to skip memory check (for testing)
+        if (std.process.getEnvVarOwned(self.allocator, "ZLX_SKIP_MEMORY_CHECK")) |val| {
+            defer self.allocator.free(val);
+            if (std.mem.eql(u8, val, "1") or std.mem.eql(u8, val, "true")) {
+                std.log.warn("Memory check bypassed via ZLX_SKIP_MEMORY_CHECK for '{s}'", .{model_id});
+                return true;
+            }
+        } else |_| {}
+
         const model = model_opt.?;
         const required_mb = model.memory_required_mb;
 

@@ -21,11 +21,9 @@ test "loadConfig uses defaults when no config files exist" {
     try testing.expectEqual(@as(bool, false), cfg.turboquant_enabled);
     try testing.expectEqual(@as(u4, 4), cfg.turboquant_bits);
     try testing.expectEqual(@as(u8, 4), cfg.turboquant_adaptive);
-    try testing.expectEqual(@as(usize, 4), cfg.speculation_depth);
-    try testing.expectEqual(@as(bool, false), cfg.no_speculation);
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     try testing.expectEqualStrings("*", cfg.cors_origins);
     try testing.expect(cfg.model == null);
-    try testing.expect(cfg.draft_model == null);
 }
 
 // Test 2: loadConfigFromPath returns error on nonexistent file
@@ -108,10 +106,8 @@ test "Config struct default values are correct" {
     try testing.expectEqual(@as(bool, false), cfg.turboquant_enabled);
     try testing.expectEqual(@as(u4, 4), cfg.turboquant_bits);
     try testing.expectEqual(@as(u8, 4), cfg.turboquant_adaptive);
-    try testing.expectEqual(@as(usize, 4), cfg.speculation_depth);
-    try testing.expectEqual(@as(bool, false), cfg.no_speculation);
+    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
     try testing.expectEqualStrings("*", cfg.cors_origins);
     try testing.expect(cfg.model == null);
-    try testing.expect(cfg.draft_model == null);
     try testing.expect(cfg.config_file == null);
 }

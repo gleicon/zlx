@@ -6,7 +6,7 @@
     .dependencies = .{
         .httpz = .{
             .url = "https://github.com/karlseguin/http.zig/archive/refs/heads/master.tar.gz",
-            .hash = "httpz-0.0.0-PNVzrMpOBwCS42DpyNnY8WTlwcuzannBeDLuqkUV8H7-",
+            .hash = "httpz-0.0.0-PNVzrNVOBwDlxyffzwONpI9j9dYqKWXxopU1ZCLt4C09",
         },
     },
     .paths = .{

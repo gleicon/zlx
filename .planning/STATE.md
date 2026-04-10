@@ -1,370 +1,141 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: milestone
-status: ✅ COMPLETE — Phase 09 Model Management Complete, v1.1 Ready for Release
-stopped_at: Phase 09 Complete — All Model Management Plans Complete
-last_updated: "2026-04-02T17:45:00.000Z"
+milestone: v2.0
+milestone_name: "It Just Works"
+status: executing
+stopped_at: Completed 18-01-PLAN.md — Gemma 4 E4B handler implemented
+last_updated: "2026-04-08T01:12:05.866Z"
+last_activity: 2026-04-08
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 17
-  completed_plans: 17
-  percent: 100
+  total_phases: 20
+  completed_phases: 10
+  total_plans: 54
+  completed_plans: 53
+  percent: 98
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-02)
+See: .planning/PROJECT.md (updated 2026-04-05)
 
 **Core value:** A single `zig build` binary that lets OpenCode connect to local coding models without any Python or cloud dependency.
-**Current focus:** ✅ Phase 09 Complete — v1.1 Production-Ready
+**Current focus:** Phase 17 — inference-gap-closure
+
+## Milestone: v2.0 "It Just Works"
+
+**Goal:** Close every stub, mock, and orphaned route; ship verified inference for all claimed models; add Gemma 4 E4B; implement TurboQuant Metal kernels; wire tool APIs end-to-end; produce project documentation.
+
+**Previous milestone:** v1.1.2 — Phase 15 (Native MLX GPT-OSS) — 8/9 plans complete
 
 ## Current Position
 
-Milestone: v1.1 (Production-Ready)
-Phase: 09 (Model Management) — ✅ COMPLETE
-Plans: 3 of 3 complete (09-01 Configuration, 09-02 Auto-Download, 09-03 Background Loading)
-Status: All Phase 09 plans complete. v1.1 ready for release.
+Milestone: v2.0 "It Just Works"
+Phase: 17 (inference-gap-closure) — EXECUTING
+Plan: 3 of 10
+Status: Ready to execute
+Last activity: 2026-04-08
 
-Progress: [██████████] 100% → All plans complete
+Progress: [██████████] 46/48 plans (96%)
 
-## Phase 09 Status
+## v2.0 Phase Summary
 
-| Plan | Name | Status | Requirements |
-|------|------|--------|--------------|
-| 09-01 | Configuration File System | ✅ COMPLETE | UX-03 |
-| 09-02 | Model Auto-Download | ✅ COMPLETE | UX-01, UX-05 |
-| 09-03 | Background Loading & Open WebUI | ✅ COMPLETE | UX-04, UX-02 |
+| Phase | Goal | Requirements | Status |
+|-------|------|--------------|--------|
+| 16. Build & Gap Closure | Zig 0.15.2 clean build | GAP-08, GAP-09, GAP-10 | ✅ Complete (2026-04-05) |
+| 17. Inference Gap Closure | Real forward pass, no stubs | GAP-01..07, MODEL-01..03 | Not started |
+| 18. Gemma 4 E4B | New model end-to-end | MODEL-04..07 | Not started |
+| 19. TurboQuant Metal | Metal kernels, 4x compression | TURBO-01..04 | Not started |
+| 20. Tools API | Browser + Python HTTP endpoints | TOOLS-01..04 | Not started |
+| 21. Project Documentation | History, guide, ecosystem map | DOCS-01..03 | Not started |
 
-### Phase 09 Plan 01: Configuration File System ✅
+## Phase 15: Native MLX GPT-OSS — In Progress (8/9 plans)
 
-**Summary:** Robust configuration system with priority chain: CLI > Environment > Config File > Defaults
+**Goal:** High-performance GPT-OSS via native MLX with Metal kernels, Harmony format, and tools
 
-**What Was Built:**
+**Plans Completed:**
 
-1. **src/config.zig** — Configuration loader
-   - Config struct with all CLI flags as optional fields
-   - loadConfig() tries ~/.config/zlx/config.json then ./zlx.json
-   - Environment variables (ZLX_MODEL, ZLX_PORT, etc.)
-   - Validation for all settings (port, timeout, cache, turboquant, speculation)
-   - expandPath() for ~ home directory expansion
+- ✅ 15-01: MLX GPT-OSS transformer with Metal kernels
+- ✅ 15-02: Harmony format parser and chat template
+- ✅ 15-03: Browser and Python tool implementation
+- ✅ 15-04: Weight loading and MXFP4 support
+- ✅ 15-05: Integration with zlx server
+- ✅ 15-06: Gap closure summary
+- ✅ 15-07: ChatGPTOSSHandler and ToolsAPI wiring
+- ✅ 15-08: Inference stub replacement
 
-2. **src/config_test.zig** — TDD tests (7 tests)
-   - Default values, path expansion, validation errors
+**Outstanding:** 15-MASTER-PLAN.md not written; UAT and verification docs exist
 
-3. **src/main.zig integration**
-   - parseArgs() loads config file before CLI overrides
-   - --config flag for explicit config file
-   - Enhanced USAGE with environment variables section
+## Phase 14: DeepSeek & GPT-OSS Integration — ✅ COMPLETE
 
-**Key Features:**
+**All 5 Plans Completed:**
 
-- Config locations: ~/.config/zlx/config.json (primary), ./zlx.json (fallback)
-- Priority: CLI flags → Environment → Config → Defaults
-- All settings validated on startup with helpful errors
+- ✅ 14-01: Backend abstraction layer (Backend union, factory pattern, routing)
+- ✅ 14-02: llama.cpp build integration (submodule, C bindings, CMake)
+- ✅ 14-03: DeepSeek integration (GGUF download, registry updates, tests)
+- ✅ 14-04: GPT-OSS integration (11GB download, GGUF support, docs)
+- ✅ 14-05: Unified generation pipeline (BackendGenerator, integration tests)
 
-### Phase 09 Plan 02: Model Auto-Download ✅
+**Backend Routing:**
 
-**Summary:** Automatic model downloading from HuggingFace with resume support
+| Model | Default Backend | Override |
+|-------|----------------|----------|
+| Qwen | MLX.zig | --backend mlx |
+| DeepSeek | llama.cpp | --backend llama_cpp |
+| GPT-OSS | llama.cpp | --backend llama_cpp |
 
-**What Was Built:**
+## Decision Log
 
-1. **src/download/huggingface.zig** — HF API client
-   - HuggingFaceId parser for "org/repo" format
-   - downloadFile() with HTTP Range resume support
-   - getFileList() queries HF API for model files
-   - Filters to relevant files: config.json, tokenizer.json, *.safetensors
+**2026-04-06:** Phase 17 Plan 10 — all compile + runtime failures fixed; 35/35 steps, 109/109 tests pass (GAP-01, MODEL-01)
 
-2. **src/download/manager.zig** — Download manager
-   - DownloadManager with queue and active download tracking
-   - DownloadTask with progress, status, cancellation
-   - Thread-based background download architecture
-   - Atomic flags for thread-safe cancellation
-   - Integration with ModelRegistry for status updates
+- **Decision**: MLX null-ctx guard: `array.ctx == null` must be used instead of `mlx.arrayIsEmpty()` — arrayIsEmpty calls `mlx_array_size` → `mlx_array_get_()` which calls `exit(-1)` on null ctx
+- **Decision**: `mla.MultiHeadLatentAttention.deinit()` calls `allocator.destroy(self)` — bypass it when struct is a VALUE field; manually free individual arrays
+- **Decision**: `mlx.randomNormal` allocates/frees GPU stream internally — callers stay simple, consistent with `zeros` helper
 
-3. **src/download/mod.zig** — Public API
-   - downloadModelIfNeeded() — check cache before downloading
-   - downloadModelBlocking() — blocking download with progress
-   - Global manager instance pattern
+**2026-04-06:** Phase 17 Plan 03 — DeepSeek handler wired, llama.cpp API migrated, zig build fixed (GAP-03, MODEL-02, MODEL-03)
 
-**Key Features:**
+- **Decision**: D-01 applied: `g_chat_deepseek_handler` global in `server.zig` dispatches by `deepseek` prefix — no factory/registry layer
+- **Decision**: D-06 applied: `vocab_size`, `eos_token`, `bos_token` read from `LlamaBackend` accessors via `llama_model_get_vocab()` — never hardcoded
+- **Decision**: ggml sub-libraries added to `build.zig` (`libggml.a`, `libggml-base.a`, `libggml-cpu.a`, `libggml-blas.a`, `libggml-metal.a`) — unblocks linker; `zig build` exits 0
+- **Decision**: llama.cpp vocab API migrated: seed removed from context_params; all vocab/token functions now take `llama_vocab*`; `llama_sample_token` replaced by `llama_sampler_sample`
 
-- Cache location: ~/.cache/zlx/models/{org}/{repo}/
-- HTTP Range requests for resume support
-- Progress tracking (bytes, files, status)
-- Cancel support
-- Thread-safe architecture (ready for true background operation)
+**2026-04-06:** Phase 17 Plan 02 — delete orphaned backend stubs (GAP-02, GAP-05)
 
-### Phase 09 Plan 03: Background Loading & Open WebUI 📝
+- **Decision**: D-04 executed: `factory.zig` and `mlx_backend.zig` deleted — confirmed pure stubs never called by live inference path
+- **Decision**: GAP-02 closed: hardcoded `vocab_size=32000`, `eos_token=2`, `bos_token=1` eliminated — lived exclusively in deleted `mlx_backend.zig`
+- **Decision**: `BackendType.mlx` removed from union; Qwen inference uses `inference/mod.zig` + MLX.zig directly; Backend union now only has `.llama_cpp` and `.mlx_gptoss` arms
+- **Decision**: `BackendGenerator` stub kept with `error.NotImplemented` — preserves type surface for Phase 18 without introducing false factory path
 
-**Status:** Not yet started — requires checkpoint review
+**2026-04-05:** Phase 16 complete — build gap closure
 
-**Planned:**
+- **Decision**: MLA stub (Approach B) used for `MultiHeadLatentAttention` init — `init()` returns `!*Self` (heap pointer) but `DeepSeekLayer.mla` is a value type; dereferencing heap-allocated struct while `deinit()` calls `allocator.destroy(self)` would cause use-after-free
+- **Decision**: `arrayIsEmpty` added to `src/mlx.zig/src/mlx.zig` wrapping `C.mlx_array_size(arr) == 0` — 20 call sites unblocked
+- **Remaining**: 2 pre-existing errors (`dequantize.zig:101` type mismatch, `loader.zig:542` missing `num_shared_experts`) tracked for Phase 17
 
-- Background model loading during active inference
-- POST /v1/models/load endpoint
-- GET /v1/models/load-status endpoint
-- POST /v1/models/load/cancel endpoint
-- Enhanced CORS for Open WebUI compatibility
+**2026-04-05:** v2.0 roadmap created
 
-**Checkpoint:** Plan 09-03 has a checkpoint:human-verify task requiring manual testing
+- **Decision**: Phase 16 must come before all other v2.0 phases — Zig 0.15.2 build errors block compilation
+- **Decision**: Phase 17 bundles all inference stubs (GAP-01..07) with model verification (MODEL-01..03) — same code surface
+- **Decision**: Phase 18 (Gemma 4 E4B) deferred until Phase 17 is complete — clean inference layer required
+- **Decision**: Phase 19 (TurboQuant Metal) and Phase 20 (Tools) can run after Phase 16 in any order — both independent of Phase 17 and 18
+- **Decision**: Phase 21 (Docs) is last — it documents what actually works, not what was planned
 
-## Previous Phases
+**2026-04-03:** Completed Phase 14 - DeepSeek & GPT-OSS with llama.cpp
 
-### Phase 08: Speculative Decoding ✅ COMPLETE
+- **Decision**: Implemented llama.cpp backend for MoE models alongside MLX.zig
+- **Rationale**: llama.cpp has proven DeepSeek V2 support and better GGUF ecosystem
+- **Outcome**: Both MLX.zig and llama.cpp backends available; Qwen still uses optimized MLX.zig path
 
-| Plan | Name | Status | Requirements |
-|------|------|--------|--------------|
-| 08-01 | Speculative Decoding Implementation | ✅ COMPLETE | PERF-04 |
+### Quick Tasks Completed
 
-**Key Achievement:** Implemented speculative decoding achieving 1.5-2.8x speedup using draft models.
-
-## Phase 08 Completion Summary
-
-### What Was Built
-
-1. **SpeculativeGenerator** (`src/speculation/speculative_generator.zig`)
-   - Full speculative decoding algorithm from arXiv:2211.17192
-   - Probability-based acceptance/rejection logic
-   - Parallel target model verification
-   - Configurable speculation depth (default: 4)
-
-2. **Draft Selection System** (`src/speculation/draft_selector.zig`)
-   - Automatic draft model selection by architecture matching
-   - Size ratio scoring (1:4 to 1:8 optimal)
-   - User override support with --draft-model flag
-
-3. **Draft Model Manager** (`src/models/draft_model.zig`)
-   - Lifecycle management with reference counting
-   - LRU cache for loaded draft models
-   - Thread-safe access with mutex protection
-
-4. **Metrics Collection** (`src/metrics/speculative_metrics.zig`)
-   - Atomic counters for thread safety
-   - Acceptance rate calculation
-   - Speedup estimation
-   - /v1/metrics/speculative endpoint
-
-5. **CLI Integration** (`src/main.zig`)
-   - --draft-model: Manual draft model selection
-   - --speculation-depth: Tokens to speculate (1-8)
-   - --no-speculation: Disable speculative decoding
-   - Startup logging showing speculation config
-
-6. **Documentation** (`docs/SPECULATIVE_DECODING.md`)
-   - Comprehensive usage guide
-   - Algorithm explanation
-   - Troubleshooting section
-   - Compatible model pairs
-
-### Performance Results
-
-| Model Pair | Expected Speedup |
-|------------|------------------|
-| Qwen 7B + Qwen 1.5B | 2.0-2.8x |
-| Qwen 7B + Qwen 0.5B | 1.8-2.5x |
-| Llama 8B + Llama 1B | 1.5-2.2x |
-
-### Files Created
-
-- `src/speculation/speculative_generator.zig` (core algorithm)
-- `src/speculation/draft_selector.zig` (auto-selection)
-- `src/speculation/mod.zig` (public API)
-- `src/models/draft_model.zig` (lifecycle mgmt)
-- `src/metrics/speculative_metrics.zig` (metrics)
-- `src/speculation/speculative_generator_test.zig` (TDD tests)
-- `src/speculation/integration_test.zig` (E2E tests)
-- `docs/SPECULATIVE_DECODING.md` (documentation)
-
-### Files Modified
-
-- `src/inference/generator.zig` (speculation delegation)
-- `src/inference/mod.zig` (call sites updated)
-- `src/api/streaming.zig` (call sites updated)
-- `src/main.zig` (CLI integration)
-- `README.md` (documentation)
-
-## Phase 07 Status
-
-| Plan | Name | Status | Requirements |
-|------|------|--------|--------------|
-| 07-01 | TurboQuant Feasibility Spike | ✅ COMPLETE | PERF-01 |
-| 07-02 | TurboQuant Library Integration | ✅ COMPLETE | PERF-02 |
-
-**Major Discovery:** User found botirk38/turboquant — a 93% Zig implementation of TurboQuant!
-Changed Phase 07 from NO-GO (40+ hour port) to GO (8-12 hour integration).
-
-## Phase 07 Completion Summary
-
-### What Was Built
-
-1. **TurboQuant Library Integration**
-   - Dependency: botirk38/turboquant v0.1.0 (MIT license)
-   - Source: Git submodule at `deps/turboquant/`
-   - Build integration: Module wiring in `build.zig`
-
-2. **MLX Bridge Layer** (`src/mlx_bridge.zig`)
-   - GPU array → CPU f32 buffer conversion
-   - CPU f32 buffer → GPU array reconstruction
-   - Array evaluation synchronization
-
-3. **TurboQuant Engine Wrapper** (`src/compression/turboquant_engine.zig`)
-   - Engine caching per dimension (performance optimization)
-   - Thread-safe access with mutex/refcount
-   - Layer-wise compression/decompression API
-
-4. **KvCompressor Integration** (`src/compression/kv_compressor.zig`)
-   - Real TurboQuant backend (replaced stub)
-   - Adaptive layer support (first/last N layers in FP16)
-   - Statistics tracking (compression ratio, bytes saved)
-
-5. **CLI Updates** (`src/main.zig`)
-   - Removed "not implemented" warnings
-   - Added info messages showing compression config
-   - Updated help text: (BETA) instead of (EXPERIMENTAL)
-
-### Key Features
-
-- **Compression Ratio**: ~5.5-6x (3 bits/dim = 5.33x theoretical)
-- **Memory Savings**: 6GB → 1GB for 7B model at 4096 context
-- **CLI Flags**: `--turboquant`, `--turboquant-bits 3|4`, `--turboquant-adaptive N`
-- **Adaptive Layers**: Configurable FP16 preservation for first/last N layers
-- **Performance**: Engine caching amortizes initialization cost
-
-### Technical Architecture
-
-```
-MLX GPU Array
-      ↓ (arrayEval)
-CPU f32 Buffer
-      ↓ (TurboQuant encode)
-Compressed Bytes (~6x smaller)
-      ↓ (storage in cache)
-CPU f32 Buffer
-      ↓ (TurboQuant decode)
-MLX GPU Array
-```
-
-### Files Created/Modified
-
-**New:**
-
-- `src/mlx_bridge.zig` — MLX ↔ CPU buffer bridge
-- `src/compression/turboquant_engine.zig` — TurboQuant wrapper
-
-**Modified:**
-
-- `build.zig` — TurboQuant module wiring
-- `src/compression/kv_compressor.zig` — Real TurboQuant backend
-- `src/compression/mod.zig` — Updated exports
-- `src/main.zig` — CLI updates, removed warnings
-
-### Verification Results
-
-- ✅ `zig build` — Success
-- ✅ `zig build test` — All tests pass
-- ✅ `--turboquant` flag — Activates compression without warnings
-- ✅ `--turboquant-bits 4` — Correct configuration
-- ✅ `--turboquant-adaptive 4` — Correct configuration
-- ✅ Help text — Shows (BETA) status
-
-### Performance Targets
-
-| Metric | Target | Expected |
-|--------|--------|----------|
-| Compression Ratio | 5-6x | ~5.5x |
-| Speed Overhead | <5% | <3% |
-| Memory Savings | 80% | ~83% |
-
-## Key Decisions Made
-
-1. **Library Selection:** botirk38/turboquant (Zig) vs arozanov/turboquant-mlx (Python)
-   - Result: 10x effort reduction (40h → 4h)
-
-2. **Integration Strategy:** Git submodule vs build.zig.zon
-   - Result: Submodule for complex internal dependencies
-
-3. **Bridge Architecture:** CPU-side conversion
-   - Rationale: MLX C API v0.1.2 limitations
-   - Trade-off: Copy overhead vs implementation complexity
-
-4. **Engine Caching:** Per-dimension engine reuse
-   - Benefit: Amortizes TurboQuant Engine.init() cost
-
-## Research Artifacts
-
-- **07-01-SUMMARY.md:** Feasibility spike (Python analysis)
-- **07-02-SUMMARY.md:** Integration completion (this update)
-- `src/compression/RESEARCH.md` — TurboQuant algorithm details
-
-## Next Steps
-
-### Phase 08: Speculative Decoding
-
-**Goal:** Speed up inference by 1.5-2.8x using draft model speculation
-**Status:** ✅ PLANNED — Ready for execution
-
-**Plan 08-01:** Comprehensive speculative decoding implementation
-
-- SpeculativeGenerator with full algorithm (draft generation → verification → acceptance)
-- DraftSelector with automatic selection and user override support
-- DraftModel management (loading, caching, lifecycle)
-- Metrics collection (acceptance rate, speedup estimate)
-- CLI flags: --draft-model, --speculation-depth, --no-speculation
-- Integration with existing GenerationState for seamless fallback
-
-**Expected Speedup:**
-
-- Qwen 7B + Qwen 1.5B draft: 2.0-2.8x
-- Qwen 7B + Qwen 0.5B draft: 1.5-2.0x
-- Depends on speculation depth (default 4) and acceptance rate
-
-**Decision:** Speculative decoding planned as next priority after TurboQuant success. Plan addresses PERF-04 requirements completely.
-
-## Phase 09: Production Hardening
-
-**Status:** 📝 PLANNED — Ready to execute
-
-**Goal:** Final production readiness including stress testing, performance validation, and documentation completion.
-
-**Planned Plans:**
-
-- 09-01: Production validation and stress testing
-- 09-02: Documentation finalization
-
----
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260405-bev | Fix Zig version references update to 0.15.2 and pin in CLAUDE.md | 2026-04-05 | d784f23 | [260405-bev-fix-zig-version-references-update-to-0-1](./quick/260405-bev-fix-zig-version-references-update-to-0-1/) |
 
 ## Session Continuity
 
-Last session: 2026-04-02T16:03:00.000Z
-Stopped at: Phase 08 Complete — Speculative Decoding Implementation
-Resume file: None
-
-## Completion Checklist
-
-Phase 07:
-
-- [x] botirk38/turboquant integrated as dependency
-- [x] MLX bridge for array conversion implemented
-- [x] TurboQuantEngine wrapper with caching
-- [x] KvCompressor wired to real TurboQuant
-- [x] CLI flags updated (removed warnings)
-- [x] Build passes all tests
-- [x] Documentation updated
-- [x] STATE.md updated
-
-Phase 08:
-
-- [x] SpeculativeGenerator core algorithm implemented
-- [x] DraftSelector with automatic selection
-- [x] DraftModelManager with lifecycle management
-- [x] SpeculativeMetrics with atomic counters
-- [x] CLI flags for speculation control
-- [x] Integration with generation pipeline
-- [x] Documentation at docs/SPECULATIVE_DECODING.md
-- [x] README.md updated with speculation info
-- [x] Integration tests created
-- [x] STATE.md updated
+Last activity: 2026-04-05 - Phase 16 complete (build gap closure)
+Last session: 2026-04-08T01:12:05.863Z
+Stopped at: Completed 18-01-PLAN.md — Gemma 4 E4B handler implemented
+Resume: `/gsd:execute-phase 18`

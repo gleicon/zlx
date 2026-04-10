@@ -23,16 +23,16 @@
 ### Core Technologies
 | Technology | Version | Purpose | Why Recommended |
 |------------|---------|---------|-----------------|
-| Zig | 0.13.0 | Language / build system | PRD-mandated; MLX.zig explicitly targets 0.13.0. Do NOT use Zig master (0.14+) — MLX.zig and httpz zig-0.13 branch are not compatible with it yet. |
+| Zig | 0.15.2 | Language / build system | Installed at /opt/homebrew/bin/zig. Zig 0.15.2 is the pinned truth for this project. |
 | MLX.zig (jaco-bro/MLX.zig) | 0.0.0 (pre-release, pinned to submodule commit) | LLM inference runtime on Metal GPU | Provides Transformer.init/generate loop, tokenizer, Llama/Phi/Qwen model configs, and the mlx-c linkage. Already vendored as git submodule at `src/mlx.zig/`. |
 | mlx-c | v0.1.2 (pinned inside MLX.zig build.zig) | C API bridge between Zig's @cImport and the MLX C++ framework | MLX.zig's `build.zig` fetches `mlx-c-0.1.2.tar.gz` at build time via `curl`. Zig consumes `mlx/c/mlx.h` via `@cImport`. Upstream mlx-c is at v0.4.1 but MLX.zig pins 0.1.2 — do not upgrade independently. |
-| httpz (karlseguin/http.zig) | zig-0.13 branch (master targets Zig 0.15.1) | HTTP/1.1 server | Single dependency, zero native deps, ~140K req/s on M2, SSE support via `res.writer()`. Must use the `zig-0.13` branch archive URL, not master. |
+| httpz (karlseguin/http.zig) | master branch | HTTP/1.1 server | Single dependency, zero native deps, ~140K req/s on M2, SSE support via `res.writer()`. Use the master branch archive URL (already correct in build.zig.zon). |
 ### Supporting Libraries
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
 | pcre2 | 10.45 (via MLX.zig's build.zig.zon) | Regex for tokenizer | Pulled automatically as part of MLX.zig; no action required |
-| std.json | stdlib (Zig 0.13.0) | JSON parsing for request body, model config loading | Use for POST body deserialization and `config.json` / `tokenizer.json` loading |
-| std.http.Client | stdlib (Zig 0.13.0) | Model weight download (optional) | Only if implementing the model downloader; out of scope per PRD |
+| std.json | stdlib (Zig 0.15.2) | JSON parsing for request body, model config loading | Use for POST body deserialization and `config.json` / `tokenizer.json` loading |
+| std.http.Client | stdlib (Zig 0.15.2) | Model weight download (optional) | Only if implementing the model downloader; out of scope per PRD |
 ### Development Tools
 | Tool | Purpose | Notes |
 |------|---------|-------|
@@ -44,7 +44,7 @@
 ### MLX.zig — Tokenizer API
 ### MLX.zig — C Interop Pattern
 ### MLX.zig — Module Export Problem
-### httpz — Handler Pattern (zig-0.13 branch)
+### httpz — Handler Pattern (master branch)
 ## TurboQuant — Critical Finding: PRD Assumption Is Wrong
 - Repository language: Python only (no C++, no C headers, no `.metal` files to link)
 - Metal kernel source strings are embedded in Python via `mx.fast.metal_kernel()` (MLX's JIT kernel API)
@@ -57,7 +57,7 @@
 | Defer TurboQuant entirely from MVP | Low | HIGH | Correct scope given complexity |
 | Use a Python sidecar process for TurboQuant compression, communicate via IPC | Very High | MEDIUM | Defeats the "no Python" requirement |
 ## Installation / Build Setup
-# Zig 0.13.0 required -- verify:
+# Zig 0.15.2 required -- verify:
 # CMake required for mlx-c build:
 # Xcode CLI tools for Metal:
 # Init submodule (already done per PROJECT.md):
@@ -67,27 +67,25 @@
 ## Alternatives Considered
 | Recommended | Alternative | When to Use Alternative |
 |-------------|-------------|-------------------------|
-| httpz zig-0.13 branch | httpz master | Only when project upgrades to Zig 0.14+ |
-| httpz zig-0.13 branch | std.http.Server (Zig stdlib) | Never for this project — 10-100x slower, no routing, no SSE helpers |
-| httpz zig-0.13 branch | zap (facil.io wrapper) | If needing HTTP/2 or TLS termination — overkill for local single-user server |
+| httpz master branch | httpz master | N/A — master branch is already in use |
+| httpz master branch | std.http.Server (Zig stdlib) | Never for this project — 10-100x slower, no routing, no SSE helpers |
+| httpz master branch | zap (facil.io wrapper) | If needing HTTP/2 or TLS termination — overkill for local single-user server |
 | MLX.zig submodule | mlx-c directly | Only if MLX.zig's generate loop needs to be replaced (streaming) |
 | mlx-c v0.1.2 (via MLX.zig) | mlx-c v0.4.1 | Only if custom ops API is needed for TurboQuant — breaks MLX.zig pin |
 ## What NOT to Use
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| httpz `master` branch | Targets Zig 0.15.1; incompatible with Zig 0.13.0 | httpz `zig-0.13` branch |
 | Python MLX runtime | PRD explicitly excludes Python in the final binary | MLX.zig + mlx-c C bindings |
 | CMake in final binary | Build artifact only; CMake is only needed to compile libmlxc.a | CMake runs at `zig build` time, not at runtime |
 | arozanov/turboquant-mlx directly | 100% Python; no C/C++ API to bind | Defer TurboQuant, or write C++ wrapper as a future milestone |
-| Zig 0.14+ or Zig master | MLX.zig targets 0.13.0; breaking changes in build API | Stay on Zig 0.13.0 until MLX.zig updates |
 | `b.dependency("mlx").module("mlx")` | MLX.zig does not export a named module — call will panic at build time | Directly include MLX.zig source files and replicate `configureExecutable` linkage |
 ## Version Compatibility
 | Package | Compatible With | Notes |
 |---------|-----------------|-------|
-| Zig 0.13.0 | MLX.zig 0.0.0, httpz zig-0.13 branch, pcre2-10.45 | Lock this combination; do not upgrade any piece without testing the others |
+| Zig 0.15.2 | MLX.zig 0.0.0, httpz master branch, pcre2-10.45 | This combination is verified working. build.zig.zon pins httpz master. |
 | mlx-c v0.1.2 | MLX.zig 0.0.0 | MLX.zig fetches this exact version at build time via curl |
 | mlx-c v0.4.1 (upstream current) | NOT compatible with MLX.zig 0.0.0 as-is | Header and API changes between 0.1.2 and 0.4.1 |
-| httpz master | Zig 0.15.1 only | Do not use with Zig 0.13.0 |
+| httpz master | Zig 0.15.2 | In use — correct branch |
 ## Open Build Issues (Must Resolve)
 ## Sources
 - `/Users/gleicon/code/zig/zlx/src/mlx.zig/src/mlx.zig` — MLX.zig source (Transformer generic, C binding pattern, mlx-c types) — HIGH confidence
@@ -95,7 +93,7 @@
 - `/Users/gleicon/code/zig/zlx/src/mlx.zig/src/qwen.zig` — QwenTransformer test showing Transformer.init/generate API — HIGH confidence
 - `/Users/gleicon/code/zig/zlx/src/mlx.zig/build.zig` — mlx-c v0.1.2 pin, configureExecutable linkage (Metal/Foundation/etc) — HIGH confidence
 - `/Users/gleicon/code/zig/zlx/src/mlx.zig/build.zig.zon` — pcre2 dependency, no mlx-c in zon (fetched via curl in build.zig) — HIGH confidence
-- `https://github.com/karlseguin/http.zig/blob/zig-0.13/example/simple.zig` — httpz zig-0.13 routing/handler pattern — MEDIUM confidence (rendered, not raw)
+- `https://github.com/karlseguin/http.zig/blob/master/example/simple.zig` — httpz master routing/handler pattern — MEDIUM confidence (rendered, not raw)
 - `https://deepwiki.com/karlseguin/http.zig/1.1-getting-started` — httpz Server(H).init, res.writer(), listen() — MEDIUM confidence
 - `https://github.com/arozanov/turboquant-mlx` — "Language: 100% Python", no C headers — HIGH confidence (confirms PRD assumption is wrong)
 - `https://ml-explore.github.io/mlx-c/build/html/overview.html` — mlx-c C API overview (mlx_array, mlx_stream, constructor/free pattern) — MEDIUM confidence
@@ -127,6 +125,77 @@ Do not make direct repo edits outside a GSD workflow unless the user explicitly 
 <!-- GSD:workflow-end -->
 
 
+
+<!-- GSD:learnings-start -->
+## Key Learnings from Development (Updated: 2025-01-10)
+
+### 1. Model Architecture Assumptions Are Dangerous
+**Context:** Gemma 4 E4B implementation loop  
+**Learning:** Not all models fit the standard Transformer pattern (embed → layers → norm → head)
+
+Gemma 4 uses Per-Layer Embeddings (PLE):
+- Separate 256-dim embedding per layer (42 layers × 256 = 10,752 dims total)
+- Per-layer gating, projection, and normalization
+- Cannot use standard `Transformer(embed, hidden, layers)` pattern
+
+**Impact:** 3+ days spent, still not working. Need dedicated PLE architecture implementation.
+
+### 2. MLX C Bindings Are The Bottleneck
+**Problem:** Every MLX feature requires manual C bindings  
+**Examples:**
+- New RoPE variant → need C header update
+- New attention mask → need binding declaration
+- Error handling → manual C error code translation
+
+**Alternative considered:** Swift MLX has direct `import MLX` with no bindings needed.
+
+### 3. Weight Loading Complexity
+**Issue:** Model files have inconsistent conventions:
+- Key prefixes (`language_model.`, `model.`)
+- Per-tensor quantization scales/biases
+- Different naming per model family (Gemma vs Qwen vs Llama)
+
+**Current hack:** Regex-based prefix stripping in `loadSafetensors()`
+**Need:** Proper abstraction for model-specific weight loading strategies
+
+### 4. Quantization + Special Architectures = Problems
+**Finding:** Standard quantization breaks PLE layers (ScaledLinear)
+- PLE layers multiply by learned scalar
+- Quantization error gets amplified by scalar
+- Solution: Keep PLE in bf16, quantize only attention/MLP
+
+**Resource:** FakeRocket543's PLE-safe weights work correctly.
+
+### 5. Swift vs Zig Decision Looms
+**Current (Zig):**
+- ✅ Working for Qwen, GPT-OSS
+- ✅ Single binary, `zig build`
+- ✅ Fine-grained memory control
+- ❌ Manual bindings forever
+- ❌ PLE takes 3-5 days to implement
+
+**Alternative (Swift):**
+- ✅ Native `import MLX` (no bindings)
+- ✅ Gemma 4 works today via mlx-swift-models
+- ✅ Better debugging (Xcode, LLDB)
+- ❌ Full rewrite (1-2 weeks)
+- ❌ Lose TurboQuant, prompt cache (temporarily)
+
+**Decision needed:** See ARCHITECTURE_ANALYSIS.md for full comparison
+
+### 6. Recommendation: Better Abstractions Needed
+Current coupling is too tight:
+```
+HTTP → Registry → MLX.zig → C bindings → MLX → Metal
+```
+
+Desired:
+```
+HTTP → Model Interface → Tensor Backend (MLX/Swift/Other)
+```
+
+**Need:** Clean separation between HTTP API and inference engine.
+<!-- GSD:learnings-end -->
 
 <!-- GSD:profile-start -->
 ## Developer Profile

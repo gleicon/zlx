@@ -11,6 +11,8 @@ const inference = @import("../inference/mod.zig");
 const models_mod = @import("../models/mod.zig");
 const manager_mod = @import("../models/manager.zig");
 const prompt_cache = @import("../cache/prompt_cache.zig");
+const templates = @import("../chat/templates.zig");
+const model_registry = @import("../models/registry.zig");
 
 /// Global inference context - initialized at server startup
 pub var global_context: ?*inference.InferenceContext = null;
@@ -230,9 +232,17 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         }
     }
 
-    // Build prompt from messages
-    const prompt = try types.buildPromptFromMessages(ctx.allocator, request.messages);
+    // Build prompt from messages using model-specific template
+    const arch = detectModelArchitecture(request.model);
+    const prompt = try templates.formatChatByArchitecture(ctx.allocator, arch, request.messages);
     defer ctx.allocator.free(prompt);
+
+    // Log template selection for debugging
+    std.log.info("[{s}] Using {s} chat template for model: {s}", .{
+        request_id,
+        @tagName(arch),
+        request.model,
+    });
 
     // Create generation options
     const gen_options = inference.GenerationOptions{
@@ -249,17 +259,16 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         .logprobs_enabled = request.logprobs orelse false,
     };
 
-    // Generate cache key and check cache (if enabled)
-    const cache_hit = false; // Placeholder - actual cache integration in generation layer
+    // Generate cache key (if cache enabled)
+    var cache_key_obj: ?prompt_cache.CacheKey = null;
     const cache_key: ?[]const u8 = blk: {
         if (prompt_cache.getGlobalCache()) |cache| {
-            // Get model identifier from context
             const model_name = std.fs.path.basename(ctx.model_path);
-            // Use model path as hash since it's unique
             const key = cache.generateKey(model_name, ctx.model_path, prompt, gen_options) catch |err| {
                 std.log.warn("[{s}] Failed to generate cache key: {s}", .{ request_id, @errorName(err) });
                 break :blk null;
             };
+            cache_key_obj = key;
             const key_str = try ctx.allocator.dupe(u8, key.slice());
             break :blk key_str;
         }
@@ -267,9 +276,8 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
     };
     defer if (cache_key) |key| ctx.allocator.free(key);
 
-    // Log cache status for debugging
     if (cache_key) |key| {
-        std.log.debug("[{s}] Cache key: {s}, hit: {s}", .{ request_id, key, if (cache_hit) "true" else "false" });
+        std.log.debug("[{s}] Cache key: {s}, hit: false", .{ request_id, key });
     }
 
     // Generate with timeout
@@ -293,6 +301,20 @@ fn handleNonStreamingRequest(res: anytype, request: types.ChatCompletionRequest,
         std.log.warn("[{s}] Request timed out", .{request_id});
         try sendTimeoutError(res, "Request exceeded timeout limit", request_id);
         return;
+    }
+
+    // Save generation result to prompt cache (if enabled and key available)
+    if (cache_key_obj) |key| {
+        if (prompt_cache.getGlobalCache()) |cache| {
+            const file_path = try std.fs.path.join(ctx.allocator, &.{ cache.cache_dir, "entries", key.slice() });
+            defer ctx.allocator.free(file_path);
+            std.fs.cwd().writeFile(.{ .sub_path = file_path, .data = timeout_result.result.text }) catch |err| {
+                std.log.warn("[{s}] Cache write failed: {s}", .{ request_id, @errorName(err) });
+            };
+            cache.save(key, file_path, timeout_result.result.text.len) catch |err| {
+                std.log.warn("[{s}] Cache index update failed: {s}", .{ request_id, @errorName(err) });
+            };
+        }
     }
 
     // Build and send the response
@@ -397,19 +419,56 @@ pub fn handleListModels(req: anytype, res: anytype) !void {
 
 /// Determine architecture string from model configuration
 fn determineArchitecture(config: *const @import("../models/registry.zig").ConfigInfo) []const u8 {
-    // Estimate parameters to guess architecture
-    const params = config.estimateParameterCount();
+    // Use the registry's architecture detection which properly checks model_type
+    const arch = @import("../models/registry.zig").detectArchitecture(config);
+    return switch (arch) {
+        .deepseek_v2_moe => "deepseek_v2_moe",
+        .deepseek_v1 => "deepseek_v1",
+        .qwen => "qwen",
+        .llama => "llama",
+        .phi => "phi",
+        .gpt_oss => "gpt_oss",
+        .gemma4 => "gemma4",
+        .unknown => "unknown",
+    };
+}
 
-    // Rough parameter-based detection (config would be better but we don't have model type here)
-    if (params < 3_000_000_000) {
-        // Small models often use Qwen architecture
-        return "qwen";
-    } else if (params < 10_000_000_000) {
-        // Medium models could be Qwen, Llama, or Phi
-        return "qwen"; // Default guess
-    } else {
-        return "qwen";
+/// Detect model architecture from model name
+fn detectModelArchitecture(model_name: []const u8) templates.ModelArchitecture {
+    // Check for DeepSeek models
+    if (std.mem.indexOf(u8, model_name, "deepseek") != null) {
+        if (std.mem.indexOf(u8, model_name, "v2") != null or
+            std.mem.indexOf(u8, model_name, "coder-v2") != null)
+        {
+            return .deepseek_v2_moe;
+        }
+        return .deepseek_v2_moe; // Default DeepSeek to V2 MoE
     }
+
+    // Check for Qwen models
+    if (std.mem.indexOf(u8, model_name, "qwen") != null) {
+        return .qwen;
+    }
+
+    // Check for Llama models
+    if (std.mem.indexOf(u8, model_name, "llama") != null) {
+        return .llama;
+    }
+
+    // Check for Phi models
+    if (std.mem.indexOf(u8, model_name, "phi")) |_| {
+        return .phi;
+    }
+
+    // Check for Gemma 4 models
+    if (std.mem.indexOf(u8, model_name, "gemma4") != null or
+        std.mem.indexOf(u8, model_name, "gemma-4") != null)
+    {
+        return .gemma4;
+    }
+
+    // Default to Qwen (most common in this codebase)
+    return .qwen;
 }
 
 /// Handle POST /v1/models/load - Start background model load
