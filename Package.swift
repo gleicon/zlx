@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "ZLXServer",
+    name: "ZLX",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.20.0"),
@@ -16,14 +16,27 @@ let package = Package(
             dependencies: [
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-
+            path: "Sources/ZLXServer",
             swiftSettings: [
                 .unsafeFlags(["-enable-experimental-feature", "StrictConcurrency"]),
                 .define("SWIFT_PACKAGE"),
             ]
-        )
+        ),
+        .executableTarget(
+            name: "ZLXApp",
+            dependencies: [
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+            ],
+            path: "Sources/ZLXApp",
+            swiftSettings: [
+                .define("SWIFT_PACKAGE"),
+            ]
+        ),
     ]
 )

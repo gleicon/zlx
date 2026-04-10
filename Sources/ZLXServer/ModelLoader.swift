@@ -1,51 +1,50 @@
 import Foundation
 import MLX
-import MLXLMCommon
-import Hub
+@preconcurrency import MLXLMCommon
 
 /// Loads models using MLXLMCommon
 public struct ModelLoader {
-    
+
     /// Load a model from HuggingFace ID
     public static func load(
         modelId: String,
         maxKVSize: Int = 4096
     ) async throws -> ZLXModelContainer {
-        let registry = await ModelRegistry.shared
-        
+        let registry = ModelRegistry.shared
+
         // Resolve alias
-        let resolvedId = await registry.resolveAlias(modelId)
-        
-        guard let modelInfo = await registry.getModel(id: resolvedId) else {
+        let resolvedId = registry.resolveAlias(modelId)
+
+        guard let modelInfo = registry.getModel(id: resolvedId) else {
             throw ModelError.unknownModel(modelId)
         }
-        
+
         // Check if already loaded
-        if await registry.isLoaded(id: resolvedId) {
-            if let cached = await registry.getZLXModel(id: resolvedId) {
+        if registry.isLoaded(id: resolvedId) {
+            if let cached = registry.getZLXModel(id: resolvedId) {
                 return cached
             }
         }
-        
-        print("Loading model: \(modelInfo.name)...")
-        
+
+        print("[ZLX] Loading model: \(modelInfo.name)")
+
         // Load using MLXLMCommon's global loadModelContainer function
         do {
             let mlxContainer = try await loadModelContainer(id: modelInfo.id)
-            
+
             let container = ZLXModelContainer(
                 info: modelInfo,
                 container: mlxContainer
             )
-            
+
             // Store in registry
-            await registry.storeLoadedModel(id: resolvedId, model: container)
-            
-            print("✅ Model loaded: \(modelInfo.name)")
+            registry.storeLoadedModel(id: resolvedId, model: container)
+
+            print("[ZLX] Model loaded successfully: \(modelInfo.name)")
             return container
-            
+
         } catch {
-            print("❌ Failed to load model: \(error)")
+            print("[ZLX] Failed to load model: \(error)")
             throw ModelError.failedToLoad(error.localizedDescription)
         }
     }
