@@ -1,0 +1,15 @@
+{
+  "model": "openai/gpt-oss-20b",
+  "server": {
+    "baseUrl": "http://127.0.0.1:8081/v1"
+  }
+}
+
+{
+  "model": "/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx",
+  "server": {
+    "baseUrl": "http://127.0.0.1:8081/v1"
+  }
+}
+
+

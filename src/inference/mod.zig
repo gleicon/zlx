@@ -6,6 +6,7 @@ const std = @import("std");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
 const deepseek = @import("../deepseek.zig");
+const gemma4 = @import("../mlx.zig/src/gemma4.zig");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 
 // Maximum total context length to prevent memory exhaustion
@@ -22,7 +23,8 @@ pub const Tokenizer = mlx_tokenizer.Tokenizer;
 pub const ModelInfo = loader.ModelInfo;
 pub const ModelType = loader.ModelType;
 pub const LoadError = loader.LoadError;
-pub const GenerationState = generator.GenerationState;
+// GenerationState is now generic - use GenerationState(TransformerType)
+// pub const GenerationState = generator.GenerationState;
 pub const GenerationOptions = generator.GenerationOptions;
 pub const Token = generator.Token;
 pub const LogprobEntry = generator.LogprobEntry;
@@ -241,6 +243,63 @@ pub const InferenceContext = struct {
         // Initialize transformer based on model type
         // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
         switch (self.model_type) {
+            .gemma4 => {
+                // Gemma 4 uses its own transformer with sliding window attention
+                var transformer = try gemma4.Transformer.init(self.allocator, self.model_path);
+                defer transformer.deinit();
+
+                // Update options with adjusted max_tokens
+                var gen_options = options;
+                gen_options.max_tokens = max_new_tokens;
+
+                // Initialize generation state with Gemma4 transformer type
+                var state = try generator.GenerationState(gemma4.Transformer).init(
+                    self.allocator,
+                    &transformer,
+                    input_tokens,
+                    self.getEosTokenIds(),
+                    gen_options,
+                    &self.tokenizer.?,
+                );
+                defer state.deinit();
+
+                // Collect tokens with timeout checking
+                var output_tokens = std.ArrayList(u32).empty;
+                errdefer output_tokens.deinit(self.allocator);
+
+                while (try state.next()) |token| {
+                    try output_tokens.append(self.allocator, token);
+
+                    const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
+                    if (elapsed >= timeout_ms) {
+                        std.log.warn("Generation timed out after {d}ms, returning partial result", .{elapsed});
+                        timed_out = true;
+                        state.setStopReason(.timeout);
+                        break;
+                    }
+                }
+
+                const text = try tokenizer_ref.decode(output_tokens.items);
+                const logprobs = if (options.logprobs_enabled) state.getLogprobs() else null;
+
+                var stop_reason = state.getStopReason();
+                if (timed_out) stop_reason = .timeout;
+
+                const result = GenerationResult{
+                    .text = text,
+                    .logprobs = logprobs,
+                    .prompt_tokens = @intCast(input_tokens.len),
+                    .completion_tokens = @intCast(output_tokens.items.len),
+                    .stop_reason = stop_reason,
+                };
+
+                self.allocator.free(input_tokens);
+
+                return TimeoutResult{
+                    .result = result,
+                    .timed_out = timed_out,
+                };
+            },
             else => {
                 // Qwen and other models use standard MLX loader
                 var transformer = try qwen.Transformer.init(self.allocator, self.model_path);
@@ -250,8 +309,8 @@ pub const InferenceContext = struct {
                 var gen_options = options;
                 gen_options.max_tokens = max_new_tokens;
 
-                // Initialize generation state
-                var state = try generator.GenerationState.init(
+                // Initialize generation state with Qwen transformer type
+                var state = try generator.GenerationState(qwen.Transformer).init(
                     self.allocator,
                     &transformer,
                     input_tokens,
@@ -372,7 +431,7 @@ pub fn generateWithLogprobs(
 
     // Initialize generation state
     // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
-    var state = try generator.GenerationState.init(
+    var state = try generator.GenerationState(qwen.Transformer).init(
         allocator,
         transformer,
         input_tokens,

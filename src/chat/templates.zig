@@ -12,6 +12,7 @@ pub const ModelArchitecture = enum {
     llama,
     phi,
     deepseek_v2_moe,
+    gemma4,
     unknown,
 };
 
@@ -149,6 +150,39 @@ pub fn formatLlamaChat(allocator: std.mem.Allocator, messages: []const types.Mes
     return result.toOwnedSlice(allocator);
 }
 
+/// Format messages using Gemma 4 chat template
+/// Format: <|turn>user\nMessage<turn|><|turn>model<turn|>
+/// Tokens: sot="<|turn>", eot="<turn|>"
+fn formatGemma4Chat(allocator: std.mem.Allocator, messages: []const types.Message) ![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
+
+    // Gemma 4 uses "model" instead of "assistant"
+    for (messages) |msg| {
+        const role = switch (msg.role) {
+            .assistant => "model",
+            else => @tagName(msg.role),
+        };
+
+        // Format: <|turn>{role}\n{content}<turn|>
+        try result.appendSlice(allocator, "<|turn>");
+        try result.appendSlice(allocator, role);
+        try result.appendSlice(allocator, "\n");
+        try result.appendSlice(allocator, msg.content.text);
+        try result.appendSlice(allocator, "<turn|>");
+    }
+
+    // Add generation prompt for model
+    const last_was_user = messages.len > 0 and messages[messages.len - 1].role == .user;
+    if (last_was_user) {
+        // Format: <|turn>model<turn|>
+        // No channel/no-think tokens - just start generating
+        try result.appendSlice(allocator, "<|turn>model<turn|>");
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
 /// Select and apply appropriate template based on model architecture
 pub fn formatChatByArchitecture(
     allocator: std.mem.Allocator,
@@ -159,6 +193,7 @@ pub fn formatChatByArchitecture(
         .deepseek_v2_moe => formatDeepSeekChat(allocator, messages),
         .qwen => formatQwenChat(allocator, messages),
         .llama => formatLlamaChat(allocator, messages),
+        .gemma4 => formatGemma4Chat(allocator, messages),
         .phi, .unknown => formatQwenChat(allocator, messages), // Default to Qwen format
     };
 }

@@ -244,7 +244,7 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
             if (config.turboquant_adaptive > 32) {
                 std.log.warn("Adaptive layers >32 seems high, but accepting value: {d}", .{config.turboquant_adaptive});
             }
-        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+            // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
         } else if (std.mem.eql(u8, arg, "--list-models")) {
             // List available model shortcuts and exit
             download.listKnownModels();
@@ -274,9 +274,37 @@ fn parseArgs(allocator: std.mem.Allocator) !Config {
 
             // Check if it's a HuggingFace ID (contains /) or local path
             if (std.mem.indexOf(u8, resolved_name, "/")) |_| {
-                // HuggingFace ID - for now use as-is (download manager will handle)
-                config.model_path = try allocator.dupe(u8, resolved_name);
-                std.log.info("Model resolved from '{s}' to HuggingFace ID: {s}", .{ name, resolved_name });
+                // HuggingFace ID - first check if model exists under the original alias name
+                const alias_path = try std.fmt.allocPrint(allocator, "./models/{s}", .{name});
+
+                // Check if model exists under alias name first
+                if (std.fs.cwd().access(alias_path, .{})) {
+                    // Found under alias name
+                    config.model_path = alias_path;
+                    std.log.info("Model resolved from '{s}' to local path: {s} (via alias)", .{ name, alias_path });
+                    return config;
+                } else |_| {
+                    // Not found under alias, try repo name from HF ID
+                    allocator.free(alias_path);
+                }
+
+                // Extract repo name from HF ID and check
+                const slash_pos = std.mem.lastIndexOf(u8, resolved_name, "/").?;
+                const repo_name = resolved_name[slash_pos + 1 ..];
+                const local_path = try std.fmt.allocPrint(allocator, "./models/{s}", .{repo_name});
+
+                // Check if model exists locally
+                std.fs.cwd().access(local_path, .{}) catch {
+                    // Not found locally, use HF ID as-is (download manager will handle)
+                    allocator.free(local_path);
+                    config.model_path = try allocator.dupe(u8, resolved_name);
+                    std.log.info("Model resolved from '{s}' to HuggingFace ID: {s} (not found locally)", .{ name, resolved_name });
+                    return config;
+                };
+
+                // Found locally, use local path
+                config.model_path = local_path;
+                std.log.info("Model resolved from '{s}' to local path: {s}", .{ name, local_path });
             } else {
                 // Local path
                 config.model_path = try std.fmt.allocPrint(allocator, "./models/{s}", .{resolved_name});

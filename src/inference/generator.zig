@@ -6,6 +6,7 @@
 const std = @import("std");
 const mlx = @import("../mlx.zig/src/mlx.zig");
 const qwen = @import("../mlx.zig/src/qwen.zig");
+const gemma4 = @import("../mlx.zig/src/gemma4.zig");
 const mlx_tokenizer = @import("../mlx.zig/src/tokenizer.zig");
 // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 const backends = @import("../backends/mod.zig");
@@ -111,773 +112,793 @@ pub const GenerationOptions = struct {
 };
 
 /// State machine for token generation
-pub const GenerationState = struct {
-    const Self = @This();
+// GenerationState is generic over transformer type
+// Supports qwen.Transformer, gemma4.Transformer, etc.
+pub fn GenerationState(comptime TransformerType: type) type {
+    return struct {
+        const Self = @This();
 
-    // Core MLX components
-    allocator: std.mem.Allocator,
-    transformer: ?*qwen.Transformer = null,
-    cache: ?*mlx.Cache = null,
-
-    // Generation state
-    tokens_generated: usize = 0,
-    max_tokens: usize,
-    current_tokens: std.ArrayList(u32),
-    is_complete: bool = false,
-    eos_token_ids: []const u32,
-    stop_reason: StopReason = .eos,
-
-    // MLX arrays (managed)
-    toks_array: mlx.Array,
-    logits_array: mlx.Array,
-    mask_array: mlx.Array,
-
-    // Generation parameters
-    options: GenerationOptions,
-
-    // PCG32 RNG for deterministic sampling (API-05)
-    rng: ?Pcg32Rng = null,
-
-    // Logprobs tracking (API-02)
-    logprobs_buffer: std.ArrayList(LogprobEntry),
-
-    // Tokenizer reference for decoding tokens to strings
-    tokenizer: ?*mlx_tokenizer.Tokenizer = null,
-
-    // Stop sequence detection (API-01)
-    /// Buffer to accumulate decoded text for stop sequence checking
-    decoded_text_buffer: std.ArrayList(u8),
-    /// Tokens since last decode (to batch decode operations)
-    tokens_since_decode: std.ArrayList(u32),
-    /// Final decoded text without stop sequence (when stopped by stop sequence)
-    final_decoded_text: ?[]const u8 = null,
-
-    /// Tracks if prompt has been processed through forward pass (for caching)
-    prompt_processed: bool = false,
-
-    /// Tracks if cache is owned by this GenerationState (false if restored from cache)
-    owns_cache: bool = true,
-
-    // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
-
-    /// Initialize generation state with a transformer and initial tokens
-    pub fn init(
+        // Core MLX components
         allocator: std.mem.Allocator,
-        transformer: *qwen.Transformer,
-        initial_tokens: []const u32,
+        transformer: ?*TransformerType = null,
+        cache: ?*mlx.Cache = null,
+
+        // Generation state
+        tokens_generated: usize = 0,
+        max_tokens: usize,
+        current_tokens: std.ArrayList(u32),
+        is_complete: bool = false,
         eos_token_ids: []const u32,
+        stop_reason: StopReason = .eos,
+
+        // MLX arrays (managed)
+        toks_array: mlx.Array,
+        logits_array: mlx.Array,
+        mask_array: mlx.Array,
+
+        // Generation parameters
         options: GenerationOptions,
-        tokenizer: ?*mlx_tokenizer.Tokenizer,
-    ) !Self {
-        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
-        // Standard initialization
-        // Initialize MLX arrays
-        const toks_array = blk: {
-            // Create initial tokens array [1, seq_len]
-            const toks_data = try allocator.dupe(u32, initial_tokens);
-            defer allocator.free(toks_data);
 
-            break :blk try mlx.arrayNewData(toks_data.ptr, .{ 1, @as(c_int, @intCast(initial_tokens.len)) }, mlx.UINT32);
-        };
+        // PCG32 RNG for deterministic sampling (API-05)
+        rng: ?Pcg32Rng = null,
 
-        // Allocate KV cache on heap so we can pass a stable pointer
-        const cache = try allocator.create(mlx.Cache);
-        errdefer allocator.destroy(cache);
-        cache.* = try mlx.Cache.init(allocator, transformer.model.layers.len, 2);
+        // Logprobs tracking (API-02)
+        logprobs_buffer: std.ArrayList(LogprobEntry),
 
-        return Self{
-            .allocator = allocator,
-            .transformer = transformer,
-            .cache = cache,
-            .tokens_generated = 0,
-            .max_tokens = options.max_tokens,
-            .current_tokens = .empty,
-            .is_complete = false,
-            .eos_token_ids = eos_token_ids,
-            .toks_array = toks_array,
-            .logits_array = mlx.arrayNew(),
-            .mask_array = mlx.arrayNew(),
-            .options = options,
-            .logprobs_buffer = .empty,
-            .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
-            .decoded_text_buffer = .empty,
-            .tokens_since_decode = .empty,
-            .tokenizer = tokenizer,
-            .prompt_processed = false,
-            .owns_cache = true,
-        };
-    }
+        // Tokenizer reference for decoding tokens to strings
+        tokenizer: ?*mlx_tokenizer.Tokenizer = null,
 
-    /// Initialize generation state with a cached KV state (skips prompt processing)
-    /// Used when prompt cache hit occurs - cache already contains processed prompt state
-    pub fn initWithCache(
-        allocator: std.mem.Allocator,
-        transformer: *qwen.Transformer,
-        restored_cache: *mlx.Cache, // Pre-loaded from cache
-        prompt_tokens: []const u32, // Already processed, just for tracking
-        eos_token_ids: []const u32,
-        options: GenerationOptions,
-        tokenizer: ?*mlx_tokenizer.Tokenizer,
-    ) !Self {
-        // Create single token array for generation (not full prompt)
-        // The restored cache already contains the prompt state
-        const toks_array = blk: {
-            // Use last token of prompt for first generation step
-            const last_token = if (prompt_tokens.len > 0) prompt_tokens[prompt_tokens.len - 1] else 0;
-            const single_token = [_]u32{last_token};
-            break :blk try mlx.arrayNewData(&single_token, .{ 1, 1 }, mlx.UINT32);
-        };
+        // Stop sequence detection (API-01)
+        /// Buffer to accumulate decoded text for stop sequence checking
+        decoded_text_buffer: std.ArrayList(u8),
+        /// Tokens since last decode (to batch decode operations)
+        tokens_since_decode: std.ArrayList(u32),
+        /// Final decoded text without stop sequence (when stopped by stop sequence)
+        final_decoded_text: ?[]const u8 = null,
 
-        return Self{
-            .allocator = allocator,
-            .transformer = transformer,
-            .cache = restored_cache, // Use restored cache (owned by caller, not freed here)
-            .tokens_generated = 0,
-            .max_tokens = options.max_tokens,
-            .current_tokens = .empty,
-            .is_complete = false,
-            .eos_token_ids = eos_token_ids,
-            .toks_array = toks_array,
-            .logits_array = mlx.arrayNew(),
-            .mask_array = mlx.arrayNew(),
-            .options = options,
-            .logprobs_buffer = .empty,
-            .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
-            .decoded_text_buffer = .empty,
-            .tokens_since_decode = .empty,
-            .tokenizer = tokenizer,
-            .prompt_processed = true, // Prompt already processed (in cached state)
-            .owns_cache = false, // Cache is owned by caller (prompt cache)
-        };
-    }
+        /// Tracks if prompt has been processed through forward pass (for caching)
+        prompt_processed: bool = false,
 
-    /// Deinitialize generation state and free resources
-    pub fn deinit(self: *Self) void {
-        // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
-
-        if (self.cache) |cache| {
-            // Only free cache if we own it (not restored from cache)
-            if (self.owns_cache) {
-                cache.deinit();
-                self.allocator.destroy(cache);
-            }
-        }
-
-        mlx.arrayFree(self.toks_array);
-        mlx.arrayFree(self.logits_array);
-        mlx.arrayFree(self.mask_array);
-
-        // Free logprobs buffer
-        for (self.logprobs_buffer.items) |*entry| {
-            entry.deinit(self.allocator);
-        }
-        self.logprobs_buffer.deinit(self.allocator);
-
-        // Free stop sequence detection buffers
-        self.decoded_text_buffer.deinit(self.allocator);
-        self.tokens_since_decode.deinit(self.allocator);
-        if (self.final_decoded_text) |text| {
-            self.allocator.free(text);
-        }
-
-        self.current_tokens.deinit(self.allocator);
-    }
-
-    /// Save the current KV cache state to the prompt cache.
-    /// Call this after prompt processing is complete (after first next() call).
-    /// Returns the file path where cache was saved, or null if caching is disabled.
-    pub fn saveCacheState(
-        self: *Self,
-        prompt_cache: anytype, // *PromptCache
-        key: anytype, // CacheKey
-        prompt_len: usize,
-    ) !?[]const u8 {
-        if (self.cache == null or !self.owns_cache) {
-            return null; // Nothing to save
-        }
-
-        // Generate cache file path
-        const cache_path = try prompt_cache.getCacheFilePath(key);
-        errdefer prompt_cache.allocator.free(cache_path);
-
-        // Get file size estimate based on cache state
-        const num_layers = self.cache.?.layers.len;
-        const estimated_size: u64 = @intCast(num_layers * prompt_len * 2 * 2 * 1024); // Rough estimate
-
-        // Save cache metadata (actual MLX array serialization handled by caller)
-        try prompt_cache.save(key, cache_path, estimated_size);
-
-        std.log.debug("Saved prompt cache to {s}", .{cache_path});
-        return cache_path;
-    }
-
-    /// Decode tokens to text using the tokenizer
-    fn decodeTokens(self: *Self, tokens: []const u32) ![]const u8 {
-        if (self.tokenizer) |tok| {
-            return try tok.decode(tokens);
-        }
-        return &[_]u8{}; // Return empty if no tokenizer
-    }
-
-    /// Generate the next token. Returns null when generation is complete.
-    pub fn next(self: *Self) !?Token {
-        if (self.is_complete or self.tokens_generated >= self.max_tokens) {
-            return null;
-        }
+        /// Tracks if cache is owned by this GenerationState (false if restored from cache)
+        owns_cache: bool = true,
 
         // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
-        const transformer = self.transformer.?;
-        const cache = self.cache.?;
+        /// Initialize generation state with a transformer and initial tokens
+        pub fn init(
+            allocator: std.mem.Allocator,
+            transformer: *TransformerType,
+            initial_tokens: []const u32,
+            eos_token_ids: []const u32,
+            options: GenerationOptions,
+            tokenizer: ?*mlx_tokenizer.Tokenizer,
+        ) !Self {
+            std.log.debug("GenerationState.init: START (initial_tokens.len={d})", .{initial_tokens.len});
 
-        // Create causal mask
-        const seq_len = mlx.arrayDim(self.toks_array, 1);
-        try mlx.createCausalMask(&self.mask_array, seq_len, cache.offset, transformer.mlx_config.dtype, transformer.mlx_config.stream);
+            // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+            // Standard initialization
+            // Initialize MLX arrays
+            std.log.debug("  Creating toks_array...", .{});
+            const toks_array = blk: {
+                // Create initial tokens array [1, seq_len]
+                const toks_data = try allocator.dupe(u32, initial_tokens);
+                defer allocator.free(toks_data);
 
-        // Forward pass through model
-        try transformer.model.forward(&self.logits_array, self.toks_array, self.mask_array, cache);
+                break :blk try mlx.arrayNewData(toks_data.ptr, .{ 1, @as(c_int, @intCast(initial_tokens.len)) }, mlx.UINT32);
+            };
+            std.log.debug("  toks_array created", .{});
 
-        // Take logits for last position: logits[:, -1, :]
-        var last_logits = mlx.arrayNew();
-        defer mlx.arrayFree(last_logits);
-        try mlx.take(&last_logits, self.logits_array, mlx.int(-1), 1, transformer.mlx_config.stream);
+            // Allocate KV cache on heap so we can pass a stable pointer
+            std.log.debug("  Creating KV cache (layers={d})...", .{transformer.model.layers.len});
+            const cache = try allocator.create(mlx.Cache);
+            errdefer allocator.destroy(cache);
+            cache.* = try mlx.Cache.init(allocator, transformer.model.layers.len, 2);
+            std.log.debug("  KV cache created", .{});
 
-        // Sample from the distribution
-        var next_token: Token = 0;
-
-        // Capture logprobs if enabled (before any sampling modifications)
-        var logprob_entry: ?LogprobEntry = null;
-        if (self.options.logprobs_enabled) {
-            // Get raw logits data for captureLogprobs
-            try mlx.arrayEval(last_logits);
-            const logits_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(last_logits)));
-            const vocab_size = @as(usize, @intCast(mlx.arrayDim(last_logits, 1)));
-
-            logprob_entry = try self.captureLogprobs(logits_data, vocab_size);
+            std.log.debug("  Building Self struct...", .{});
+            return Self{
+                .allocator = allocator,
+                .transformer = transformer,
+                .cache = cache,
+                .tokens_generated = 0,
+                .max_tokens = options.max_tokens,
+                .current_tokens = .empty,
+                .is_complete = false,
+                .eos_token_ids = eos_token_ids,
+                .toks_array = toks_array,
+                .logits_array = mlx.arrayNew(),
+                .mask_array = mlx.arrayNew(),
+                .options = options,
+                .logprobs_buffer = .empty,
+                .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
+                .decoded_text_buffer = .empty,
+                .tokens_since_decode = .empty,
+                .tokenizer = tokenizer,
+                .prompt_processed = false,
+                .owns_cache = true,
+            };
         }
 
-        if (self.options.temperature == 0) {
-            // D-18: Greedy selection — argmax on raw logits (before temperature/softmax)
-            var next_token_arr = mlx.arrayNew();
-            defer mlx.arrayFree(next_token_arr);
-            try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
-            try mlx.item(&next_token, next_token_arr);
-        } else {
-            // D-13, D-16, D-17: Complete sampling pipeline
-            // Pipeline: logits → logit_bias → penalties → top_k → min_p → temperature → softmax → sample
+        /// Initialize generation state with a cached KV state (skips prompt processing)
+        /// Used when prompt cache hit occurs - cache already contains processed prompt state
+        pub fn initWithCache(
+            allocator: std.mem.Allocator,
+            transformer: *qwen.Transformer,
+            restored_cache: *mlx.Cache, // Pre-loaded from cache
+            prompt_tokens: []const u32, // Already processed, just for tracking
+            eos_token_ids: []const u32,
+            options: GenerationOptions,
+            tokenizer: ?*mlx_tokenizer.Tokenizer,
+        ) !Self {
+            // Create single token array for generation (not full prompt)
+            // The restored cache already contains the prompt state
+            const toks_array = blk: {
+                // Use last token of prompt for first generation step
+                const last_token = if (prompt_tokens.len > 0) prompt_tokens[prompt_tokens.len - 1] else 0;
+                const single_token = [_]u32{last_token};
+                break :blk try mlx.arrayNewData(&single_token, .{ 1, 1 }, mlx.UINT32);
+            };
 
-            // Extract logits data from MLX array for CPU-side modifications
-            const vocab_size_c = mlx.arrayDim(last_logits, 1);
-            const vocab_size: usize = @intCast(vocab_size_c);
+            return Self{
+                .allocator = allocator,
+                .transformer = transformer,
+                .cache = restored_cache, // Use restored cache (owned by caller, not freed here)
+                .tokens_generated = 0,
+                .max_tokens = options.max_tokens,
+                .current_tokens = .empty,
+                .is_complete = false,
+                .eos_token_ids = eos_token_ids,
+                .toks_array = toks_array,
+                .logits_array = mlx.arrayNew(),
+                .mask_array = mlx.arrayNew(),
+                .options = options,
+                .logprobs_buffer = .empty,
+                .rng = if (options.seed) |seed| Pcg32Rng.init(seed) else null,
+                .decoded_text_buffer = .empty,
+                .tokens_since_decode = .empty,
+                .tokenizer = tokenizer,
+                .prompt_processed = true, // Prompt already processed (in cached state)
+                .owns_cache = false, // Cache is owned by caller (prompt cache)
+            };
+        }
 
-            // Get raw logits data pointer
-            try mlx.arrayEval(last_logits);
-            const logits_ptr: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(last_logits)));
+        /// Deinitialize generation state and free resources
+        pub fn deinit(self: *Self) void {
+            // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 
-            // Check if any sampling parameters are active
-            const has_logit_bias = self.options.logit_bias.count() > 0;
-            const has_penalties = self.options.presence_penalty != 0.0 or
-                self.options.frequency_penalty != 0.0 or
-                self.options.repetition_penalty != 1.0;
-            const has_top_k = self.options.top_k > 0 and self.options.top_k < vocab_size;
-            const has_min_p = self.options.min_p > 0.0 and self.options.min_p <= 1.0;
-            const needs_modifications = has_logit_bias or has_penalties or has_top_k or has_min_p;
-
-            var modified_logits = mlx.arrayNew();
-            defer mlx.arrayFree(modified_logits);
-
-            if (needs_modifications) {
-                // Create mutable copy of logits data for modifications
-                const logits_copy = try self.allocator.alloc(f32, vocab_size);
-                defer self.allocator.free(logits_copy);
-
-                // Copy logits data
-                for (0..@intCast(vocab_size)) |i| {
-                    logits_copy[i] = logits_ptr[i];
+            if (self.cache) |cache| {
+                // Only free cache if we own it (not restored from cache)
+                if (self.owns_cache) {
+                    cache.deinit();
+                    self.allocator.destroy(cache);
                 }
+            }
 
-                // D-17: Apply logit_bias first (priority)
-                if (has_logit_bias) {
-                    std.log.debug("Applying logit_bias to {d} tokens", .{self.options.logit_bias.count()});
-                    var bias_iter = self.options.logit_bias.iterator();
-                    while (bias_iter.next()) |entry| {
-                        const token_id = entry.key_ptr.*;
-                        const bias = entry.value_ptr.*;
-                        if (token_id < vocab_size) {
-                            logits_copy[token_id] += bias;
+            mlx.arrayFree(self.toks_array);
+            mlx.arrayFree(self.logits_array);
+            mlx.arrayFree(self.mask_array);
+
+            // Free logprobs buffer
+            for (self.logprobs_buffer.items) |*entry| {
+                entry.deinit(self.allocator);
+            }
+            self.logprobs_buffer.deinit(self.allocator);
+
+            // Free stop sequence detection buffers
+            self.decoded_text_buffer.deinit(self.allocator);
+            self.tokens_since_decode.deinit(self.allocator);
+            if (self.final_decoded_text) |text| {
+                self.allocator.free(text);
+            }
+
+            self.current_tokens.deinit(self.allocator);
+        }
+
+        /// Save the current KV cache state to the prompt cache.
+        /// Call this after prompt processing is complete (after first next() call).
+        /// Returns the file path where cache was saved, or null if caching is disabled.
+        pub fn saveCacheState(
+            self: *Self,
+            prompt_cache: anytype, // *PromptCache
+            key: anytype, // CacheKey
+            prompt_len: usize,
+        ) !?[]const u8 {
+            if (self.cache == null or !self.owns_cache) {
+                return null; // Nothing to save
+            }
+
+            // Generate cache file path
+            const cache_path = try prompt_cache.getCacheFilePath(key);
+            errdefer prompt_cache.allocator.free(cache_path);
+
+            // Get file size estimate based on cache state
+            const num_layers = self.cache.?.layers.len;
+            const estimated_size: u64 = @intCast(num_layers * prompt_len * 2 * 2 * 1024); // Rough estimate
+
+            // Save cache metadata (actual MLX array serialization handled by caller)
+            try prompt_cache.save(key, cache_path, estimated_size);
+
+            std.log.debug("Saved prompt cache to {s}", .{cache_path});
+            return cache_path;
+        }
+
+        /// Decode tokens to text using the tokenizer
+        fn decodeTokens(self: *Self, tokens: []const u32) ![]const u8 {
+            if (self.tokenizer) |tok| {
+                return try tok.decode(tokens);
+            }
+            return &[_]u8{}; // Return empty if no tokenizer
+        }
+
+        /// Generate the next token. Returns null when generation is complete.
+        pub fn next(self: *Self) !?Token {
+            std.log.debug("GenerationState.next: START (tokens_generated={d}/{d})", .{ self.tokens_generated, self.max_tokens });
+
+            if (self.is_complete or self.tokens_generated >= self.max_tokens) {
+                std.log.debug("  Generation complete or max tokens reached", .{});
+                return null;
+            }
+
+            // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
+
+            const transformer = self.transformer.?;
+            const cache = self.cache.?;
+
+            std.log.debug("  Creating causal mask...", .{});
+            // Create causal mask
+            const seq_len = mlx.arrayDim(self.toks_array, 1);
+            try mlx.createCausalMask(&self.mask_array, seq_len, cache.offset, transformer.mlx_config.dtype, transformer.mlx_config.stream);
+            std.log.debug("  Causal mask created", .{});
+
+            std.log.debug("  Forward pass through model...", .{});
+            // Forward pass through model
+            try transformer.model.forward(&self.logits_array, self.toks_array, self.mask_array, cache);
+            std.log.debug("  Forward pass complete", .{});
+
+            // Take logits for last position: logits[:, -1, :]
+            var last_logits = mlx.arrayNew();
+            defer mlx.arrayFree(last_logits);
+            try mlx.take(&last_logits, self.logits_array, mlx.int(-1), 1, transformer.mlx_config.stream);
+
+            // Sample from the distribution
+            var next_token: Token = 0;
+
+            // Capture logprobs if enabled (before any sampling modifications)
+            var logprob_entry: ?LogprobEntry = null;
+            if (self.options.logprobs_enabled) {
+                // Get raw logits data for captureLogprobs
+                try mlx.arrayEval(last_logits);
+                const logits_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(last_logits)));
+                const vocab_size = @as(usize, @intCast(mlx.arrayDim(last_logits, 1)));
+
+                logprob_entry = try self.captureLogprobs(logits_data, vocab_size);
+            }
+
+            if (self.options.temperature == 0) {
+                // D-18: Greedy selection — argmax on raw logits (before temperature/softmax)
+                var next_token_arr = mlx.arrayNew();
+                defer mlx.arrayFree(next_token_arr);
+                try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
+                try mlx.item(&next_token, next_token_arr);
+            } else {
+                // D-13, D-16, D-17: Complete sampling pipeline
+                // Pipeline: logits → logit_bias → penalties → top_k → min_p → temperature → softmax → sample
+
+                // Extract logits data from MLX array for CPU-side modifications
+                const vocab_size_c = mlx.arrayDim(last_logits, 1);
+                const vocab_size: usize = @intCast(vocab_size_c);
+
+                // Get raw logits data pointer
+                try mlx.arrayEval(last_logits);
+                const logits_ptr: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(last_logits)));
+
+                // Check if any sampling parameters are active
+                const has_logit_bias = self.options.logit_bias.count() > 0;
+                const has_penalties = self.options.presence_penalty != 0.0 or
+                    self.options.frequency_penalty != 0.0 or
+                    self.options.repetition_penalty != 1.0;
+                const has_top_k = self.options.top_k > 0 and self.options.top_k < vocab_size;
+                const has_min_p = self.options.min_p > 0.0 and self.options.min_p <= 1.0;
+                const needs_modifications = has_logit_bias or has_penalties or has_top_k or has_min_p;
+
+                var modified_logits = mlx.arrayNew();
+                defer mlx.arrayFree(modified_logits);
+
+                if (needs_modifications) {
+                    // Create mutable copy of logits data for modifications
+                    const logits_copy = try self.allocator.alloc(f32, vocab_size);
+                    defer self.allocator.free(logits_copy);
+
+                    // Copy logits data
+                    for (0..@intCast(vocab_size)) |i| {
+                        logits_copy[i] = logits_ptr[i];
+                    }
+
+                    // D-17: Apply logit_bias first (priority)
+                    if (has_logit_bias) {
+                        std.log.debug("Applying logit_bias to {d} tokens", .{self.options.logit_bias.count()});
+                        var bias_iter = self.options.logit_bias.iterator();
+                        while (bias_iter.next()) |entry| {
+                            const token_id = entry.key_ptr.*;
+                            const bias = entry.value_ptr.*;
+                            if (token_id < vocab_size) {
+                                logits_copy[token_id] += bias;
+                            }
                         }
                     }
-                }
 
-                // D-16: Apply penalties
-                if (has_penalties) {
-                    std.log.debug("Applying penalties: presence={d}, frequency={d}, repetition={d}", .{
-                        self.options.presence_penalty,
-                        self.options.frequency_penalty,
-                        self.options.repetition_penalty,
-                    });
-                    // Apply penalties directly on the slice
-                    if (self.current_tokens.items.len > 0) {
-                        // Count token frequencies in current sequence
-                        var freq_map = std.AutoHashMap(u32, u32).init(self.allocator);
-                        defer freq_map.deinit();
+                    // D-16: Apply penalties
+                    if (has_penalties) {
+                        std.log.debug("Applying penalties: presence={d}, frequency={d}, repetition={d}", .{
+                            self.options.presence_penalty,
+                            self.options.frequency_penalty,
+                            self.options.repetition_penalty,
+                        });
+                        // Apply penalties directly on the slice
+                        if (self.current_tokens.items.len > 0) {
+                            // Count token frequencies in current sequence
+                            var freq_map = std.AutoHashMap(u32, u32).init(self.allocator);
+                            defer freq_map.deinit();
 
-                        for (self.current_tokens.items) |token| {
-                            const count = freq_map.get(token) orelse 0;
-                            try freq_map.put(token, count + 1);
-                        }
-
-                        // Apply penalties
-                        var iter = freq_map.iterator();
-                        while (iter.next()) |entry| {
-                            const token_id = entry.key_ptr.*;
-                            const count = entry.value_ptr.*;
-
-                            if (token_id >= vocab_size) continue;
-
-                            // Presence penalty: applied once if token appears at all
-                            if (self.options.presence_penalty != 0.0 and count > 0) {
-                                logits_copy[token_id] -= self.options.presence_penalty;
+                            for (self.current_tokens.items) |token| {
+                                const count = freq_map.get(token) orelse 0;
+                                try freq_map.put(token, count + 1);
                             }
 
-                            // Frequency penalty: applied proportional to count
-                            if (self.options.frequency_penalty != 0.0) {
-                                logits_copy[token_id] -= self.options.frequency_penalty * @as(f32, @floatFromInt(count));
-                            }
+                            // Apply penalties
+                            var iter = freq_map.iterator();
+                            while (iter.next()) |entry| {
+                                const token_id = entry.key_ptr.*;
+                                const count = entry.value_ptr.*;
 
-                            // Repetition penalty: multiplicative on logits
-                            if (self.options.repetition_penalty > 1.0 and count > 0) {
-                                if (logits_copy[token_id] > 0) {
-                                    logits_copy[token_id] /= self.options.repetition_penalty;
-                                } else {
-                                    logits_copy[token_id] *= self.options.repetition_penalty;
+                                if (token_id >= vocab_size) continue;
+
+                                // Presence penalty: applied once if token appears at all
+                                if (self.options.presence_penalty != 0.0 and count > 0) {
+                                    logits_copy[token_id] -= self.options.presence_penalty;
+                                }
+
+                                // Frequency penalty: applied proportional to count
+                                if (self.options.frequency_penalty != 0.0) {
+                                    logits_copy[token_id] -= self.options.frequency_penalty * @as(f32, @floatFromInt(count));
+                                }
+
+                                // Repetition penalty: multiplicative on logits
+                                if (self.options.repetition_penalty > 1.0 and count > 0) {
+                                    if (logits_copy[token_id] > 0) {
+                                        logits_copy[token_id] /= self.options.repetition_penalty;
+                                    } else {
+                                        logits_copy[token_id] *= self.options.repetition_penalty;
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // D-13: Apply top_k filtering
-                if (has_top_k) {
-                    std.log.debug("Applying top_k={d} filtering", .{self.options.top_k});
-                    const k = self.options.top_k;
+                    // D-13: Apply top_k filtering
+                    if (has_top_k) {
+                        std.log.debug("Applying top_k={d} filtering", .{self.options.top_k});
+                        const k = self.options.top_k;
 
-                    // Find k-th largest logit using selection algorithm
-                    const sorted_logits = try self.allocator.dupe(f32, logits_copy);
-                    defer self.allocator.free(sorted_logits);
+                        // Find k-th largest logit using selection algorithm
+                        const sorted_logits = try self.allocator.dupe(f32, logits_copy);
+                        defer self.allocator.free(sorted_logits);
 
-                    std.mem.sort(f32, sorted_logits, {}, std.sort.desc(f32));
-                    const kth_logit = sorted_logits[k - 1];
+                        std.mem.sort(f32, sorted_logits, {}, std.sort.desc(f32));
+                        const kth_logit = sorted_logits[k - 1];
 
-                    // Set all logits below kth to -infinity
-                    for (0..vocab_size) |i| {
-                        if (logits_copy[i] < kth_logit) {
-                            logits_copy[i] = -std.math.inf(f32);
-                        }
-                    }
-                }
-
-                // D-13: Apply min_p filtering
-                if (has_min_p) {
-                    std.log.debug("Applying min_p={d} filtering", .{self.options.min_p});
-
-                    // Find max logit
-                    var max_logit: f32 = -std.math.inf(f32);
-                    for (0..vocab_size) |i| {
-                        if (logits_copy[i] > max_logit) {
-                            max_logit = logits_copy[i];
+                        // Set all logits below kth to -infinity
+                        for (0..vocab_size) |i| {
+                            if (logits_copy[i] < kth_logit) {
+                                logits_copy[i] = -std.math.inf(f32);
+                            }
                         }
                     }
 
-                    // Compute min logit threshold
-                    // min_p threshold in probability space: p >= min_p * p_max
-                    // In log space: logit >= max_logit + ln(min_p)
-                    const min_logit_threshold = max_logit + @log(self.options.min_p);
+                    // D-13: Apply min_p filtering
+                    if (has_min_p) {
+                        std.log.debug("Applying min_p={d} filtering", .{self.options.min_p});
 
-                    // Filter tokens below threshold
-                    for (0..vocab_size) |i| {
-                        if (logits_copy[i] < min_logit_threshold) {
-                            logits_copy[i] = -std.math.inf(f32);
+                        // Find max logit
+                        var max_logit: f32 = -std.math.inf(f32);
+                        for (0..vocab_size) |i| {
+                            if (logits_copy[i] > max_logit) {
+                                max_logit = logits_copy[i];
+                            }
+                        }
+
+                        // Compute min logit threshold
+                        // min_p threshold in probability space: p >= min_p * p_max
+                        // In log space: logit >= max_logit + ln(min_p)
+                        const min_logit_threshold = max_logit + @log(self.options.min_p);
+
+                        // Filter tokens below threshold
+                        for (0..vocab_size) |i| {
+                            if (logits_copy[i] < min_logit_threshold) {
+                                logits_copy[i] = -std.math.inf(f32);
+                            }
                         }
                     }
+
+                    // Free the empty array before creating a new one with actual data
+                    mlx.arrayFree(modified_logits);
+
+                    // Create new MLX array from modified logits
+                    modified_logits = try mlx.arrayNewData(logits_copy.ptr, .{ 1, @as(c_int, @intCast(vocab_size)) }, mlx.FLOAT32);
+                } else {
+                    // No modifications needed, copy original logits into initialized array
+                    try mlx.arraySet(&modified_logits, last_logits);
+                }
+                // Note: mlx.arrayFree is handled by defer at line 470-471
+
+                // Apply temperature scaling to modified logits
+                var scaled_logits = mlx.arrayNew();
+                defer mlx.arrayFree(scaled_logits);
+
+                if (self.options.temperature != 1.0) {
+                    const temp_scalar = mlx.float(self.options.temperature);
+                    try mlx.divide(&scaled_logits, modified_logits, temp_scalar, transformer.mlx_config.stream);
+                } else {
+                    try mlx.arraySet(&scaled_logits, modified_logits);
                 }
 
-                // Free the empty array before creating a new one with actual data
-                mlx.arrayFree(modified_logits);
+                // Apply softmax to get probabilities
+                var probs = mlx.arrayNew();
+                defer mlx.arrayFree(probs);
+                const axes = &[_]c_int{1}; // Softmax over vocab dimension
+                try mlx.softmax(&probs, scaled_logits, axes, false, transformer.mlx_config.stream);
 
-                // Create new MLX array from modified logits
-                modified_logits = try mlx.arrayNewData(logits_copy.ptr, .{ 1, @as(c_int, @intCast(vocab_size)) }, mlx.FLOAT32);
-            } else {
-                // No modifications needed, copy original logits into initialized array
-                try mlx.arraySet(&modified_logits, last_logits);
-            }
-            // Note: mlx.arrayFree is handled by defer at line 470-471
+                // Evaluate to get actual values for sampling
+                try mlx.arrayEval(probs);
 
-            // Apply temperature scaling to modified logits
-            var scaled_logits = mlx.arrayNew();
-            defer mlx.arrayFree(scaled_logits);
+                // Get probability data
+                const probs_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(probs)));
 
-            if (self.options.temperature != 1.0) {
-                const temp_scalar = mlx.float(self.options.temperature);
-                try mlx.divide(&scaled_logits, modified_logits, temp_scalar, transformer.mlx_config.stream);
-            } else {
-                try mlx.arraySet(&scaled_logits, modified_logits);
-            }
-
-            // Apply softmax to get probabilities
-            var probs = mlx.arrayNew();
-            defer mlx.arrayFree(probs);
-            const axes = &[_]c_int{1}; // Softmax over vocab dimension
-            try mlx.softmax(&probs, scaled_logits, axes, false, transformer.mlx_config.stream);
-
-            // Evaluate to get actual values for sampling
-            try mlx.arrayEval(probs);
-
-            // Get probability data
-            const probs_data: [*c]f32 = @ptrCast(@constCast(mlx.C.mlx_array_data_float32(probs)));
-
-            // Sample from the distribution using seeded RNG if available (API-05)
-            const random_value = if (self.rng) |*rng| rng.random() else std.crypto.random.float(f32);
-            var cumsum: f32 = 0;
-            var last_idx: u32 = 0;
-            for (0..@intCast(vocab_size)) |i| {
-                cumsum += probs_data[i];
-                last_idx = @intCast(i);
-                if (random_value <= cumsum) {
-                    next_token = @intCast(i);
-                    break;
+                // Sample from the distribution using seeded RNG if available (API-05)
+                const random_value = if (self.rng) |*rng| rng.random() else std.crypto.random.float(f32);
+                var cumsum: f32 = 0;
+                var last_idx: u32 = 0;
+                for (0..@intCast(vocab_size)) |i| {
+                    cumsum += probs_data[i];
+                    last_idx = @intCast(i);
+                    if (random_value <= cumsum) {
+                        next_token = @intCast(i);
+                        break;
+                    }
+                }
+                // Fallback: if we didn't find a token (floating point edge case), use the last index
+                if (next_token == 0 and random_value > cumsum) {
+                    next_token = last_idx;
                 }
             }
-            // Fallback: if we didn't find a token (floating point edge case), use the last index
-            if (next_token == 0 and random_value > cumsum) {
-                next_token = last_idx;
+
+            // Debug: Log token generation
+            // std.log.debug("Generated token {d} at position {d}", .{ next_token, self.tokens_generated });
+
+            // OLD: Argmax to get next token
+            // var next_token_arr = mlx.arrayNew();
+            // defer mlx.arrayFree(next_token_arr);
+            // try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
+            //
+            // // Extract token value
+            // var next_token: Token = 0;
+            // try mlx.item(&next_token, next_token_arr);
+
+            // Update state
+            self.tokens_generated += 1;
+            try self.current_tokens.append(self.allocator, next_token);
+
+            // Check for EOS
+            if (self.options.stop_on_eos) {
+                for (self.eos_token_ids) |eos_id| {
+                    if (next_token == eos_id) {
+                        self.is_complete = true;
+                        self.stop_reason = .eos;
+                        break;
+                    }
+                }
             }
-        }
 
-        // Debug: Log token generation
-        // std.log.debug("Generated token {d} at position {d}", .{ next_token, self.tokens_generated });
+            // Update and store logprob entry if enabled
+            if (logprob_entry) |entry| {
+                var updated_entry = entry;
+                updated_entry.token = next_token;
+                // Find the logprob for the selected token from top_logprobs
+                for (entry.top_logprobs) |top| {
+                    if (top.token == next_token) {
+                        updated_entry.logprob = top.logprob;
+                        break;
+                    }
+                }
+                // Try to decode token string if tokenizer available
+                if (self.tokenizer) |tok| {
+                    const single_tok = [_]u32{next_token};
+                    if (tok.decode(&single_tok)) |token_str| {
+                        updated_entry.token_str = token_str;
+                    } else |_| {
+                        updated_entry.token_str = &[_]u8{};
+                    }
+                }
+                try self.logprobs_buffer.append(self.allocator, updated_entry);
+            }
 
-        // OLD: Argmax to get next token
-        // var next_token_arr = mlx.arrayNew();
-        // defer mlx.arrayFree(next_token_arr);
-        // try mlx.argmax(&next_token_arr, last_logits, 1, false, transformer.mlx_config.stream);
-        //
-        // // Extract token value
-        // var next_token: Token = 0;
-        // try mlx.item(&next_token, next_token_arr);
+            // Stop sequence detection (API-01)
+            // Accumulate tokens for potential decode+check
+            try self.tokens_since_decode.append(self.allocator, next_token);
 
-        // Update state
-        self.tokens_generated += 1;
-        try self.current_tokens.append(self.allocator, next_token);
+            // Decode and check stop sequences if any are configured
+            if (self.options.stop_sequences.len > 0 and self.tokenizer != null) {
+                // Decode accumulated tokens to text
+                const decoded_chunk = try self.decodeTokens(self.tokens_since_decode.items);
+                defer self.allocator.free(decoded_chunk);
 
-        // Check for EOS
-        if (self.options.stop_on_eos) {
-            for (self.eos_token_ids) |eos_id| {
-                if (next_token == eos_id) {
+                // Append to decoded text buffer
+                try self.decoded_text_buffer.appendSlice(self.allocator, decoded_chunk);
+
+                // Clear tokens since they've been decoded
+                self.tokens_since_decode.clearRetainingCapacity();
+
+                // Check if decoded text ends with any stop sequence
+                if (self.checkStopSequence()) {
+                    // Match found — halt generation
                     self.is_complete = true;
-                    self.stop_reason = .eos;
-                    break;
+                    self.stop_reason = .stop;
+                    self.truncateStopSequence();
+
+                    // Log for debugging
+                    std.log.debug("Stop sequence matched, halting generation", .{});
+
+                    return null;
+                }
+            }
+
+            // Prepare tokens array for next iteration: [1, 1] with just the new token
+            mlx.arrayFree(self.toks_array);
+            const single_token = [_]u32{next_token};
+            self.toks_array = try mlx.arrayNewData(&single_token, .{ 1, 1 }, mlx.UINT32);
+
+            // Mark prompt as processed after first forward pass
+            // This is used for prompt caching to know when to save the cache state
+            if (!self.prompt_processed) {
+                self.prompt_processed = true;
+            }
+
+            return next_token;
+        }
+
+        /// Get all tokens generated so far
+        pub fn getGeneratedTokens(self: *Self) []const u32 {
+            return self.current_tokens.items;
+        }
+
+        /// Check if generation is complete
+        pub fn isComplete(self: *Self) bool {
+            return self.is_complete;
+        }
+
+        /// Get the stop reason
+        pub fn getStopReason(self: *Self) StopReason {
+            return self.stop_reason;
+        }
+
+        /// Set the stop reason
+        pub fn setStopReason(self: *Self, reason: StopReason) void {
+            self.stop_reason = reason;
+        }
+
+        /// Get captured logprobs (returns a copy of the buffer, caller owns memory of returned slice but not entries)
+        pub fn getLogprobs(self: *Self) []const LogprobEntry {
+            return self.logprobs_buffer.items;
+        }
+
+        /// Check if generated text ends with any stop sequence (API-01)
+        /// Returns: true if generation should stop, false otherwise
+        /// Per D-01, D-03: Check after each token, match multi-character strings
+        fn checkStopSequence(self: *Self) bool {
+            if (self.options.stop_sequences.len == 0) return false;
+
+            const text = self.decoded_text_buffer.items;
+
+            for (self.options.stop_sequences) |stop_seq| {
+                if (stop_seq.len == 0) continue;
+
+                // Per D-03: Check if text ends with stop sequence
+                if (text.len >= stop_seq.len) {
+                    const end_slice = text[text.len - stop_seq.len ..];
+                    if (std.mem.eql(u8, end_slice, stop_seq)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// Truncate decoded text to remove matched stop sequence (API-01, D-04)
+        /// Call this after checkStopSequence returns true
+        fn truncateStopSequence(self: *Self) void {
+            if (self.options.stop_sequences.len == 0) return;
+
+            const text = self.decoded_text_buffer.items;
+
+            for (self.options.stop_sequences) |stop_seq| {
+                if (stop_seq.len == 0) continue;
+
+                if (text.len >= stop_seq.len) {
+                    const end_slice = text[text.len - stop_seq.len ..];
+                    if (std.mem.eql(u8, end_slice, stop_seq)) {
+                        // Remove the stop sequence from the buffer
+                        self.decoded_text_buffer.shrinkAndFree(self.allocator, text.len - stop_seq.len);
+                        return;
+                    }
                 }
             }
         }
 
-        // Update and store logprob entry if enabled
-        if (logprob_entry) |entry| {
-            var updated_entry = entry;
-            updated_entry.token = next_token;
-            // Find the logprob for the selected token from top_logprobs
-            for (entry.top_logprobs) |top| {
-                if (top.token == next_token) {
-                    updated_entry.logprob = top.logprob;
-                    break;
+        /// Get the final decoded text without stop sequence (API-01, D-04)
+        pub fn getFinalDecodedText(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
+            // If we stopped by stop sequence, return the truncated buffer
+            // Otherwise, return a copy of the full buffer
+            return try allocator.dupe(u8, self.decoded_text_buffer.items);
+        }
+
+        /// Capture top-5 logprobs from raw logits (D-07, D-12)
+        fn captureLogprobs(self: *Self, logits_data: [*c]f32, vocab_size: usize) !LogprobEntry {
+            // Create array of (token_id, logit) pairs
+            const TokenLogitPair = struct { u32, f32 };
+            var token_logits = try self.allocator.alloc(TokenLogitPair, vocab_size);
+            defer self.allocator.free(token_logits);
+
+            for (0..vocab_size) |i| {
+                token_logits[i] = .{ @intCast(i), logits_data[i] };
+            }
+
+            // Sort by logit descending (highest first)
+            std.mem.sort(TokenLogitPair, token_logits, {}, struct {
+                fn lessThan(_: void, a: TokenLogitPair, b: TokenLogitPair) bool {
+                    return a[1] > b[1]; // Descending order
                 }
+            }.lessThan);
+
+            // Take top 5
+            const top_k = @min(5, vocab_size);
+            var top_logprobs = try self.allocator.alloc(TopLogprob, top_k);
+            errdefer self.allocator.free(top_logprobs);
+
+            // Compute log_softmax for numerical stability
+            const max_logit: f32 = token_logits[0][1];
+            var sum_exp: f32 = 0;
+            for (token_logits) |tl| {
+                sum_exp += std.math.exp(tl[1] - max_logit);
             }
-            // Try to decode token string if tokenizer available
-            if (self.tokenizer) |tok| {
-                const single_tok = [_]u32{next_token};
-                if (tok.decode(&single_tok)) |token_str| {
-                    updated_entry.token_str = token_str;
-                } else |_| {
-                    updated_entry.token_str = &[_]u8{};
-                }
+            const log_sum_exp = max_logit + @log(sum_exp);
+
+            for (0..top_k) |i| {
+                const token_id = token_logits[i][0];
+                const logit = token_logits[i][1];
+                const logprob = logit - log_sum_exp; // log_softmax
+
+                // For now, store empty token string (will be decoded later with the tokenizer)
+                top_logprobs[i] = .{
+                    .token = token_id,
+                    .token_str = &[_]u8{},
+                    .logprob = logprob,
+                };
             }
-            try self.logprobs_buffer.append(self.allocator, updated_entry);
-        }
 
-        // Stop sequence detection (API-01)
-        // Accumulate tokens for potential decode+check
-        try self.tokens_since_decode.append(self.allocator, next_token);
-
-        // Decode and check stop sequences if any are configured
-        if (self.options.stop_sequences.len > 0 and self.tokenizer != null) {
-            // Decode accumulated tokens to text
-            const decoded_chunk = try self.decodeTokens(self.tokens_since_decode.items);
-            defer self.allocator.free(decoded_chunk);
-
-            // Append to decoded text buffer
-            try self.decoded_text_buffer.appendSlice(self.allocator, decoded_chunk);
-
-            // Clear tokens since they've been decoded
-            self.tokens_since_decode.clearRetainingCapacity();
-
-            // Check if decoded text ends with any stop sequence
-            if (self.checkStopSequence()) {
-                // Match found — halt generation
-                self.is_complete = true;
-                self.stop_reason = .stop;
-                self.truncateStopSequence();
-
-                // Log for debugging
-                std.log.debug("Stop sequence matched, halting generation", .{});
-
-                return null;
-            }
-        }
-
-        // Prepare tokens array for next iteration: [1, 1] with just the new token
-        mlx.arrayFree(self.toks_array);
-        const single_token = [_]u32{next_token};
-        self.toks_array = try mlx.arrayNewData(&single_token, .{ 1, 1 }, mlx.UINT32);
-
-        // Mark prompt as processed after first forward pass
-        // This is used for prompt caching to know when to save the cache state
-        if (!self.prompt_processed) {
-            self.prompt_processed = true;
-        }
-
-        return next_token;
-    }
-
-    /// Get all tokens generated so far
-    pub fn getGeneratedTokens(self: *Self) []const u32 {
-        return self.current_tokens.items;
-    }
-
-    /// Check if generation is complete
-    pub fn isComplete(self: *Self) bool {
-        return self.is_complete;
-    }
-
-    /// Get the stop reason
-    pub fn getStopReason(self: *Self) StopReason {
-        return self.stop_reason;
-    }
-
-    /// Set the stop reason
-    pub fn setStopReason(self: *Self, reason: StopReason) void {
-        self.stop_reason = reason;
-    }
-
-    /// Get captured logprobs (returns a copy of the buffer, caller owns memory of returned slice but not entries)
-    pub fn getLogprobs(self: *Self) []const LogprobEntry {
-        return self.logprobs_buffer.items;
-    }
-
-    /// Check if generated text ends with any stop sequence (API-01)
-    /// Returns: true if generation should stop, false otherwise
-    /// Per D-01, D-03: Check after each token, match multi-character strings
-    fn checkStopSequence(self: *Self) bool {
-        if (self.options.stop_sequences.len == 0) return false;
-
-        const text = self.decoded_text_buffer.items;
-
-        for (self.options.stop_sequences) |stop_seq| {
-            if (stop_seq.len == 0) continue;
-
-            // Per D-03: Check if text ends with stop sequence
-            if (text.len >= stop_seq.len) {
-                const end_slice = text[text.len - stop_seq.len ..];
-                if (std.mem.eql(u8, end_slice, stop_seq)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /// Truncate decoded text to remove matched stop sequence (API-01, D-04)
-    /// Call this after checkStopSequence returns true
-    fn truncateStopSequence(self: *Self) void {
-        if (self.options.stop_sequences.len == 0) return;
-
-        const text = self.decoded_text_buffer.items;
-
-        for (self.options.stop_sequences) |stop_seq| {
-            if (stop_seq.len == 0) continue;
-
-            if (text.len >= stop_seq.len) {
-                const end_slice = text[text.len - stop_seq.len ..];
-                if (std.mem.eql(u8, end_slice, stop_seq)) {
-                    // Remove the stop sequence from the buffer
-                    self.decoded_text_buffer.shrinkAndFree(self.allocator, text.len - stop_seq.len);
-                    return;
-                }
-            }
-        }
-    }
-
-    /// Get the final decoded text without stop sequence (API-01, D-04)
-    pub fn getFinalDecodedText(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
-        // If we stopped by stop sequence, return the truncated buffer
-        // Otherwise, return a copy of the full buffer
-        return try allocator.dupe(u8, self.decoded_text_buffer.items);
-    }
-
-    /// Capture top-5 logprobs from raw logits (D-07, D-12)
-    fn captureLogprobs(self: *Self, logits_data: [*c]f32, vocab_size: usize) !LogprobEntry {
-        // Create array of (token_id, logit) pairs
-        const TokenLogitPair = struct { u32, f32 };
-        var token_logits = try self.allocator.alloc(TokenLogitPair, vocab_size);
-        defer self.allocator.free(token_logits);
-
-        for (0..vocab_size) |i| {
-            token_logits[i] = .{ @intCast(i), logits_data[i] };
-        }
-
-        // Sort by logit descending (highest first)
-        std.mem.sort(TokenLogitPair, token_logits, {}, struct {
-            fn lessThan(_: void, a: TokenLogitPair, b: TokenLogitPair) bool {
-                return a[1] > b[1]; // Descending order
-            }
-        }.lessThan);
-
-        // Take top 5
-        const top_k = @min(5, vocab_size);
-        var top_logprobs = try self.allocator.alloc(TopLogprob, top_k);
-        errdefer self.allocator.free(top_logprobs);
-
-        // Compute log_softmax for numerical stability
-        const max_logit: f32 = token_logits[0][1];
-        var sum_exp: f32 = 0;
-        for (token_logits) |tl| {
-            sum_exp += std.math.exp(tl[1] - max_logit);
-        }
-        const log_sum_exp = max_logit + @log(sum_exp);
-
-        for (0..top_k) |i| {
-            const token_id = token_logits[i][0];
-            const logit = token_logits[i][1];
-            const logprob = logit - log_sum_exp; // log_softmax
-
-            // For now, store empty token string (will be decoded later with the tokenizer)
-            top_logprobs[i] = .{
-                .token = token_id,
+            return LogprobEntry{
+                .token = 0, // Will be filled in after sampling
                 .token_str = &[_]u8{},
-                .logprob = logprob,
+                .logprob = 0, // Will be filled in after sampling
+                .top_logprobs = top_logprobs,
             };
         }
 
-        return LogprobEntry{
-            .token = 0, // Will be filled in after sampling
-            .token_str = &[_]u8{},
-            .logprob = 0, // Will be filled in after sampling
-            .top_logprobs = top_logprobs,
-        };
-    }
+        /// Apply top_k filtering — keep only k highest logits (D-13)
+        fn applyTopK(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
+            if (self.options.top_k == 0 or self.options.top_k >= vocab_size) return;
 
-    /// Apply top_k filtering — keep only k highest logits (D-13)
-    fn applyTopK(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
-        if (self.options.top_k == 0 or self.options.top_k >= vocab_size) return;
+            const k = self.options.top_k;
 
-        const k = self.options.top_k;
+            // Find k-th largest logit using selection algorithm
+            const sorted_logits = try self.allocator.dupe(f32, logits.items[0..vocab_size]);
+            defer self.allocator.free(sorted_logits);
 
-        // Find k-th largest logit using selection algorithm
-        const sorted_logits = try self.allocator.dupe(f32, logits.items[0..vocab_size]);
-        defer self.allocator.free(sorted_logits);
+            std.mem.sort(f32, sorted_logits, {}, std.sort.desc(f32));
+            const kth_logit = sorted_logits[k - 1];
 
-        std.mem.sort(f32, sorted_logits, {}, std.sort.desc(f32));
-        const kth_logit = sorted_logits[k - 1];
-
-        // Set all logits below kth to -infinity
-        for (0..vocab_size) |i| {
-            if (logits.items[i] < kth_logit) {
-                logits.items[i] = -std.math.inf(f32);
-            }
-        }
-    }
-
-    /// Apply min_p filtering — tokens must have prob >= min_p * max_prob (D-13)
-    fn applyMinP(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
-        if (self.options.min_p <= 0.0 or self.options.min_p > 1.0) return;
-
-        // Find max logit
-        var max_logit: f32 = -std.math.inf(f32);
-        for (0..vocab_size) |i| {
-            if (logits.items[i] > max_logit) {
-                max_logit = logits.items[i];
-            }
-        }
-
-        // Compute min logit threshold
-        // min_p threshold in probability space: p >= min_p * p_max
-        // In log space: logit >= max_logit + log(min_p)
-        const min_logit_threshold = max_logit + std.math.log(self.options.min_p);
-
-        // Filter tokens below threshold
-        for (0..vocab_size) |i| {
-            if (logits.items[i] < min_logit_threshold) {
-                logits.items[i] = -std.math.inf(f32);
-            }
-        }
-    }
-
-    /// Apply presence, frequency, and repetition penalties (D-16)
-    fn applyPenalties(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
-        if (self.current_tokens.items.len == 0) return;
-
-        // Count token frequencies in current sequence
-        var freq_map = std.AutoHashMap(u32, u32).init(self.allocator);
-        defer freq_map.deinit();
-
-        for (self.current_tokens.items) |token| {
-            const count = freq_map.get(token) orelse 0;
-            try freq_map.put(token, count + 1);
-        }
-
-        // Apply penalties
-        var iter = freq_map.iterator();
-        while (iter.next()) |entry| {
-            const token_id = entry.key_ptr.*;
-            const count = entry.value_ptr.*;
-
-            if (token_id >= vocab_size) continue;
-
-            const logit = &logits.items[token_id];
-
-            // Presence penalty: applied once if token appears at all
-            if (self.options.presence_penalty != 0.0 and count > 0) {
-                logit.* -= self.options.presence_penalty;
-            }
-
-            // Frequency penalty: applied proportional to count
-            if (self.options.frequency_penalty != 0.0) {
-                logit.* -= self.options.frequency_penalty * @as(f32, @floatFromInt(count));
-            }
-
-            // Repetition penalty: multiplicative on logits (or additive on logprobs)
-            // Standard approach: divide logits by repetition_penalty for seen tokens
-            if (self.options.repetition_penalty > 1.0 and count > 0) {
-                if (logit.* > 0) {
-                    logit.* /= self.options.repetition_penalty;
-                } else {
-                    logit.* *= self.options.repetition_penalty;
+            // Set all logits below kth to -infinity
+            for (0..vocab_size) |i| {
+                if (logits.items[i] < kth_logit) {
+                    logits.items[i] = -std.math.inf(f32);
                 }
             }
         }
-    }
-};
+
+        /// Apply min_p filtering — tokens must have prob >= min_p * max_prob (D-13)
+        fn applyMinP(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
+            if (self.options.min_p <= 0.0 or self.options.min_p > 1.0) return;
+
+            // Find max logit
+            var max_logit: f32 = -std.math.inf(f32);
+            for (0..vocab_size) |i| {
+                if (logits.items[i] > max_logit) {
+                    max_logit = logits.items[i];
+                }
+            }
+
+            // Compute min logit threshold
+            // min_p threshold in probability space: p >= min_p * p_max
+            // In log space: logit >= max_logit + log(min_p)
+            const min_logit_threshold = max_logit + std.math.log(self.options.min_p);
+
+            // Filter tokens below threshold
+            for (0..vocab_size) |i| {
+                if (logits.items[i] < min_logit_threshold) {
+                    logits.items[i] = -std.math.inf(f32);
+                }
+            }
+        }
+
+        /// Apply presence, frequency, and repetition penalties (D-16)
+        fn applyPenalties(self: *Self, logits: *std.ArrayList(f32), vocab_size: usize) !void {
+            if (self.current_tokens.items.len == 0) return;
+
+            // Count token frequencies in current sequence
+            var freq_map = std.AutoHashMap(u32, u32).init(self.allocator);
+            defer freq_map.deinit();
+
+            for (self.current_tokens.items) |token| {
+                const count = freq_map.get(token) orelse 0;
+                try freq_map.put(token, count + 1);
+            }
+
+            // Apply penalties
+            var iter = freq_map.iterator();
+            while (iter.next()) |entry| {
+                const token_id = entry.key_ptr.*;
+                const count = entry.value_ptr.*;
+
+                if (token_id >= vocab_size) continue;
+
+                const logit = &logits.items[token_id];
+
+                // Presence penalty: applied once if token appears at all
+                if (self.options.presence_penalty != 0.0 and count > 0) {
+                    logit.* -= self.options.presence_penalty;
+                }
+
+                // Frequency penalty: applied proportional to count
+                if (self.options.frequency_penalty != 0.0) {
+                    logit.* -= self.options.frequency_penalty * @as(f32, @floatFromInt(count));
+                }
+
+                // Repetition penalty: multiplicative on logits (or additive on logprobs)
+                // Standard approach: divide logits by repetition_penalty for seen tokens
+                if (self.options.repetition_penalty > 1.0 and count > 0) {
+                    if (logit.* > 0) {
+                        logit.* /= self.options.repetition_penalty;
+                    } else {
+                        logit.* *= self.options.repetition_penalty;
+                    }
+                }
+            }
+        }
+    }; // closes struct
+} // closes GenerationState function
 
 /// Convenience function to generate all tokens at once (for non-streaming use)
+/// Generic over transformer type
 pub fn generateAll(
     allocator: std.mem.Allocator,
-    transformer: *qwen.Transformer,
+    transformer: anytype, // Generic transformer pointer
     initial_tokens: []const u32,
     eos_token_ids: []const u32,
     options: GenerationOptions,
     tokenizer: ?*mlx_tokenizer.Tokenizer,
     // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
 ) ![]const u32 {
-    var state = try GenerationState.init(allocator, transformer, initial_tokens, eos_token_ids, options, tokenizer);
+    const TransformerType = @TypeOf(transformer.*);
+    var state = try GenerationState(TransformerType).init(allocator, transformer, initial_tokens, eos_token_ids, options, tokenizer);
     defer state.deinit();
 
     var result = std.ArrayList(u32).init(allocator);
@@ -920,7 +941,7 @@ test "GenerationState basic test" {
         .stop_on_eos = true,
     };
 
-    var state = try GenerationState.init(allocator, &transformer, &initial_tokens, transformer.eos_token_ids, options, null);
+    var state = try GenerationState(qwen.Transformer).init(allocator, &transformer, &initial_tokens, transformer.eos_token_ids, options, null);
     defer state.deinit();
 
     // Generate a few tokens

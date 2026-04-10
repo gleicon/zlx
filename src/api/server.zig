@@ -82,7 +82,8 @@ pub const Server = struct {
 
         // Initialize Gemma 4 handler — backend is null at startup and loaded lazily on first request (per D-02)
         // DO NOT call LlamaBackend.init(allocator, "") here — it requires a valid GGUF path and will crash
-        g_chat_gemma4_handler = chat_gemma4.ChatGemma4Handler.init(allocator, &g_gemma4_backend);
+        const gemma4_model_path: []const u8 = if (handlers.global_context) |ctx| ctx.model_path else "";
+        g_chat_gemma4_handler = chat_gemma4.ChatGemma4Handler.init(allocator, &g_gemma4_backend, gemma4_model_path);
 
         // Initialize tool executor and ToolsAPI for /v1/tools/* routes
         g_tool_executor = tool_executor_mod.ToolExecutor.init(allocator);
@@ -204,15 +205,9 @@ fn handleChatCompletions(req: *httpz.Request, res: *httpz.Response) !void {
             res.status = 503;
             try res.json(.{ .@"error" = "DeepSeek handler not initialized" }, .{});
         }
-    } else if (chat_gemma4.isGemma4Model(peek.value.model)) {
-        // Gemma 4 dispatch — per D-02 handler-per-model pattern
-        if (g_chat_gemma4_handler) |*handler| {
-            try handler.handle(req, res);
-        } else {
-            res.status = 503;
-            try res.json(.{ .@"error" = "Gemma 4 handler not initialized" }, .{});
-        }
     } else {
+        // All other models (including Gemma 4) use the generic MLX backend handler
+        // Gemma 4 uses safetensors format via MLX, not GGUF via llama.cpp
         try handlers.handleChatCompletions(req, res);
     }
 }

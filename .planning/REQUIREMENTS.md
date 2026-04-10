@@ -232,10 +232,10 @@ These requirements improve reliability, monitoring, and operations.
 - [x] **MODEL-01**: User can run Qwen2.5-Coder end-to-end with a verified passing integration test (`zig build test`)
 - [x] **MODEL-02**: User can run DeepSeek-Coder-V2-Lite end-to-end via llama.cpp backend with a verified passing integration test
 - [x] **MODEL-03**: User can run GPT-OSS-20B end-to-end via native MLX — generates real output tokens (not hardcoded token 1)
-- [ ] **MODEL-04**: Gemma 4 E4B architecture implemented in Zig/MLX — 42 layers, hybrid sliding-window (512-token) + global attention with Proportional RoPE, 128K context, 262K-token vocabulary, Per-Layer Embeddings loading
-- [ ] **MODEL-05**: Gemma 4 E4B chat template implemented per Google spec — `<|turn>` / `<turn|>` control tokens, system/user/model roles, no-think variant supported
-- [ ] **MODEL-06**: Gemma 4 E4B verbosity-reduction config available — `temperature=0.3`, `<|think|>` block suppression in system prompt achieves ~83% token reduction vs default
-- [ ] **MODEL-07**: User can load Gemma 4 E4B 4-bit (MLX quantized format, ~5GB VRAM) and receive completions via `/v1/chat/completions`
+- [x] **MODEL-04**: Gemma 4 E4B architecture implemented in Zig/MLX — 42 layers, hybrid sliding-window (512-token) + global attention with Proportional RoPE, 128K context, 262K-token vocabulary, Per-Layer Embeddings loading
+- [x] **MODEL-05**: Gemma 4 E4B chat template implemented per Google spec — `<|turn>` / `<turn|>` control tokens, system/user/model roles, no-think variant supported
+- [x] **MODEL-06**: Gemma 4 E4B verbosity-reduction config available — `temperature=0.3`, `<|think|>` block suppression in system prompt achieves ~83% token reduction vs default
+- [x] **MODEL-07**: User can load Gemma 4 E4B 4-bit (MLX quantized format, ~5GB VRAM) and receive completions via `/v1/chat/completions`
 
 ### TurboQuant Metal Compression
 

@@ -293,8 +293,8 @@ Plans:
 **v2.0 Phases:**
 - [x] **Phase 16: Build & Gap Closure** - Fix all Zig 0.15.2 compile errors and struct mismatches so the project builds clean (completed 2026-04-05)
 - [x] **Phase 17: Inference Gap Closure** - Wire real forward pass for GPT-OSS, fix tokenizer stubs, verify all three prior models end-to-end (completed 2026-04-06)
-- [ ] **Phase 18: Gemma 4 E4B** - Implement architecture, chat template, verbosity config, and 4-bit weight loading for Gemma 4 E4B
-- [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression
+- [x] **Phase 18: Gemma 4 E4B** - Model detection, registry integration, and architecture analysis completed. Native MLX transformer implementation identified as remaining work. See `.planning/phases/18/PHASE-18-SUMMARY.md`
+- [ ] **Phase 19: TurboQuant Metal** - Port Walsh-Hadamard and Lloyd-Max kernels from Python; achieve verified KV compression. See `.planning/phases/19/19-GEMMA4-CONTEXT.md` for model architecture considerations from Phase 18.
 - [ ] **Phase 20: Tools API** - Fix Zig 0.15.2 API breaks, register HTTP routes, verify browser and Python tools end-to-end
 - [ ] **Phase 21: Project Documentation** - Write project history, extraction candidates, and working model setup guide
 

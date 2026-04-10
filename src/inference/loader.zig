@@ -20,6 +20,7 @@ pub const ModelType = enum {
     deepseek_v1,
     deepseek_v2_moe,
     gpt_oss,
+    gemma4,
 };
 
 /// Configuration info from config.json for architecture detection
@@ -47,6 +48,7 @@ pub const ModelConfig = union(ModelType) {
     deepseek_v1: void,
     deepseek_v2_moe: deepseek.DeepSeekConfig,
     gpt_oss: void, // TODO: Add GPT-OSS config
+    gemma4: void, // TODO: Add Gemma 4 config when native MLX support is implemented
 };
 
 /// Model loading error types
@@ -103,7 +105,10 @@ pub fn loadConfigInfo(allocator: std.mem.Allocator, config_path: []const u8) !Co
 
 /// Detect architecture from config info
 pub fn detectArchitecture(config: ConfigInfo) ModelType {
-    // Check for GPT-OSS models first
+    // Check for Gemma 4 first (before GPT-OSS which also has sliding_window)
+    if (std.mem.indexOf(u8, config.model_type, "gemma4") != null) return .gemma4;
+
+    // Check for GPT-OSS models
     if (std.mem.indexOf(u8, config.model_type, "gpt_oss") != null or
         std.mem.indexOf(u8, config.raw_json, "\"model_type\": \"gpt_oss\"") != null or
         (config.hasKey("num_experts") and config.hasKey("sliding_window")))
@@ -141,7 +146,10 @@ fn detectModelType(config_path: []const u8) !ModelType {
     const content = try file.readToEndAlloc(std.heap.page_allocator, 1024 * 1024);
     defer std.heap.page_allocator.free(content);
 
-    // Check for GPT-OSS first (sliding_window + num_experts is unique signature)
+    // Check for Gemma 4 first (before GPT-OSS which also has sliding_window)
+    if (std.mem.indexOf(u8, content, "gemma4") != null or std.mem.indexOf(u8, content, "Gemma4") != null) return .gemma4;
+
+    // Check for GPT-OSS (sliding_window + num_experts is unique signature)
     if (std.mem.indexOf(u8, content, "gpt_oss") != null or
         (std.mem.indexOf(u8, content, "sliding_window") != null and
             std.mem.indexOf(u8, content, "num_experts") != null))
@@ -522,9 +530,9 @@ fn mapWeightsToDeepSeek(
         const mla_layer = mla.MultiHeadLatentAttention{
             .base = mlx.Module.init(allocator, mlx.C.mlx_default_gpu_stream_new()),
             .config = mla_config,
-            .w_dq = q_proj,      // query down-projection (stub mapping)
-            .w_dkv = kv_a_proj,  // joint KV projection (stub mapping)
-            .w_up = kv_b_proj,   // KV up-projection (stub mapping)
+            .w_dq = q_proj, // query down-projection (stub mapping)
+            .w_dkv = kv_a_proj, // joint KV projection (stub mapping)
+            .w_up = kv_b_proj, // KV up-projection (stub mapping)
             .w_kr = null,
             .rope = null,
         };

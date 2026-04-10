@@ -13,6 +13,7 @@ pub const ModelArchitecture = enum {
     deepseek_v2_moe,
     deepseek_v1,
     gpt_oss,
+    gemma4,
     unknown,
 };
 
@@ -109,6 +110,9 @@ pub fn detectArchitecture(config: *const ConfigInfo) ModelArchitecture {
         if (std.mem.indexOf(u8, config.model_type, "gpt-oss")) |_| {
             return .gpt_oss;
         }
+        if (std.mem.indexOf(u8, config.model_type, "gemma4")) |_| {
+            return .gemma4;
+        }
     }
 
     // Check for GPT-OSS heuristics: MoE with sliding window
@@ -202,6 +206,7 @@ pub fn architectureToString(arch: ModelArchitecture) []const u8 {
         .deepseek_v2_moe => "deepseek_v2_moe",
         .deepseek_v1 => "deepseek_v1",
         .gpt_oss => "gpt_oss",
+        .gemma4 => "gemma4",
         .unknown => "unknown",
     };
 }
@@ -474,37 +479,67 @@ pub const ModelRegistry = struct {
             }
         }
 
-        // Extract hidden_size
+        // Extract hidden_size (check root first, then text_config for multimodal models)
         if (root.object.get("hidden_size")) |v| {
             config.hidden_size = @intCast(v.integer);
         } else if (root.object.get("d_model")) |v| {
             config.hidden_size = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("hidden_size")) |v| {
+                    config.hidden_size = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract num_layers
+        // Extract num_layers (check root first, then text_config for multimodal models)
         if (root.object.get("num_hidden_layers")) |v| {
             config.num_layers = @intCast(v.integer);
         } else if (root.object.get("n_layer")) |v| {
             config.num_layers = @intCast(v.integer);
         } else if (root.object.get("num_layers")) |v| {
             config.num_layers = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("num_hidden_layers")) |v| {
+                    config.num_layers = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract num_attention_heads
+        // Extract num_attention_heads (check root first, then text_config for multimodal models)
         if (root.object.get("num_attention_heads")) |v| {
             config.num_attention_heads = @intCast(v.integer);
         } else if (root.object.get("n_head")) |v| {
             config.num_attention_heads = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("num_attention_heads")) |v| {
+                    config.num_attention_heads = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract max_position_embeddings
+        // Extract max_position_embeddings (check root first, then text_config)
         if (root.object.get("max_position_embeddings")) |v| {
             config.max_position_embeddings = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("max_position_embeddings")) |v| {
+                    config.max_position_embeddings = @intCast(v.integer);
+                }
+            }
         }
 
-        // Extract vocab_size
+        // Extract vocab_size (check root first, then text_config)
         if (root.object.get("vocab_size")) |v| {
             config.vocab_size = @intCast(v.integer);
+        } else if (root.object.get("text_config")) |tc| {
+            if (tc == .object) {
+                if (tc.object.get("vocab_size")) |v| {
+                    config.vocab_size = @intCast(v.integer);
+                }
+            }
         }
 
         // Validate required fields

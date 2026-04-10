@@ -66,6 +66,18 @@ pub const KNOWN_MODELS = [_]ModelAlias{
         .description = "DeepSeek Coder V2 Lite - MoE coding model (PENDING: requires MoE support)",
         .size_gb = 8.84,
     },
+    .{
+        .alias = "gemma4-e4b",
+        .hf_id = "unsloth/gemma-4-e4b-it-UD-MLX-4bit",
+        .description = "Google Gemma 4 E4B IT - Long-context model with reasoning tokens",
+        .size_gb = 2.5,
+    },
+    .{
+        .alias = "gemma4-e4b",
+        .hf_id = "gemma4-e4b-fixed", // Local path to PLE-safe quantized model
+        .description = "Google Gemma 4 E4B - PLE-safe 4-bit (FakeRocket543)",
+        .size_gb = 10.3,
+    },
 };
 
 /// Resolve a model alias to HuggingFace ID

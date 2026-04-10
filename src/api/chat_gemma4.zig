@@ -59,10 +59,11 @@ pub const ChatGemma4Handler = struct {
     loaded: bool = false,
 
     /// Initialize with a pointer to the module-level optional LlamaBackend
-    pub fn init(allocator: std.mem.Allocator, backend_ptr: *?LlamaBackend) ChatGemma4Handler {
+    pub fn init(allocator: std.mem.Allocator, backend_ptr: *?LlamaBackend, model_path: []const u8) ChatGemma4Handler {
         return .{
             .allocator = allocator,
             .backend = backend_ptr,
+            .model_path = model_path,
         };
     }
 
@@ -360,7 +361,10 @@ fn buildGemma4Prompt(
     return try buf.toOwnedSlice(allocator);
 }
 
-/// Returns true for any gemma4-prefixed model name
+/// Returns true for any gemma4 or gemma-4 prefixed model name
 pub fn isGemma4Model(model: []const u8) bool {
-    return std.mem.startsWith(u8, model, "gemma4");
+    return std.mem.startsWith(u8, model, "gemma4") or
+        std.mem.startsWith(u8, model, "gemma-4") or
+        std.mem.startsWith(u8, model, "gemma4-") or
+        std.mem.startsWith(u8, model, "gemma-");
 }

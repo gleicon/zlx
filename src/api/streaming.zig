@@ -132,7 +132,7 @@ pub fn streamResponse(
 
     // Use generation state with full sampling support
     // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
-    var state = try generator.GenerationState.init(
+    var state = try generator.GenerationState(qwen.Transformer).init(
         allocator,
         &transformer,
         input_tokens,
@@ -400,7 +400,7 @@ pub fn generateNonStreamingResponse(
 
     // Initialize generation state
     // speculative-decoding: removed — re-evaluate as dedicated phase after core inference is stable
-    var state = try generator.GenerationState.init(
+    var state = try generator.GenerationState(qwen.Transformer).init(
         allocator,
         &transformer,
         input_tokens,
@@ -554,6 +554,13 @@ fn detectModelArchitecture(model_name: []const u8) templates.ModelArchitecture {
     // Check for Phi models
     if (std.mem.indexOf(u8, model_name, "phi") != null) {
         return .phi;
+    }
+
+    // Check for Gemma 4 models
+    if (std.mem.indexOf(u8, model_name, "gemma4") != null or
+        std.mem.indexOf(u8, model_name, "gemma-4") != null)
+    {
+        return .gemma4;
     }
 
     // Default to Qwen (most common in this codebase)

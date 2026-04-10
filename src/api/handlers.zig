@@ -428,6 +428,7 @@ fn determineArchitecture(config: *const @import("../models/registry.zig").Config
         .llama => "llama",
         .phi => "phi",
         .gpt_oss => "gpt_oss",
+        .gemma4 => "gemma4",
         .unknown => "unknown",
     };
 }
@@ -455,8 +456,15 @@ fn detectModelArchitecture(model_name: []const u8) templates.ModelArchitecture {
     }
 
     // Check for Phi models
-    if (std.mem.indexOf(u8, model_name, "phi") != null) {
+    if (std.mem.indexOf(u8, model_name, "phi")) |_| {
         return .phi;
+    }
+
+    // Check for Gemma 4 models
+    if (std.mem.indexOf(u8, model_name, "gemma4") != null or
+        std.mem.indexOf(u8, model_name, "gemma-4") != null)
+    {
+        return .gemma4;
     }
 
     // Default to Qwen (most common in this codebase)
