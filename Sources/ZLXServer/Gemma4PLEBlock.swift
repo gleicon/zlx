@@ -1,5 +1,5 @@
 import MLX
-import MLXLMCommon
+import MLXNN
 
 /// Gemma 4 Per-Layer Embeddings (PLE) Block
 /// 
@@ -16,8 +16,8 @@ public class Gemma4PLEBlock: Module {
     
     public init(hiddenSize: Int, pleDim: Int = 256) {
         self.pleDim = pleDim
-        self.inputGate = Linear(hiddenSize, pleDim, bias: false)
-        self.projection = Linear(pleDim, hiddenSize, bias: false)
+        self.inputGate = Linear(inputDimensions: hiddenSize, outputDimensions: pleDim, bias: false)
+        self.projection = Linear(inputDimensions: pleDim, outputDimensions: hiddenSize, bias: false)
         self.norm = RMSNorm(dimensions: hiddenSize)
         super.init()
     }
